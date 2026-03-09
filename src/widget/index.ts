@@ -593,7 +593,7 @@ function showInstallPrompt(root: HTMLElement, _config: WidgetConfig) {
       <p style="margin: 0 0 16px; color: var(--bd-text-secondary);">BugDrop requires GitHub App installation to create issues.</p>
       <div class="bd-actions">
         <button class="bd-btn bd-btn-secondary" data-action="cancel">Cancel</button>
-        <a href="https://github.com/apps/YOUR_APP_NAME/installations/new" target="_blank" class="bd-btn bd-btn-primary" style="text-decoration: none;">Install App</a>
+        <a href="https://github.com/apps/neonwatty-bugdrop/installations/new" target="_blank" class="bd-btn bd-btn-primary" style="text-decoration: none;">Install App</a>
       </div>
     `
   );
