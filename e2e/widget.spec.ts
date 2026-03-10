@@ -890,6 +890,35 @@ test.describe('Widget Build', () => {
     // IIFE pattern starts with (()=>{ or similar
     expect(content).toMatch(/^\s*["']use strict["'];?\s*\(\s*\(\s*\)\s*=>\s*\{/);
   });
+
+  test('versioned widget files are accessible', async ({ request }) => {
+    // Read versions.json to get the actual versioned filenames
+    const versionsResp = await request.get('/versions.json');
+    expect(versionsResp.ok()).toBeTruthy();
+
+    const manifest = await versionsResp.json();
+    const versionedFiles = Object.values(manifest.versions) as string[];
+
+    for (const filename of versionedFiles) {
+      const response = await request.get(`/${filename}`);
+      expect(response.ok(), `${filename} should be accessible`).toBeTruthy();
+    }
+  });
+
+  test('versioned widget files contain identical content to widget.js', async ({ request }) => {
+    const baseResp = await request.get('/widget.js');
+    const baseContent = await baseResp.text();
+
+    const versionsResp = await request.get('/versions.json');
+    const manifest = await versionsResp.json();
+    const versionedFiles = Object.values(manifest.versions) as string[];
+
+    for (const filename of versionedFiles) {
+      const response = await request.get(`/${filename}`);
+      const content = await response.text();
+      expect(content, `${filename} should match widget.js`).toBe(baseContent);
+    }
+  });
 });
 
 test.describe('JavaScript API', () => {
