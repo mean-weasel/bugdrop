@@ -7,7 +7,8 @@ interface Point {
 
 export function createAnnotator(
   container: HTMLElement,
-  imageData: string
+  imageData: string,
+  accentColor?: string
 ): {
   setTool: (tool: Tool) => void;
   undo: () => void;
@@ -45,7 +46,7 @@ export function createAnnotator(
   container.appendChild(canvas);
 
   // Drawing settings
-  const color = '#ff0000';
+  const color = accentColor || '#ff0000';
   const lineWidth = 3;
 
   function saveState() {

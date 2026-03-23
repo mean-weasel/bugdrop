@@ -3,6 +3,10 @@ interface PickerStyle {
   font?: string;
   radius?: string;
   borderWidth?: string;
+  bgColor?: string;
+  textColor?: string;
+  borderColor?: string;
+  theme?: string;
 }
 
 export function createElementPicker(style?: PickerStyle): Promise<Element | null> {
@@ -15,10 +19,14 @@ export function createElementPicker(style?: PickerStyle): Promise<Element | null
 }
 
 function startPicker(resolve: (element: Element | null) => void, style?: PickerStyle): void {
+  const isDark = style?.theme === 'dark';
   const accent = style?.accentColor || '#14b8a6';
   const fontFamily = style?.font === 'inherit' ? 'system-ui, sans-serif' : (style?.font || "'Space Grotesk', system-ui, sans-serif");
   const radius = style?.radius !== undefined ? `${style.radius}px` : '6px';
   const bw = style?.borderWidth || '3';
+  const tooltipBg = style?.bgColor || (isDark ? '#0f172a' : '#1a1a1a');
+  const tooltipText = style?.textColor || '#f1f5f9';
+  const tooltipBorder = style?.borderColor || (isDark ? '#334155' : '#333');
 
   // Create highlight overlay with higher z-index than modal (1000000)
   const highlight = document.createElement('div');
@@ -43,8 +51,8 @@ function startPicker(resolve: (element: Element | null) => void, style?: PickerS
     top: 20px;
     left: 50%;
     transform: translateX(-50%);
-    background: #0f172a;
-    color: #f1f5f9;
+    background: ${tooltipBg};
+    color: ${tooltipText};
     padding: 14px 28px;
     border-radius: ${radius};
     font-family: ${fontFamily};
@@ -52,7 +60,7 @@ function startPicker(resolve: (element: Element | null) => void, style?: PickerS
     font-weight: 500;
     z-index: 2147483647;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-    border: 1px solid #334155;
+    border: ${bw}px solid ${tooltipBorder};
   `;
   tooltip.textContent = 'Click on any element to capture it (ESC to cancel)';
   document.body.appendChild(tooltip);

@@ -519,6 +519,10 @@ async function openFeedbackFlow(root: HTMLElement, config: WidgetConfig) {
         font: config.font,
         radius: config.radius,
         borderWidth: config.borderWidth,
+        bgColor: config.bgColor,
+        textColor: config.textColor,
+        borderColor: config.borderColor,
+        theme: config.theme,
       });
       if (element) {
         screenshot = await captureWithLoading(root, element);
@@ -528,7 +532,7 @@ async function openFeedbackFlow(root: HTMLElement, config: WidgetConfig) {
 
     // Step 4: Annotate (if screenshot exists)
     if (screenshot) {
-      screenshot = await showAnnotationStep(root, screenshot);
+      screenshot = await showAnnotationStep(root, screenshot, config);
     }
   }
 
@@ -872,7 +876,7 @@ function showScreenshotOptions(root: HTMLElement): Promise<'skip' | 'capture' | 
   });
 }
 
-function showAnnotationStep(root: HTMLElement, screenshot: string): Promise<string> {
+function showAnnotationStep(root: HTMLElement, screenshot: string, config?: WidgetConfig): Promise<string> {
   return new Promise((resolve) => {
     const modal = createModal(
       root,
@@ -893,7 +897,7 @@ function showAnnotationStep(root: HTMLElement, screenshot: string): Promise<stri
     );
 
     const canvasContainer = modal.querySelector('#annotation-canvas') as HTMLElement;
-    const annotator = createAnnotator(canvasContainer, screenshot);
+    const annotator = createAnnotator(canvasContainer, screenshot, config?.accentColor);
 
     // Tool buttons
     const toolButtons = modal.querySelectorAll('[data-tool]');
