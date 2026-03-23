@@ -55,14 +55,16 @@ test.describe('Feedback API - Validation', () => {
     expect(response.status()).toBe(400);
   });
 
-  test('POST /api/feedback returns 400 for missing description', async ({ request }) => {
+  test('POST /api/feedback accepts missing description (optional field)', async ({ request }) => {
     const response = await request.post('/api/feedback', {
       data: {
         repo: 'owner/repo',
         title: 'Test'
       }
     });
-    expect(response.status()).toBe(400);
+    // Description is optional — server should not reject this.
+    // Will get 500 due to missing GitHub secrets in E2E, but not 400.
+    expect(response.status()).not.toBe(400);
   });
 
   test('POST /api/feedback returns 400 for invalid repo format', async ({ request }) => {

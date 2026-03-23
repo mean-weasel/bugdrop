@@ -200,9 +200,11 @@ function formatIssueBody(
   }
 
   // Description
-  sections.push('## Description');
-  sections.push(payload.description);
-  sections.push('');
+  if (payload.description) {
+    sections.push('## Description');
+    sections.push(payload.description);
+    sections.push('');
+  }
 
   // Screenshot - embedded as base64 data URL
   if (screenshotDataUrl) {
