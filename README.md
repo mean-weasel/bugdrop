@@ -26,6 +26,10 @@ https://github.com/apps/neonwatty-bugdrop/installations/new
 
 That's it! Users can now click the bug button to submit feedback as GitHub Issues.
 
+> **Important:** Do not add `async` or `defer` to the script tag — the widget needs synchronous loading to read its configuration.
+
+> **CSP note:** If your site uses a Content Security Policy, add `https://cdn.jsdelivr.net` to your `script-src` directive to enable screenshot capture.
+
 ## Version Pinning
 
 By default, `/widget.js` always serves the latest version. For production stability, pin to a specific version:
@@ -49,12 +53,10 @@ See [CHANGELOG.md](./CHANGELOG.md) for version history and migration guides.
 
 | Attribute | Values | Default |
 |-----------|--------|---------|
-| Attribute | Values | Default |
-|-----------|--------|---------|
-| `data-repo` | `owner/repo` | required |
+| `data-repo` | `owner/repo` | **required** |
 | `data-theme` | `light`, `dark`, `auto` | `auto` |
 | `data-position` | `bottom-right`, `bottom-left` | `bottom-right` |
-| `data-color` | Hex color (e.g. `#FF6B35`) | `#14b8a6` (teal) |
+| `data-color` | Accent color for buttons/highlights (e.g. `#FF6B35`) | `#14b8a6` (teal) |
 | `data-icon` | Image URL or `none` | (bug emoji) |
 | `data-label` | Any string | `Feedback` |
 | `data-show-name` | `true`, `false` | `false` |
@@ -259,7 +261,16 @@ The `bugdrop:ready` event fires when the API is available. You can also check `i
 
 ## Testing Your Configuration
 
-If you've customized the widget styling, you can add this Playwright test to your CI pipeline to verify things look correct on every deploy.
+### Quick Check
+
+Open your browser console and look for `[BugDrop]` errors. Then click the feedback button — if the form opens, the widget is configured correctly. Common console messages:
+- `Missing data-repo attribute` — you forgot `data-repo`
+- `Invalid data-repo format` — use `owner/repo`, not a full URL
+- `document.currentScript is null` — remove `async`/`defer` from the script tag
+
+### CI Testing with Playwright
+
+For automated testing, add this Playwright test to your CI pipeline.
 
 **Install Playwright** (if you haven't already):
 

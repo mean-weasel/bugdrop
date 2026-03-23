@@ -80,10 +80,10 @@ api.post('/feedback', async (c) => {
     return c.json({ error: 'Invalid JSON' }, 400);
   }
 
-  // Validate required fields
-  if (!payload.repo || !payload.title || !payload.description) {
+  // Validate required fields (description is optional — many reports are title + screenshot)
+  if (!payload.repo || !payload.title) {
     return c.json({
-      error: 'Missing required fields: repo, title, description',
+      error: 'Missing required fields: repo, title',
     }, 400);
   }
 

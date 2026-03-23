@@ -186,8 +186,12 @@ function dismissButton(): void {
   }
 }
 
-// Read config from script tag
-const script = document.currentScript as HTMLScriptElement;
+// Read config from script tag (fallback to src-based lookup for async/defer)
+const script = (document.currentScript ||
+  document.querySelector('script[src*="bugdrop"][src*="widget"]')) as HTMLScriptElement;
+if (!document.currentScript) {
+  console.warn('[BugDrop] document.currentScript is null — do not use async or defer on the BugDrop script tag.');
+}
 const rawTheme = script?.dataset.theme as WidgetConfig['theme'] | undefined;
 const config: WidgetConfig = {
   repo: script?.dataset.repo || '',
@@ -228,6 +232,8 @@ const config: WidgetConfig = {
 // Validate config
 if (!config.repo) {
   console.error('[BugDrop] Missing data-repo attribute');
+} else if (!/^[^/]+\/[^/]+$/.test(config.repo)) {
+  console.error(`[BugDrop] Invalid data-repo format "${config.repo}". Expected "owner/repo" (e.g., "octocat/hello-world").`);
 } else {
   initWidget(config);
 }
@@ -483,9 +489,13 @@ async function openFeedbackFlow(root: HTMLElement, config: WidgetConfig) {
   _isModalOpen = true;
 
   // Check if app is installed
-  const installed = await checkInstallation(config);
-  if (!installed) {
+  const installStatus = await checkInstallation(config);
+  if (installStatus === 'not_installed') {
     showInstallPrompt(root, config);
+    return;
+  }
+  if (installStatus === 'unreachable') {
+    showInstallPrompt(root, config, 'Unable to reach BugDrop API. Check your network connection or script tag URL.');
     return;
   }
 
@@ -616,25 +626,32 @@ async function captureWithLoading(
   }
 }
 
-async function checkInstallation(config: WidgetConfig): Promise<boolean> {
+async function checkInstallation(config: WidgetConfig): Promise<'installed' | 'not_installed' | 'unreachable'> {
   try {
     const response = await fetch(`${config.apiUrl}/check/${config.repo}`);
+    if (!response.ok) return 'unreachable';
     const data = await response.json();
-    return data.installed === true;
+    return data.installed === true ? 'installed' : 'not_installed';
   } catch {
-    return false;
+    return 'unreachable';
   }
 }
 
-function showInstallPrompt(root: HTMLElement, _config: WidgetConfig) {
+function showInstallPrompt(root: HTMLElement, config: WidgetConfig, errorMessage?: string) {
+  const appName = config.apiUrl.includes('bugdrop.neonwatty.workers.dev')
+    ? 'neonwatty-bugdrop'
+    : config.apiUrl.replace(/https?:\/\//, '').replace(/\..*/, '');
+  const installUrl = `https://github.com/apps/${appName}/installations/new`;
+  const message = errorMessage || 'BugDrop requires GitHub App installation to create issues.';
+  const title = errorMessage ? 'Connection Error' : 'Install Required';
   const modal = createModal(
     root,
-    'Install Required',
+    title,
     `
-      <p style="margin: 0 0 16px; color: var(--bd-text-secondary);">BugDrop requires GitHub App installation to create issues.</p>
+      <p style="margin: 0 0 16px; color: var(--bd-text-secondary);">${message}</p>
       <div class="bd-actions">
         <button class="bd-btn bd-btn-secondary" data-action="cancel">Cancel</button>
-        <a href="https://github.com/apps/neonwatty-bugdrop/installations/new" target="_blank" class="bd-btn bd-btn-primary" style="text-decoration: none;">Install App</a>
+        ${!errorMessage ? `<a href="${installUrl}" target="_blank" class="bd-btn bd-btn-primary" style="text-decoration: none;">Install App</a>` : ''}
       </div>
     `
   );
@@ -996,8 +1013,16 @@ async function submitFeedback(
       }),
     });
 
-    const result = await response.json();
     modal.remove();
+
+    if (response.status === 429) {
+      const retryAfter = response.headers.get('Retry-After');
+      const minutes = retryAfter ? Math.ceil(parseInt(retryAfter, 10) / 60) : 15;
+      showSubmitError(root, config, data, `Too many submissions. Please try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`);
+      return;
+    }
+
+    const result = await response.json();
 
     if (result.success) {
       await showSuccessModal(

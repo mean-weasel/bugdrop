@@ -199,19 +199,19 @@ describe('API Routes', () => {
       expect(data.error).toContain('Missing required fields');
     });
 
-    it('should return 400 when description is missing', async () => {
-      const invalidPayload = { ...validPayload, description: undefined };
+    it('should accept submission when description is missing (optional field)', async () => {
+      const payload = { ...validPayload, description: undefined };
 
       const req = new Request('http://localhost/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(invalidPayload),
+        body: JSON.stringify(payload),
       });
       const res = await app.fetch(req, mockEnv);
       const data = await res.json();
 
-      expect(res.status).toBe(400);
-      expect(data.error).toContain('Missing required fields');
+      expect(res.status).toBe(200);
+      expect(data.success).toBe(true);
     });
 
     it('should return 400 when repo format is invalid', async () => {
