@@ -247,11 +247,11 @@ test.describe('API Endpoints', () => {
     });
     expect(res2.status()).toBe(400);
 
-    // Missing description
+    // Missing description (optional — should not return 400)
     const res3 = await request.post('/api/feedback', {
       data: { repo: 'owner/repo', title: 'Test' }
     });
-    expect(res3.status()).toBe(400);
+    expect(res3.status()).not.toBe(400);
   });
 
   test('feedback endpoint rejects invalid repo format', async ({ request }) => {
