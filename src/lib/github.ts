@@ -119,8 +119,10 @@ export async function isRepoPublic(
 }
 
 /**
- * Upload screenshot to repo and return the raw URL for embedding in issues
- * Requires Contents:write permission on the GitHub App
+ * Upload screenshot to repo and return a permanent URL for embedding in issues.
+ * Uses the blob html_url (with ?raw=true) instead of download_url, because
+ * download_url includes a temporary token that expires on private repos.
+ * Requires Contents:write permission on the GitHub App.
  */
 export async function uploadScreenshotAsAsset(
   token: string,
@@ -152,6 +154,6 @@ export async function uploadScreenshotAsAsset(
     throw new Error(`Failed to upload screenshot: ${response.status} - ${error}`);
   }
 
-  const data = (await response.json()) as { content: { download_url: string } };
-  return data.content.download_url;
+  const data = (await response.json()) as { content: { html_url: string } };
+  return data.content.html_url + '?raw=true';
 }
