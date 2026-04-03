@@ -71,6 +71,7 @@ interface FeedbackData {
 
 // localStorage key for dismissed state
 const BUGDROP_DISMISSED_KEY = 'bugdrop_dismissed';
+const BUGDROP_WELCOMED_PREFIX = 'bugdrop_welcomed_';
 
 // Parse user agent to extract browser info
 function parseBrowser(ua: string): { name: string; version: string } {
@@ -185,6 +186,24 @@ function dismissButton(): void {
     localStorage.setItem(BUGDROP_DISMISSED_KEY, Date.now().toString());
   } catch {
     // localStorage may be blocked in some contexts
+  }
+}
+
+// Check if user has already seen the welcome screen for this repo
+function hasSeenWelcome(repo: string): boolean {
+  try {
+    return localStorage.getItem(BUGDROP_WELCOMED_PREFIX + repo) !== null;
+  } catch {
+    return false;
+  }
+}
+
+// Mark the welcome screen as seen for this repo
+function markWelcomeSeen(repo: string): void {
+  try {
+    localStorage.setItem(BUGDROP_WELCOMED_PREFIX + repo, Date.now().toString());
+  } catch {
+    // localStorage may be blocked
   }
 }
 
