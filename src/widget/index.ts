@@ -38,6 +38,8 @@ interface WidgetConfig {
   borderWidth?: string; // Border width in px (e.g., '4')
   borderColor?: string; // Border color (e.g., '#1a1a1a')
   shadow?: string; // Shadow preset: 'none', 'soft' (default), 'hard'
+  // Welcome screen behavior
+  welcome: 'once' | 'always' | 'never';
 }
 
 // BugDrop JavaScript API interface
@@ -227,6 +229,13 @@ const config: WidgetConfig = {
   borderWidth: script?.dataset.borderWidth || undefined,
   borderColor: script?.dataset.borderColor || undefined,
   shadow: script?.dataset.shadow || undefined,
+  // Welcome screen behavior (default: 'once')
+  welcome: (() => {
+    const val = script?.dataset.welcome;
+    if (val === 'false' || val === 'never') return 'never' as const;
+    if (val === 'always') return 'always' as const;
+    return 'once' as const;
+  })(),
 };
 
 // Validate config
