@@ -20,8 +20,10 @@ https://github.com/apps/neonwatty-bugdrop/installations/new
 **2. Add the script** to your website:
 
 ```html
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
-        data-repo="owner/repo"></script>
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+></script>
 ```
 
 That's it! Users can now click the bug button to submit feedback as GitHub Issues.
@@ -30,62 +32,68 @@ That's it! Users can now click the bug button to submit feedback as GitHub Issue
 
 > **CSP note:** If your site uses a Content Security Policy, add `https://cdn.jsdelivr.net` to your `script-src` directive to enable screenshot capture.
 
+> **Branch protection:** BugDrop works with repos that have branch protection rules (required PRs, merge queues). Screenshots are stored on a dedicated `bugdrop-screenshots` branch that is auto-created on first use — no manual setup needed.
+
 ## Version Pinning
 
 By default, `/widget.js` always serves the latest version. For production stability, pin to a specific version:
 
 ```html
 <!-- Recommended for production: pin to major version -->
-<script src="https://bugdrop.neonwatty.workers.dev/widget.v1.js"
-        data-repo="owner/repo"></script>
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.v1.js"
+  data-repo="owner/repo"
+></script>
 ```
 
-| URL | Updates | Best For |
-|-----|---------|----------|
-| `/widget.js` | Always latest | Development |
-| `/widget.v1.js` | Bug fixes only | Production (recommended) |
-| `/widget.v1.1.js` | Patch fixes only | Strict stability |
-| `/widget.v1.1.0.js` | Never | Maximum control |
+| URL                 | Updates          | Best For                 |
+| ------------------- | ---------------- | ------------------------ |
+| `/widget.js`        | Always latest    | Development              |
+| `/widget.v1.js`     | Bug fixes only   | Production (recommended) |
+| `/widget.v1.1.js`   | Patch fixes only | Strict stability         |
+| `/widget.v1.1.0.js` | Never            | Maximum control          |
 
 See [CHANGELOG.md](./CHANGELOG.md) for version history and migration guides.
 
 ## Widget Options
 
-| Attribute | Values | Default |
-|-----------|--------|---------|
-| `data-repo` | `owner/repo` | **required** |
-| `data-theme` | `light`, `dark`, `auto` | `auto` |
-| `data-position` | `bottom-right`, `bottom-left` | `bottom-right` |
-| `data-color` | Accent color for buttons/highlights (e.g. `#FF6B35`) | `#14b8a6` (teal) |
-| `data-icon` | Image URL or `none` | (bug emoji) |
-| `data-label` | Any string | `Feedback` |
-| `data-show-name` | `true`, `false` | `false` |
-| `data-require-name` | `true`, `false` | `false` |
-| `data-show-email` | `true`, `false` | `false` |
-| `data-require-email` | `true`, `false` | `false` |
-| `data-button-dismissible` | `true`, `false` | `false` |
-| `data-dismiss-duration` | Number (days) | (forever) |
-| `data-show-restore` | `true`, `false` | `true` |
-| `data-button` | `true`, `false` | `true` |
+| Attribute                 | Values                                               | Default          |
+| ------------------------- | ---------------------------------------------------- | ---------------- |
+| `data-repo`               | `owner/repo`                                         | **required**     |
+| `data-theme`              | `light`, `dark`, `auto`                              | `auto`           |
+| `data-position`           | `bottom-right`, `bottom-left`                        | `bottom-right`   |
+| `data-color`              | Accent color for buttons/highlights (e.g. `#FF6B35`) | `#14b8a6` (teal) |
+| `data-icon`               | Image URL or `none`                                  | (bug emoji)      |
+| `data-label`              | Any string                                           | `Feedback`       |
+| `data-show-name`          | `true`, `false`                                      | `false`          |
+| `data-require-name`       | `true`, `false`                                      | `false`          |
+| `data-show-email`         | `true`, `false`                                      | `false`          |
+| `data-require-email`      | `true`, `false`                                      | `false`          |
+| `data-button-dismissible` | `true`, `false`                                      | `false`          |
+| `data-dismiss-duration`   | Number (days)                                        | (forever)        |
+| `data-show-restore`       | `true`, `false`                                      | `true`           |
+| `data-button`             | `true`, `false`                                      | `true`           |
 
 **Styling options** — make the widget match your app's design:
 
-| Attribute | Values | Default |
-|-----------|--------|---------|
-| `data-font` | `inherit` or font-family string | `Space Grotesk` |
-| `data-radius` | Pixels (e.g. `0`, `8`, `16`) | `6` |
-| `data-bg` | CSS color (e.g. `#fffef0`) | theme default |
-| `data-text` | CSS color (e.g. `#1a1a1a`) | theme default |
-| `data-border-width` | Pixels (e.g. `4`) | `1` |
-| `data-border-color` | CSS color (e.g. `#1a1a1a`) | theme default |
-| `data-shadow` | `soft`, `hard`, `none` | `soft` |
+| Attribute           | Values                          | Default         |
+| ------------------- | ------------------------------- | --------------- |
+| `data-font`         | `inherit` or font-family string | `Space Grotesk` |
+| `data-radius`       | Pixels (e.g. `0`, `8`, `16`)    | `6`             |
+| `data-bg`           | CSS color (e.g. `#fffef0`)      | theme default   |
+| `data-text`         | CSS color (e.g. `#1a1a1a`)      | theme default   |
+| `data-border-width` | Pixels (e.g. `4`)               | `1`             |
+| `data-border-color` | CSS color (e.g. `#1a1a1a`)      | theme default   |
+| `data-shadow`       | `soft`, `hard`, `none`          | `soft`          |
 
 ```html
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
-        data-repo="owner/repo"
-        data-theme="dark"
-        data-position="bottom-left"
-        data-color="#FF6B35"></script>
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-theme="dark"
+  data-position="bottom-left"
+  data-color="#FF6B35"
+></script>
 ```
 
 ### Custom Styling
@@ -94,29 +102,33 @@ Use `data-font="inherit"` to pick up your page's font instead of BugDrop's built
 
 ```html
 <!-- Elegant serif site -->
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
-        data-repo="owner/repo"
-        data-font="inherit"
-        data-radius="8"
-        data-bg="#fafafa"
-        data-text="#1a1a1a"
-        data-color="#c5a55a"></script>
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-font="inherit"
+  data-radius="8"
+  data-bg="#fafafa"
+  data-text="#1a1a1a"
+  data-color="#c5a55a"
+></script>
 ```
 
 For bold or brutalist designs, add thick borders and hard drop shadows:
 
 ```html
 <!-- Comic / punk design -->
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
-        data-repo="owner/repo"
-        data-font="inherit"
-        data-radius="0"
-        data-bg="#fffef0"
-        data-text="#1a1a1a"
-        data-color="#e53935"
-        data-border-width="4"
-        data-border-color="#1a1a1a"
-        data-shadow="hard"></script>
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-font="inherit"
+  data-radius="0"
+  data-bg="#fffef0"
+  data-text="#1a1a1a"
+  data-color="#e53935"
+  data-border-width="4"
+  data-border-color="#1a1a1a"
+  data-shadow="hard"
+></script>
 ```
 
 Shadow presets: `soft` (default subtle shadows), `hard` (offset drop shadow), `none` (no shadows).
@@ -127,20 +139,26 @@ Replace the default bug emoji with your own image, hide it entirely, or change t
 
 ```html
 <!-- Custom icon -->
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
-        data-repo="owner/repo"
-        data-icon="https://example.com/my-logo.svg"></script>
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-icon="https://example.com/my-logo.svg"
+></script>
 
 <!-- No icon, just text -->
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
-        data-repo="owner/repo"
-        data-icon="none"
-        data-label="?"></script>
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-icon="none"
+  data-label="?"
+></script>
 
 <!-- Custom label -->
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
-        data-repo="owner/repo"
-        data-label="Report Issue"></script>
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-label="Report Issue"
+></script>
 ```
 
 The icon image is displayed at 18px (16px on mobile). If the image fails to load, the default bug emoji is shown as a fallback.
@@ -151,11 +169,13 @@ By default, BugDrop only asks for a title and description. You can optionally co
 
 ```html
 <!-- Require name, optional email -->
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
-        data-repo="owner/repo"
-        data-show-name="true"
-        data-require-name="true"
-        data-show-email="true"></script>
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-show-name="true"
+  data-require-name="true"
+  data-show-email="true"
+></script>
 ```
 
 When provided, submitter info appears at the top of the GitHub issue.
@@ -165,9 +185,11 @@ When provided, submitter info appears at the top of the GitHub issue.
 Allow users to hide the floating button if they don't want it:
 
 ```html
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
-        data-repo="owner/repo"
-        data-button-dismissible="true"></script>
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-button-dismissible="true"
+></script>
 ```
 
 When enabled, hovering over the button reveals an X icon. Clicking it hides the button and shows a subtle pull tab on the screen edge. Users can click the pull tab to restore the full button. The dismissed state is saved to localStorage (`bugdrop_dismissed`).
@@ -175,19 +197,23 @@ When enabled, hovering over the button reveals an X icon. Clicking it hides the 
 **Disable the restore pull tab** — if you don't want the pull tab to appear:
 
 ```html
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
-        data-repo="owner/repo"
-        data-button-dismissible="true"
-        data-show-restore="false"></script>
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-button-dismissible="true"
+  data-show-restore="false"
+></script>
 ```
 
 **Auto-reappear after duration** — Let the button come back after a number of days:
 
 ```html
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
-        data-repo="owner/repo"
-        data-button-dismissible="true"
-        data-dismiss-duration="7"></script>
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-button-dismissible="true"
+  data-dismiss-duration="7"
+></script>
 ```
 
 With `data-dismiss-duration="7"`, users who dismiss the button will see it again after 7 days. Without this attribute, the button stays hidden forever (until localStorage is cleared).
@@ -196,11 +222,11 @@ With `data-dismiss-duration="7"`, users who dismiss the button will see it again
 
 When users submit feedback, they can select a category:
 
-| Category | Emoji | GitHub Label |
-|----------|-------|--------------|
-| Bug | 🐛 | `bug` |
-| Feature | ✨ | `enhancement` |
-| Question | ❓ | `question` |
+| Category | Emoji | GitHub Label  |
+| -------- | ----- | ------------- |
+| Bug      | 🐛    | `bug`         |
+| Feature  | ✨    | `enhancement` |
+| Question | ❓    | `question`    |
 
 The selected category is automatically mapped to a GitHub label on the created issue, making it easy to filter and triage feedback. Bug is selected by default.
 
@@ -234,9 +260,11 @@ window.BugDrop = {
 **API-only mode** — hide the floating button entirely and trigger feedback from your own UI:
 
 ```html
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
-        data-repo="owner/repo"
-        data-button="false"></script>
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-button="false"
+></script>
 ```
 
 **Example: Menu item integration**
@@ -249,8 +277,8 @@ window.BugDrop = {
 </nav>
 
 <script>
-  window.addEventListener('bugdrop:ready', () => {
-    document.getElementById('report-bug').addEventListener('click', () => {
+  window.addEventListener("bugdrop:ready", () => {
+    document.getElementById("report-bug").addEventListener("click", () => {
       window.BugDrop.open();
     });
   });
@@ -264,6 +292,7 @@ The `bugdrop:ready` event fires when the API is available. You can also check `i
 ### Quick Check
 
 Open your browser console and look for `[BugDrop]` errors. Then click the feedback button — if the form opens, the widget is configured correctly. Common console messages:
+
 - `Missing data-repo attribute` — you forgot `data-repo`
 - `Invalid data-repo format` — use `owner/repo`, not a full URL
 - `document.currentScript is null` — remove `async`/`defer` from the script tag
@@ -282,24 +311,24 @@ npx playwright install
 **Create `tests/bugdrop.spec.ts`:**
 
 ```typescript
-import { test, expect } from '@playwright/test';
+import { test, expect } from "@playwright/test";
 
 // ============================================================
 // CONFIGURE THESE VALUES TO MATCH YOUR BUGDROP SETUP
 // ============================================================
-const APP_URL = 'https://your-app.com'; // Your app's URL
+const APP_URL = "https://your-app.com"; // Your app's URL
 const EXPECTED = {
-  accentColor: '#e53935',   // Your data-color value (or null to skip)
-  bgColor: '#fffef0',       // Your data-bg value (or null to skip)
-  textColor: '#1a1a1a',     // Your data-text value (or null to skip)
-  borderRadius: '0px',      // Your data-radius + 'px' (or null to skip)
-  fontFamily: null,         // Substring to check (e.g., 'Georgia') or null
+  accentColor: "#e53935", // Your data-color value (or null to skip)
+  bgColor: "#fffef0", // Your data-bg value (or null to skip)
+  textColor: "#1a1a1a", // Your data-text value (or null to skip)
+  borderRadius: "0px", // Your data-radius + 'px' (or null to skip)
+  fontFamily: null, // Substring to check (e.g., 'Georgia') or null
 };
 // ============================================================
 
 // WCAG contrast ratio helper — no dependencies needed
 function luminance(r: number, g: number, b: number): number {
-  const [rs, gs, bs] = [r, g, b].map(c => {
+  const [rs, gs, bs] = [r, g, b].map((c) => {
     c = c / 255;
     return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
   });
@@ -320,46 +349,46 @@ function contrastRatio(fg: string, bg: string): number {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-test.describe('BugDrop widget', () => {
-  test('renders and is visible', async ({ page }) => {
+test.describe("BugDrop widget", () => {
+  test("renders and is visible", async ({ page }) => {
     await page.goto(APP_URL);
-    const host = page.locator('#bugdrop-host');
+    const host = page.locator("#bugdrop-host");
     await expect(host).toBeAttached({ timeout: 10000 });
 
     // Trigger button should be visible inside shadow DOM
-    const trigger = host.locator('internal:shadow=.bd-trigger');
+    const trigger = host.locator("internal:shadow=.bd-trigger");
     await expect(trigger).toBeVisible();
   });
 
-  test('modal opens on click', async ({ page }) => {
+  test("modal opens on click", async ({ page }) => {
     await page.goto(APP_URL);
-    const host = page.locator('#bugdrop-host');
-    const trigger = host.locator('internal:shadow=.bd-trigger');
+    const host = page.locator("#bugdrop-host");
+    const trigger = host.locator("internal:shadow=.bd-trigger");
     await trigger.click();
 
     // A modal or overlay should appear
-    const overlay = host.locator('internal:shadow=.bd-overlay');
+    const overlay = host.locator("internal:shadow=.bd-overlay");
     await expect(overlay).toBeVisible({ timeout: 5000 });
   });
 
-  test('meets WCAG AA contrast requirements', async ({ page }) => {
+  test("meets WCAG AA contrast requirements", async ({ page }) => {
     await page.goto(APP_URL);
-    const host = page.locator('#bugdrop-host');
-    const trigger = host.locator('internal:shadow=.bd-trigger');
+    const host = page.locator("#bugdrop-host");
+    const trigger = host.locator("internal:shadow=.bd-trigger");
     await trigger.click();
 
     // Wait for modal
-    const overlay = host.locator('internal:shadow=.bd-overlay');
+    const overlay = host.locator("internal:shadow=.bd-overlay");
     await expect(overlay).toBeVisible({ timeout: 5000 });
 
     // Check text contrast inside the modal
     const styles = await page.evaluate(() => {
-      const host = document.querySelector('#bugdrop-host');
+      const host = document.querySelector("#bugdrop-host");
       if (!host?.shadowRoot) return null;
-      const modal = host.shadowRoot.querySelector('.bd-modal');
+      const modal = host.shadowRoot.querySelector(".bd-modal");
       if (!modal) return null;
       const cs = getComputedStyle(modal);
-      const title = host.shadowRoot.querySelector('.bd-title');
+      const title = host.shadowRoot.querySelector(".bd-title");
       const titleCs = title ? getComputedStyle(title) : null;
       return {
         modalBg: cs.backgroundColor,
@@ -372,24 +401,26 @@ test.describe('BugDrop widget', () => {
     expect(ratio).toBeGreaterThanOrEqual(4.5); // WCAG AA
   });
 
-  test('config values match expected', async ({ page }) => {
+  test("config values match expected", async ({ page }) => {
     await page.goto(APP_URL);
-    const host = page.locator('#bugdrop-host');
-    const trigger = host.locator('internal:shadow=.bd-trigger');
+    const host = page.locator("#bugdrop-host");
+    const trigger = host.locator("internal:shadow=.bd-trigger");
 
     const styles = await page.evaluate(() => {
-      const host = document.querySelector('#bugdrop-host');
+      const host = document.querySelector("#bugdrop-host");
       if (!host?.shadowRoot) return null;
-      const root = host.shadowRoot.querySelector('.bd-root') as HTMLElement;
+      const root = host.shadowRoot.querySelector(".bd-root") as HTMLElement;
       if (!root) return null;
       const cs = getComputedStyle(root);
-      const triggerEl = host.shadowRoot.querySelector('.bd-trigger') as HTMLElement;
+      const triggerEl = host.shadowRoot.querySelector(
+        ".bd-trigger",
+      ) as HTMLElement;
       const triggerCs = triggerEl ? getComputedStyle(triggerEl) : null;
       return {
-        bgColor: cs.getPropertyValue('--bd-bg-primary').trim(),
-        textColor: cs.getPropertyValue('--bd-text-primary').trim(),
-        accentColor: cs.getPropertyValue('--bd-primary').trim(),
-        borderRadius: triggerCs?.borderRadius || '',
+        bgColor: cs.getPropertyValue("--bd-bg-primary").trim(),
+        textColor: cs.getPropertyValue("--bd-text-primary").trim(),
+        accentColor: cs.getPropertyValue("--bd-primary").trim(),
+        borderRadius: triggerCs?.borderRadius || "",
         fontFamily: cs.fontFamily,
       };
     });
@@ -422,6 +453,7 @@ npx playwright test tests/bugdrop.spec.ts
 ```
 
 The test checks three things:
+
 1. **Functional** — widget renders, trigger is visible, modal opens
 2. **Accessibility** — title text meets WCAG AA contrast ratio (4.5:1) against modal background
 3. **Config verification** — computed CSS values match your expected `data-*` attribute values
@@ -441,22 +473,22 @@ User clicks bug button → Widget captures screenshot → Worker authenticates v
 1. **Widget** loads in a Shadow DOM (isolated from your page styles)
 2. **Screenshot** captured client-side using html2canvas
 3. **Worker** (Cloudflare) exchanges GitHub App credentials for an installation token
-4. **GitHub API** creates the issue with the screenshot stored in `.bugdrop/`
+4. **GitHub API** creates the issue with the screenshot stored in `.bugdrop/` on a dedicated `bugdrop-screenshots` branch (auto-created on first use)
 
 ## Security
 
 - **Permissions**: Issues (R/W), Contents (R/W) - only on repos you install it on
-- **Data storage**: Screenshots stored in your repo's `.bugdrop/` folder
+- **Data storage**: Screenshots stored in your repo's `.bugdrop/` folder on a `bugdrop-screenshots` branch
 - **Privacy**: No user data stored by the widget service
 
 ## Rate Limiting
 
 The API includes rate limiting to prevent spam and protect GitHub API quotas:
 
-| Scope | Limit | Window |
-|-------|-------|--------|
-| Per IP | 10 requests | 15 minutes |
-| Per Repository | 50 requests | 1 hour |
+| Scope          | Limit       | Window     |
+| -------------- | ----------- | ---------- |
+| Per IP         | 10 requests | 15 minutes |
+| Per Repository | 50 requests | 1 hour     |
 
 When rate limited, the API returns a `429 Too Many Requests` response with a `Retry-After` header indicating when to retry. Rate limit headers are included on all responses:
 
