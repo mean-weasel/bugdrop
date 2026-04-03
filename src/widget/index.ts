@@ -811,7 +811,7 @@ function showFeedbackFormWithScreenshotOption(
             <textarea id="description" class="bd-textarea" placeholder="Provide additional details, steps to reproduce, or context..."></textarea>
           </div>
           <div class="bd-form-group" style="display: flex; align-items: center; gap: 10px; margin-top: 8px;">
-            <input type="checkbox" id="include-screenshot" style="width: 18px; height: 18px; accent-color: var(--bd-primary); cursor: pointer;" />
+            <input type="checkbox" id="include-screenshot" checked style="width: 18px; height: 18px; accent-color: var(--bd-primary); cursor: pointer;" />
             <label for="include-screenshot" style="font-size: 0.95rem; color: var(--bd-text-secondary); cursor: pointer; user-select: none;">
               📸 Include a screenshot
             </label>
