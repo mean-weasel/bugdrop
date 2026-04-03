@@ -7,7 +7,6 @@ import {
   showSuccessModal,
 } from './ui';
 
-
 interface WidgetConfig {
   repo: string;
   apiUrl: string;
@@ -190,7 +189,6 @@ function dismissButton(): void {
   }
 }
 
-// Check if user has already seen the welcome screen for this repo
 function hasSeenWelcome(repo: string): boolean {
   try {
     return localStorage.getItem(BUGDROP_WELCOMED_PREFIX + repo) !== null;
@@ -199,7 +197,6 @@ function hasSeenWelcome(repo: string): boolean {
   }
 }
 
-// Mark the welcome screen as seen for this repo
 function markWelcomeSeen(repo: string): void {
   try {
     localStorage.setItem(BUGDROP_WELCOMED_PREFIX + repo, Date.now().toString());

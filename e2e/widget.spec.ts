@@ -248,7 +248,8 @@ test.describe('Widget Interaction', () => {
     // Close the modal
     const cancelBtn = page.locator('#bugdrop-host').locator('css=[data-action="cancel"]');
     await cancelBtn.click();
-    await page.waitForTimeout(300);
+    const overlay = page.locator('#bugdrop-host').locator('css=.bd-overlay');
+    await expect(overlay).not.toBeVisible({ timeout: 5000 });
 
     // Second open: welcome should be skipped, form appears directly
     await button.click();
@@ -307,10 +308,11 @@ test.describe('Widget Interaction', () => {
     const titleInput = page.locator('#bugdrop-host').locator('css=#title');
     await expect(titleInput).toBeVisible({ timeout: 5000 });
 
-    // Close the modal
+    // Close the modal and wait for it to disappear
     const cancelBtn = page.locator('#bugdrop-host').locator('css=[data-action="cancel"]');
     await cancelBtn.click();
-    await page.waitForTimeout(300);
+    const overlay = page.locator('#bugdrop-host').locator('css=.bd-overlay');
+    await expect(overlay).not.toBeVisible({ timeout: 5000 });
 
     // Second open: welcome should appear AGAIN (always mode)
     await button.click();
@@ -328,11 +330,8 @@ test.describe('Widget Interaction', () => {
 
     await page.goto('/test/');
 
-    // Wait for widget to be ready
-    await page.waitForEvent('console', { predicate: msg => msg.text().includes('bugdrop:ready') || true, timeout: 5000 }).catch(() => {});
-    await page.waitForTimeout(500);
-
-    // Call BugDrop.open() programmatically
+    // Wait for BugDrop API to be available, then open programmatically
+    await page.waitForFunction(() => typeof (window as any).BugDrop !== 'undefined', { timeout: 5000 });
     await page.evaluate(() => {
       (window as any).BugDrop?.open();
     });
