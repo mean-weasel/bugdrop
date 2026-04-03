@@ -216,6 +216,119 @@ test.describe('Widget Interaction', () => {
     const annotationCanvas = page.locator('#bugdrop-host').locator('css=#annotation-canvas');
     await expect(annotationCanvas).toBeVisible({ timeout: 5000 });
   });
+
+  test('welcome screen only shows once per repo (default behavior)', async ({ page }) => {
+    await page.route('**/api/check/**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/');
+
+    // Clear welcome-seen state for this repo
+    await page.evaluate(() => localStorage.removeItem('bugdrop_welcomed_neonwatty/feedback-widget-test'));
+    await page.reload();
+
+    const button = page.locator('#bugdrop-host').locator('css=.bd-trigger');
+    await expect(button).toBeVisible({ timeout: 5000 });
+
+    // First open: welcome should appear
+    await button.click();
+    const getStartedBtn = page.locator('#bugdrop-host').locator('css=[data-action="continue"]');
+    await expect(getStartedBtn).toBeVisible({ timeout: 5000 });
+    await getStartedBtn.click();
+
+    // Form should appear
+    const titleInput = page.locator('#bugdrop-host').locator('css=#title');
+    await expect(titleInput).toBeVisible({ timeout: 5000 });
+
+    // Close the modal
+    const cancelBtn = page.locator('#bugdrop-host').locator('css=[data-action="cancel"]');
+    await cancelBtn.click();
+    await page.waitForTimeout(300);
+
+    // Second open: welcome should be skipped, form appears directly
+    await button.click();
+    await expect(titleInput).toBeVisible({ timeout: 5000 });
+
+    // Verify "Get Started" button is NOT present (welcome was skipped)
+    await expect(getStartedBtn).not.toBeVisible();
+  });
+
+  test('data-welcome="false" skips welcome entirely', async ({ page }) => {
+    await page.route('**/api/check/**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/welcome-disabled.html');
+
+    const button = page.locator('#bugdrop-host').locator('css=.bd-trigger');
+    await expect(button).toBeVisible({ timeout: 5000 });
+
+    await button.click();
+
+    // Form should appear directly, no welcome screen
+    const titleInput = page.locator('#bugdrop-host').locator('css=#title');
+    await expect(titleInput).toBeVisible({ timeout: 5000 });
+
+    // Welcome "Get Started" button should NOT be present
+    const getStartedBtn = page.locator('#bugdrop-host').locator('css=[data-action="continue"]');
+    await expect(getStartedBtn).not.toBeVisible();
+  });
+
+  test('screenshot checkbox is checked by default', async ({ page }) => {
+    await page.route('**/api/check/**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/');
+
+    const button = page.locator('#bugdrop-host').locator('css=.bd-trigger');
+    await expect(button).toBeVisible({ timeout: 5000 });
+    await button.click();
+
+    // Click through welcome
+    const getStartedBtn = page.locator('#bugdrop-host').locator('css=[data-action="continue"]');
+    await expect(getStartedBtn).toBeVisible({ timeout: 5000 });
+    await getStartedBtn.click();
+
+    // Verify screenshot checkbox is checked by default
+    const screenshotCheckbox = page.locator('#bugdrop-host').locator('css=#include-screenshot');
+    await expect(screenshotCheckbox).toBeChecked();
+  });
+
+  test('version number appears in modal footer', async ({ page }) => {
+    await page.route('**/api/check/**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/');
+
+    const button = page.locator('#bugdrop-host').locator('css=.bd-trigger');
+    await expect(button).toBeVisible({ timeout: 5000 });
+    await button.click();
+
+    // Version should appear in the modal
+    const versionEl = page.locator('#bugdrop-host').locator('css=.bd-version');
+    await expect(versionEl).toBeVisible({ timeout: 5000 });
+    const versionText = await versionEl.textContent();
+    expect(versionText).toMatch(/^BugDrop v/);
+  });
 });
 
 test.describe('API Endpoints', () => {
