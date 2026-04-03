@@ -1,3 +1,5 @@
+declare const __BUGDROP_VERSION__: string;
+
 interface WidgetConfig {
   repo: string;
   apiUrl: string;
@@ -385,6 +387,14 @@ export function injectStyles(shadow: ShadowRoot, config: WidgetConfig) {
     .bd-body > *:nth-child(3) { animation: bd-fadeIn 0.2s ease 0.2s both; }
     .bd-body > *:nth-child(4) { animation: bd-fadeIn 0.2s ease 0.25s both; }
     .bd-body > *:nth-child(5) { animation: bd-fadeIn 0.2s ease 0.3s both; }
+
+    .bd-version {
+      text-align: center;
+      padding: 4px 0;
+      font-size: 0.7rem;
+      color: var(--bd-text-secondary);
+      opacity: 0.5;
+    }
 
     /* Form Elements */
     .bd-form-group {
@@ -1017,6 +1027,7 @@ export function createModal(
 ): HTMLElement {
   const overlay = document.createElement('div');
   overlay.className = 'bd-overlay';
+  const widgetVersion = typeof __BUGDROP_VERSION__ !== 'undefined' ? __BUGDROP_VERSION__ : 'dev';
   overlay.innerHTML = `
     <div class="bd-modal">
       <div class="bd-header">
@@ -1026,6 +1037,7 @@ export function createModal(
       <div class="bd-body">
         ${content}
       </div>
+      <div class="bd-version">BugDrop v${widgetVersion}</div>
     </div>
   `;
 

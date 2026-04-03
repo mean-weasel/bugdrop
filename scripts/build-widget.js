@@ -34,7 +34,7 @@ console.log(`Building widget version ${version}...`);
 
 // Build the main widget bundle
 execSync(
-  'npx esbuild src/widget/index.ts --bundle --minify --format=iife --outfile=public/widget.js',
+  `npx esbuild src/widget/index.ts --bundle --minify --format=iife --define:__BUGDROP_VERSION__='"${version}"' --outfile=public/widget.js`,
   { cwd: rootDir, stdio: 'inherit' }
 );
 

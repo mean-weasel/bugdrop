@@ -7,6 +7,8 @@ import {
   showSuccessModal,
 } from './ui';
 
+declare const __BUGDROP_VERSION__: string;
+
 interface WidgetConfig {
   repo: string;
   apiUrl: string;
