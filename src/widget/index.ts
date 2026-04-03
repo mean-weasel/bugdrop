@@ -7,7 +7,6 @@ import {
   showSuccessModal,
 } from './ui';
 
-declare const __BUGDROP_VERSION__: string;
 
 interface WidgetConfig {
   repo: string;
@@ -536,10 +535,13 @@ async function openFeedbackFlow(root: HTMLElement, config: WidgetConfig, opts?: 
     (config.welcome === 'once' && hasSeenWelcome(config.repo));
 
   if (!skipWelcome) {
-    const continueFlow = await showWelcomeScreen(root, config.repo);
+    const continueFlow = await showWelcomeScreen(root);
     if (!continueFlow) {
       _isModalOpen = false;
       return;
+    }
+    if (config.welcome === 'once') {
+      markWelcomeSeen(config.repo);
     }
   }
 
@@ -706,7 +708,7 @@ function showInstallPrompt(root: HTMLElement, config: WidgetConfig, errorMessage
   });
 }
 
-function showWelcomeScreen(root: HTMLElement, repo: string): Promise<boolean> {
+function showWelcomeScreen(root: HTMLElement): Promise<boolean> {
   return new Promise((resolve) => {
     const modal = createModal(
       root,
@@ -737,7 +739,6 @@ function showWelcomeScreen(root: HTMLElement, repo: string): Promise<boolean> {
     });
 
     continueBtn?.addEventListener('click', () => {
-      markWelcomeSeen(repo);
       modal.remove();
       resolve(true);
     });

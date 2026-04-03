@@ -283,6 +283,69 @@ test.describe('Widget Interaction', () => {
     await expect(getStartedBtn).not.toBeVisible();
   });
 
+  test('data-welcome="always" shows welcome every time', async ({ page }) => {
+    await page.route('**/api/check/**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/welcome-always.html');
+
+    const button = page.locator('#bugdrop-host').locator('css=.bd-trigger');
+    await expect(button).toBeVisible({ timeout: 5000 });
+
+    // First open: welcome should appear
+    await button.click();
+    const getStartedBtn = page.locator('#bugdrop-host').locator('css=[data-action="continue"]');
+    await expect(getStartedBtn).toBeVisible({ timeout: 5000 });
+    await getStartedBtn.click();
+
+    // Form should appear
+    const titleInput = page.locator('#bugdrop-host').locator('css=#title');
+    await expect(titleInput).toBeVisible({ timeout: 5000 });
+
+    // Close the modal
+    const cancelBtn = page.locator('#bugdrop-host').locator('css=[data-action="cancel"]');
+    await cancelBtn.click();
+    await page.waitForTimeout(300);
+
+    // Second open: welcome should appear AGAIN (always mode)
+    await button.click();
+    await expect(getStartedBtn).toBeVisible({ timeout: 5000 });
+  });
+
+  test('BugDrop.open() skips welcome screen', async ({ page }) => {
+    await page.route('**/api/check/**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/');
+
+    // Wait for widget to be ready
+    await page.waitForEvent('console', { predicate: msg => msg.text().includes('bugdrop:ready') || true, timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(500);
+
+    // Call BugDrop.open() programmatically
+    await page.evaluate(() => {
+      (window as any).BugDrop?.open();
+    });
+
+    // Form should appear directly (no welcome screen)
+    const titleInput = page.locator('#bugdrop-host').locator('css=#title');
+    await expect(titleInput).toBeVisible({ timeout: 5000 });
+
+    // Welcome "Get Started" button should NOT be present
+    const getStartedBtn = page.locator('#bugdrop-host').locator('css=[data-action="continue"]');
+    await expect(getStartedBtn).not.toBeVisible();
+  });
+
   test('screenshot checkbox is checked by default', async ({ page }) => {
     await page.route('**/api/check/**', async (route) => {
       await route.fulfill({
