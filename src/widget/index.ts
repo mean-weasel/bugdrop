@@ -411,7 +411,7 @@ function exposeBugDropAPI(root: HTMLElement, config: WidgetConfig) {
     // Open the feedback modal programmatically
     open: () => {
       if (!_isModalOpen) {
-        openFeedbackFlow(root, config);
+        openFeedbackFlow(root, config, { skipWelcome: true });
       }
     },
 
@@ -512,7 +512,7 @@ function createTriggerButton(root: HTMLElement, config: WidgetConfig, isRestorin
   trigger.addEventListener('click', () => openFeedbackFlow(root, config));
 }
 
-async function openFeedbackFlow(root: HTMLElement, config: WidgetConfig) {
+async function openFeedbackFlow(root: HTMLElement, config: WidgetConfig, opts?: { skipWelcome?: boolean }) {
   // Mark modal as open
   _isModalOpen = true;
 
@@ -527,11 +527,18 @@ async function openFeedbackFlow(root: HTMLElement, config: WidgetConfig) {
     return;
   }
 
-  // Step 1: Welcome screen
-  const continueFlow = await showWelcomeScreen(root);
-  if (!continueFlow) {
-    _isModalOpen = false;
-    return;
+  // Step 1: Welcome screen (conditional)
+  const skipWelcome =
+    opts?.skipWelcome ||
+    config.welcome === 'never' ||
+    (config.welcome === 'once' && hasSeenWelcome(config.repo));
+
+  if (!skipWelcome) {
+    const continueFlow = await showWelcomeScreen(root, config.repo);
+    if (!continueFlow) {
+      _isModalOpen = false;
+      return;
+    }
   }
 
   // Step 2: Feedback form (with optional screenshot checkbox)
@@ -697,7 +704,7 @@ function showInstallPrompt(root: HTMLElement, config: WidgetConfig, errorMessage
   });
 }
 
-function showWelcomeScreen(root: HTMLElement): Promise<boolean> {
+function showWelcomeScreen(root: HTMLElement, repo: string): Promise<boolean> {
   return new Promise((resolve) => {
     const modal = createModal(
       root,
@@ -728,6 +735,7 @@ function showWelcomeScreen(root: HTMLElement): Promise<boolean> {
     });
 
     continueBtn?.addEventListener('click', () => {
+      markWelcomeSeen(repo);
       modal.remove();
       resolve(true);
     });
