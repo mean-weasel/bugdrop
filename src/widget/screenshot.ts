@@ -19,14 +19,19 @@ async function loadHtmlToImage() {
   });
 }
 
-export async function captureScreenshot(element?: Element): Promise<string> {
+export async function captureScreenshot(
+  element?: Element,
+  screenshotScale?: number
+): Promise<string> {
   const lib = await loadHtmlToImage();
 
   const target = element || document.body;
+  const minScale = screenshotScale ?? 2;
+  const pixelRatio = Math.max(window.devicePixelRatio || 1, minScale);
 
   const dataUrl = await lib.toPng(target as HTMLElement, {
     cacheBust: true,
-    pixelRatio: window.devicePixelRatio || 1,
+    pixelRatio,
     filter: (node: HTMLElement) => {
       // Exclude our widget from screenshot
       return node.id !== 'bugdrop-host';

@@ -36,6 +36,8 @@ interface WidgetConfig {
   shadow?: string; // Shadow preset: 'none', 'soft' (default), 'hard'
   // Welcome screen behavior
   welcome: 'once' | 'always' | 'never';
+  // Screenshot configuration
+  screenshotScale?: number; // Minimum pixel ratio for captures (default: 2)
 }
 
 // BugDrop JavaScript API interface
@@ -252,6 +254,10 @@ const config: WidgetConfig = {
     if (val === 'always') return 'always' as const;
     return 'once' as const;
   })(),
+  // Screenshot configuration
+  screenshotScale: script?.dataset.screenshotScale
+    ? parseFloat(script.dataset.screenshotScale)
+    : undefined,
 };
 
 // Validate config
@@ -580,7 +586,7 @@ async function openFeedbackFlow(
     const screenshotChoice = await showScreenshotOptions(root);
 
     if (screenshotChoice === 'capture') {
-      screenshot = await captureWithLoading(root);
+      screenshot = await captureWithLoading(root, undefined, config.screenshotScale);
     } else if (screenshotChoice === 'element') {
       const element = await createElementPicker({
         accentColor: config.accentColor,
@@ -593,7 +599,7 @@ async function openFeedbackFlow(
         theme: config.theme,
       });
       if (element) {
-        screenshot = await captureWithLoading(root, element);
+        screenshot = await captureWithLoading(root, element, config.screenshotScale);
         elementSelector = getElementSelector(element);
       }
     }
@@ -619,7 +625,11 @@ async function openFeedbackFlow(
   _isModalOpen = false;
 }
 
-async function captureWithLoading(root: HTMLElement, element?: Element): Promise<string | null> {
+async function captureWithLoading(
+  root: HTMLElement,
+  element?: Element,
+  screenshotScale?: number
+): Promise<string | null> {
   // Show a temporary loading indicator
   const loadingModal = createModal(
     root,
@@ -633,7 +643,7 @@ async function captureWithLoading(root: HTMLElement, element?: Element): Promise
   );
 
   try {
-    const screenshot = await captureScreenshot(element);
+    const screenshot = await captureScreenshot(element, screenshotScale);
     loadingModal.remove();
     return screenshot;
   } catch (_error) {
