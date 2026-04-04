@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BugDrop Keyboard Conflict Test</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 16px; }
+    #log { background: #1a1a1a; color: #0f0; padding: 16px; border-radius: 8px; font-family: monospace; min-height: 200px; max-height: 400px; overflow-y: auto; margin-top: 16px; }
+    .log-entry { margin: 2px 0; }
+    .intercepted { color: #f77; }
+    .info { color: #7df; }
+    p { margin: 8px 0; color: #666; }
+  </style>
+</head>
+<body>
+  <h1>Keyboard Conflict Test</h1>
+  <p>This page has global keyboard listeners that intercept all keystrokes (simulating ERPNext/Frappe).</p>
+  <p>Open the BugDrop widget and try typing in the Title or Description fields.</p>
+  <p><strong>PASS:</strong> Text appears in BugDrop fields, no red entries in log below.</p>
+  <p><strong>FAIL:</strong> Red entries appear in the log, meaning the host page intercepted keystrokes.</p>
+  <div id="log"><div class="log-entry info">Waiting for keyboard events...</div></div>
+
+  <script>
+    const log = document.getElementById('log');
+    let bugdropOpen = false;
+
+    function addLog(msg, type) {
+      const entry = document.createElement('div');
+      entry.className = 'log-entry ' + (type || '');
+      entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      log.appendChild(entry);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    // Simulate host-page global keyboard shortcuts (like ERPNext)
+    document.addEventListener('keydown', function(e) {
+      // Check if BugDrop modal is open by looking for the shadow host
+      const host = document.getElementById('bugdrop-host');
+      if (host) {
+        addLog(`HOST intercepted keydown: "${e.key}" (code: ${e.code}) - BugDrop is open!`, 'intercepted');
+      } else {
+        addLog(`keydown: "${e.key}" (no BugDrop modal open - OK)`);
+      }
+    });
+
+    document.addEventListener('keypress', function(e) {
+      const host = document.getElementById('bugdrop-host');
+      if (host) {
+        addLog(`HOST intercepted keypress: "${e.key}" - BugDrop is open!`, 'intercepted');
+      }
+    });
+
+    document.addEventListener('keyup', function(e) {
+      const host = document.getElementById('bugdrop-host');
+      if (host) {
+        addLog(`HOST intercepted keyup: "${e.key}" - BugDrop is open!`, 'intercepted');
+      }
+    });
+
+    addLog('Global keyboard listeners active. Open BugDrop and type to test.', 'info');
+  </script>
+
+  <script src="/widget.js" data-repo="test/test" defer></script>
+</body>
+</html>
