@@ -77,6 +77,7 @@ api.get('/check/:owner/:repo', async c => {
   return c.json({
     installed: !!token,
     repo: `${owner}/${repo}`,
+    appName: c.env.GITHUB_APP_NAME || undefined,
   });
 });
 

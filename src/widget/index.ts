@@ -347,6 +347,16 @@ function initWidget(config: WidgetConfig) {
 
   const shadow = host.attachShadow({ mode: 'open' });
 
+  // Prevent keyboard events from leaking to host page (e.g., ERPNext console shortcuts)
+  for (const eventType of ['keydown', 'keypress', 'keyup'] as const) {
+    shadow.addEventListener(eventType, (e: Event) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+        e.stopPropagation();
+      }
+    });
+  }
+
   // Inject styles and create root wrapper
   const root = injectStyles(shadow, config);
   _widgetRoot = root;
@@ -539,9 +549,9 @@ async function openFeedbackFlow(
   _isModalOpen = true;
 
   // Check if app is installed
-  const installStatus = await checkInstallation(config);
+  const { status: installStatus, appName } = await checkInstallation(config);
   if (installStatus === 'not_installed') {
-    showInstallPrompt(root, config);
+    showInstallPrompt(root, config, undefined, appName);
     return;
   }
   if (installStatus === 'unreachable') {

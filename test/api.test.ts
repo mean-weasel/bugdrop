@@ -82,6 +82,7 @@ describe('API Routes', () => {
       expect(data).toEqual({
         installed: true,
         repo: 'testowner/testrepo',
+        appName: 'test-bugdrop-app',
       });
       expect(mockGetInstallationToken).toHaveBeenCalledWith(mockEnv, 'testowner', 'testrepo');
     });
@@ -97,6 +98,7 @@ describe('API Routes', () => {
       expect(data).toEqual({
         installed: false,
         repo: 'testowner/testrepo',
+        appName: 'test-bugdrop-app',
       });
     });
 
