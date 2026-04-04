@@ -37,6 +37,7 @@
     "eslint": "^9.39.2",
     "globals": "^16.5.0",
     "html-to-image": "^1.11.13",
+    "jsdom": "^29.0.1",
     "knip": "^5.76.1",
     "semantic-release": "^24.2.9",
     "typescript": "^5.7.2",

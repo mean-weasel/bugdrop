@@ -38,6 +38,8 @@ interface WidgetConfig {
   borderWidth?: string; // Border width in px (e.g., '4')
   borderColor?: string; // Border color (e.g., '#1a1a1a')
   shadow?: string; // Shadow preset: 'none', 'soft' (default), 'hard'
+  // Welcome screen behavior
+  welcome: 'once' | 'always' | 'never';
 }
 
 // BugDrop JavaScript API interface
@@ -69,6 +71,7 @@ interface FeedbackData {
 
 // localStorage key for dismissed state
 const BUGDROP_DISMISSED_KEY = 'bugdrop_dismissed';
+const BUGDROP_WELCOMED_PREFIX = 'bugdrop_welcomed_';
 
 // Parse user agent to extract browser info
 function parseBrowser(ua: string): { name: string; version: string } {
@@ -186,6 +189,22 @@ function dismissButton(): void {
   }
 }
 
+function hasSeenWelcome(repo: string): boolean {
+  try {
+    return localStorage.getItem(BUGDROP_WELCOMED_PREFIX + repo) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function markWelcomeSeen(repo: string): void {
+  try {
+    localStorage.setItem(BUGDROP_WELCOMED_PREFIX + repo, Date.now().toString());
+  } catch {
+    // localStorage may be blocked
+  }
+}
+
 // Read config from script tag (fallback to src-based lookup for async/defer)
 const script = (document.currentScript ||
   document.querySelector('script[src*="bugdrop"][src*="widget"]')) as HTMLScriptElement;
@@ -227,6 +246,13 @@ const config: WidgetConfig = {
   borderWidth: script?.dataset.borderWidth || undefined,
   borderColor: script?.dataset.borderColor || undefined,
   shadow: script?.dataset.shadow || undefined,
+  // Welcome screen behavior (default: 'once')
+  welcome: (() => {
+    const val = script?.dataset.welcome;
+    if (val === 'false' || val === 'never') return 'never' as const;
+    if (val === 'always') return 'always' as const;
+    return 'once' as const;
+  })(),
 };
 
 // Validate config
@@ -383,7 +409,7 @@ function exposeBugDropAPI(root: HTMLElement, config: WidgetConfig) {
     // Open the feedback modal programmatically
     open: () => {
       if (!_isModalOpen) {
-        openFeedbackFlow(root, config);
+        openFeedbackFlow(root, config, { skipWelcome: true });
       }
     },
 
@@ -484,7 +510,7 @@ function createTriggerButton(root: HTMLElement, config: WidgetConfig, isRestorin
   trigger.addEventListener('click', () => openFeedbackFlow(root, config));
 }
 
-async function openFeedbackFlow(root: HTMLElement, config: WidgetConfig) {
+async function openFeedbackFlow(root: HTMLElement, config: WidgetConfig, opts?: { skipWelcome?: boolean }) {
   // Mark modal as open
   _isModalOpen = true;
 
@@ -499,11 +525,21 @@ async function openFeedbackFlow(root: HTMLElement, config: WidgetConfig) {
     return;
   }
 
-  // Step 1: Welcome screen
-  const continueFlow = await showWelcomeScreen(root);
-  if (!continueFlow) {
-    _isModalOpen = false;
-    return;
+  // Step 1: Welcome screen (conditional)
+  const skipWelcome =
+    opts?.skipWelcome ||
+    config.welcome === 'never' ||
+    (config.welcome === 'once' && hasSeenWelcome(config.repo));
+
+  if (!skipWelcome) {
+    const continueFlow = await showWelcomeScreen(root);
+    if (!continueFlow) {
+      _isModalOpen = false;
+      return;
+    }
+    if (config.welcome === 'once') {
+      markWelcomeSeen(config.repo);
+    }
   }
 
   // Step 2: Feedback form (with optional screenshot checkbox)
@@ -775,7 +811,7 @@ function showFeedbackFormWithScreenshotOption(
             <textarea id="description" class="bd-textarea" placeholder="Provide additional details, steps to reproduce, or context..."></textarea>
           </div>
           <div class="bd-form-group" style="display: flex; align-items: center; gap: 10px; margin-top: 8px;">
-            <input type="checkbox" id="include-screenshot" style="width: 18px; height: 18px; accent-color: var(--bd-primary); cursor: pointer;" />
+            <input type="checkbox" id="include-screenshot" checked style="width: 18px; height: 18px; accent-color: var(--bd-primary); cursor: pointer;" />
             <label for="include-screenshot" style="font-size: 0.95rem; color: var(--bd-text-secondary); cursor: pointer; user-select: none;">
               📸 Include a screenshot
             </label>
