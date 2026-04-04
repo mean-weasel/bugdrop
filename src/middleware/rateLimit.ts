@@ -2,18 +2,20 @@ import type { Context, Next } from 'hono';
 import type { Env } from '../types';
 
 interface RateLimitConfig {
-  windowMs: number;      // Time window in milliseconds
-  maxRequests: number;   // Max requests per window
-  keyPrefix: string;     // Key prefix for KV storage
+  windowMs: number; // Time window in milliseconds
+  maxRequests: number; // Max requests per window
+  keyPrefix: string; // Key prefix for KV storage
 }
 
 /**
  * Extract client IP from Cloudflare headers
  */
 function getClientIp(c: Context<{ Bindings: Env }>): string {
-  return c.req.header('cf-connecting-ip') ||
-         c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ||
-         'unknown';
+  return (
+    c.req.header('cf-connecting-ip') ||
+    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ||
+    'unknown'
+  );
 }
 
 /**
@@ -37,14 +39,14 @@ export function rateLimit(config: RateLimitConfig) {
 
     try {
       // Get current count
-      const currentCount = parseInt(await kv.get(key) || '0', 10);
+      const currentCount = parseInt((await kv.get(key)) || '0', 10);
 
       if (currentCount >= maxRequests) {
         const retryAfter = Math.ceil(windowMs / 1000);
         return c.json(
           {
             error: 'Too many requests. Please try again later.',
-            retryAfter
+            retryAfter,
           },
           429,
           { 'Retry-After': String(retryAfter) }
@@ -89,7 +91,7 @@ export function rateLimitByRepo(config: Omit<RateLimitConfig, 'keyPrefix'>) {
     try {
       // Clone request to read body without consuming it
       const clonedRequest = c.req.raw.clone();
-      const body = await clonedRequest.json() as { repo?: string };
+      const body = (await clonedRequest.json()) as { repo?: string };
       const repo = body.repo;
 
       if (!repo) {
@@ -101,17 +103,20 @@ export function rateLimitByRepo(config: Omit<RateLimitConfig, 'keyPrefix'>) {
       const windowStart = Math.floor(Date.now() / windowMs);
       const key = `repo:${repo}:${windowStart}`;
 
-      const currentCount = parseInt(await kv.get(key) || '0', 10);
+      const currentCount = parseInt((await kv.get(key)) || '0', 10);
 
       if (currentCount >= maxRequests) {
         return c.json(
-          { error: 'This repository has received too many feedback submissions. Please try again later.' },
+          {
+            error:
+              'This repository has received too many feedback submissions. Please try again later.',
+          },
           429
         );
       }
 
       await kv.put(key, String(currentCount + 1), {
-        expirationTtl: Math.ceil(windowMs / 1000)
+        expirationTtl: Math.ceil(windowMs / 1000),
       });
 
       return next();

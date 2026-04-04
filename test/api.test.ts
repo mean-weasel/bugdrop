@@ -83,11 +83,7 @@ describe('API Routes', () => {
         installed: true,
         repo: 'testowner/testrepo',
       });
-      expect(mockGetInstallationToken).toHaveBeenCalledWith(
-        mockEnv,
-        'testowner',
-        'testrepo'
-      );
+      expect(mockGetInstallationToken).toHaveBeenCalledWith(mockEnv, 'testowner', 'testrepo');
     });
 
     it('should return installed: false when app is not installed', async () => {
@@ -260,8 +256,10 @@ describe('API Routes', () => {
 
     it('should upload screenshot and include URL in issue body', async () => {
       mockGetInstallationToken.mockResolvedValue('test-token');
-      const screenshotDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-      const uploadedUrl = 'https://raw.githubusercontent.com/testowner/testrepo/main/.feedback/screenshots/123456.png';
+      const screenshotDataUrl =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+      const uploadedUrl =
+        'https://raw.githubusercontent.com/testowner/testrepo/main/.feedback/screenshots/123456.png';
       mockUploadScreenshotAsAsset.mockResolvedValue(uploadedUrl);
       mockCreateIssue.mockResolvedValue({
         number: 42,
@@ -300,7 +298,8 @@ describe('API Routes', () => {
     it('should use screenshot when provided (annotations handled client-side)', async () => {
       mockGetInstallationToken.mockResolvedValue('test-token');
       const screenshotDataUrl = 'data:image/png;base64,screenshot';
-      const uploadedUrl = 'https://raw.githubusercontent.com/testowner/testrepo/main/.feedback/screenshots/789.png';
+      const uploadedUrl =
+        'https://raw.githubusercontent.com/testowner/testrepo/main/.feedback/screenshots/789.png';
       mockUploadScreenshotAsAsset.mockResolvedValue(uploadedUrl);
       mockCreateIssue.mockResolvedValue({
         number: 42,

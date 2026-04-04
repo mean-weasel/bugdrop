@@ -10,7 +10,7 @@ interface PickerStyle {
 }
 
 export function createElementPicker(style?: PickerStyle): Promise<Element | null> {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     // Small delay to ensure any modal has been removed from the DOM
     setTimeout(() => {
       startPicker(resolve, style);
@@ -21,7 +21,10 @@ export function createElementPicker(style?: PickerStyle): Promise<Element | null
 function startPicker(resolve: (element: Element | null) => void, style?: PickerStyle): void {
   const isDark = style?.theme === 'dark';
   const accent = style?.accentColor || '#14b8a6';
-  const fontFamily = style?.font === 'inherit' ? 'system-ui, sans-serif' : (style?.font || "'Space Grotesk', system-ui, sans-serif");
+  const fontFamily =
+    style?.font === 'inherit'
+      ? 'system-ui, sans-serif'
+      : style?.font || "'Space Grotesk', system-ui, sans-serif";
   const radius = style?.radius !== undefined ? `${style.radius}px` : '6px';
   const bw = style?.borderWidth || '3';
   const tooltipBg = style?.bgColor || (isDark ? '#0f172a' : '#1a1a1a');
@@ -72,7 +75,7 @@ function startPicker(resolve: (element: Element | null) => void, style?: PickerS
     const elementsAtPoint = document.elementsFromPoint(e.clientX, e.clientY);
 
     // Find the first element that's not our picker UI
-    const target = elementsAtPoint.find((el) => {
+    const target = elementsAtPoint.find(el => {
       if (el === highlight || el === tooltip) return false;
       if (el.id === 'bugdrop-element-picker-highlight') return false;
       if (el.id === 'bugdrop-element-picker-tooltip') return false;

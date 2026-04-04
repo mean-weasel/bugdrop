@@ -20,10 +20,7 @@ https://github.com/apps/neonwatty-bugdrop/installations/new
 **2. Add the script** to your website:
 
 ```html
-<script
-  src="https://bugdrop.neonwatty.workers.dev/widget.js"
-  data-repo="owner/repo"
-></script>
+<script src="https://bugdrop.neonwatty.workers.dev/widget.js" data-repo="owner/repo"></script>
 ```
 
 That's it! Users can now click the bug button to submit feedback as GitHub Issues.
@@ -40,10 +37,7 @@ By default, `/widget.js` always serves the latest version. For production stabil
 
 ```html
 <!-- Recommended for production: pin to major version -->
-<script
-  src="https://bugdrop.neonwatty.workers.dev/widget.v1.js"
-  data-repo="owner/repo"
-></script>
+<script src="https://bugdrop.neonwatty.workers.dev/widget.v1.js" data-repo="owner/repo"></script>
 ```
 
 | URL                 | Updates          | Best For                 |
@@ -277,8 +271,8 @@ window.BugDrop = {
 </nav>
 
 <script>
-  window.addEventListener("bugdrop:ready", () => {
-    document.getElementById("report-bug").addEventListener("click", () => {
+  window.addEventListener('bugdrop:ready', () => {
+    document.getElementById('report-bug').addEventListener('click', () => {
       window.BugDrop.open();
     });
   });
@@ -311,24 +305,24 @@ npx playwright install
 **Create `tests/bugdrop.spec.ts`:**
 
 ```typescript
-import { test, expect } from "@playwright/test";
+import { test, expect } from '@playwright/test';
 
 // ============================================================
 // CONFIGURE THESE VALUES TO MATCH YOUR BUGDROP SETUP
 // ============================================================
-const APP_URL = "https://your-app.com"; // Your app's URL
+const APP_URL = 'https://your-app.com'; // Your app's URL
 const EXPECTED = {
-  accentColor: "#e53935", // Your data-color value (or null to skip)
-  bgColor: "#fffef0", // Your data-bg value (or null to skip)
-  textColor: "#1a1a1a", // Your data-text value (or null to skip)
-  borderRadius: "0px", // Your data-radius + 'px' (or null to skip)
+  accentColor: '#e53935', // Your data-color value (or null to skip)
+  bgColor: '#fffef0', // Your data-bg value (or null to skip)
+  textColor: '#1a1a1a', // Your data-text value (or null to skip)
+  borderRadius: '0px', // Your data-radius + 'px' (or null to skip)
   fontFamily: null, // Substring to check (e.g., 'Georgia') or null
 };
 // ============================================================
 
 // WCAG contrast ratio helper — no dependencies needed
 function luminance(r: number, g: number, b: number): number {
-  const [rs, gs, bs] = [r, g, b].map((c) => {
+  const [rs, gs, bs] = [r, g, b].map(c => {
     c = c / 255;
     return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
   });
@@ -349,46 +343,46 @@ function contrastRatio(fg: string, bg: string): number {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-test.describe("BugDrop widget", () => {
-  test("renders and is visible", async ({ page }) => {
+test.describe('BugDrop widget', () => {
+  test('renders and is visible', async ({ page }) => {
     await page.goto(APP_URL);
-    const host = page.locator("#bugdrop-host");
+    const host = page.locator('#bugdrop-host');
     await expect(host).toBeAttached({ timeout: 10000 });
 
     // Trigger button should be visible inside shadow DOM
-    const trigger = host.locator("internal:shadow=.bd-trigger");
+    const trigger = host.locator('internal:shadow=.bd-trigger');
     await expect(trigger).toBeVisible();
   });
 
-  test("modal opens on click", async ({ page }) => {
+  test('modal opens on click', async ({ page }) => {
     await page.goto(APP_URL);
-    const host = page.locator("#bugdrop-host");
-    const trigger = host.locator("internal:shadow=.bd-trigger");
+    const host = page.locator('#bugdrop-host');
+    const trigger = host.locator('internal:shadow=.bd-trigger');
     await trigger.click();
 
     // A modal or overlay should appear
-    const overlay = host.locator("internal:shadow=.bd-overlay");
+    const overlay = host.locator('internal:shadow=.bd-overlay');
     await expect(overlay).toBeVisible({ timeout: 5000 });
   });
 
-  test("meets WCAG AA contrast requirements", async ({ page }) => {
+  test('meets WCAG AA contrast requirements', async ({ page }) => {
     await page.goto(APP_URL);
-    const host = page.locator("#bugdrop-host");
-    const trigger = host.locator("internal:shadow=.bd-trigger");
+    const host = page.locator('#bugdrop-host');
+    const trigger = host.locator('internal:shadow=.bd-trigger');
     await trigger.click();
 
     // Wait for modal
-    const overlay = host.locator("internal:shadow=.bd-overlay");
+    const overlay = host.locator('internal:shadow=.bd-overlay');
     await expect(overlay).toBeVisible({ timeout: 5000 });
 
     // Check text contrast inside the modal
     const styles = await page.evaluate(() => {
-      const host = document.querySelector("#bugdrop-host");
+      const host = document.querySelector('#bugdrop-host');
       if (!host?.shadowRoot) return null;
-      const modal = host.shadowRoot.querySelector(".bd-modal");
+      const modal = host.shadowRoot.querySelector('.bd-modal');
       if (!modal) return null;
       const cs = getComputedStyle(modal);
-      const title = host.shadowRoot.querySelector(".bd-title");
+      const title = host.shadowRoot.querySelector('.bd-title');
       const titleCs = title ? getComputedStyle(title) : null;
       return {
         modalBg: cs.backgroundColor,
@@ -401,26 +395,24 @@ test.describe("BugDrop widget", () => {
     expect(ratio).toBeGreaterThanOrEqual(4.5); // WCAG AA
   });
 
-  test("config values match expected", async ({ page }) => {
+  test('config values match expected', async ({ page }) => {
     await page.goto(APP_URL);
-    const host = page.locator("#bugdrop-host");
-    const trigger = host.locator("internal:shadow=.bd-trigger");
+    const host = page.locator('#bugdrop-host');
+    const trigger = host.locator('internal:shadow=.bd-trigger');
 
     const styles = await page.evaluate(() => {
-      const host = document.querySelector("#bugdrop-host");
+      const host = document.querySelector('#bugdrop-host');
       if (!host?.shadowRoot) return null;
-      const root = host.shadowRoot.querySelector(".bd-root") as HTMLElement;
+      const root = host.shadowRoot.querySelector('.bd-root') as HTMLElement;
       if (!root) return null;
       const cs = getComputedStyle(root);
-      const triggerEl = host.shadowRoot.querySelector(
-        ".bd-trigger",
-      ) as HTMLElement;
+      const triggerEl = host.shadowRoot.querySelector('.bd-trigger') as HTMLElement;
       const triggerCs = triggerEl ? getComputedStyle(triggerEl) : null;
       return {
-        bgColor: cs.getPropertyValue("--bd-bg-primary").trim(),
-        textColor: cs.getPropertyValue("--bd-text-primary").trim(),
-        accentColor: cs.getPropertyValue("--bd-primary").trim(),
-        borderRadius: triggerCs?.borderRadius || "",
+        bgColor: cs.getPropertyValue('--bd-bg-primary').trim(),
+        textColor: cs.getPropertyValue('--bd-text-primary').trim(),
+        accentColor: cs.getPropertyValue('--bd-primary').trim(),
+        borderRadius: triggerCs?.borderRadius || '',
         fontFamily: cs.fontFamily,
       };
     });

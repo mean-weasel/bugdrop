@@ -16,12 +16,16 @@ api.use('*', async (c, next) => {
   const allowedOrigins = c.env.ALLOWED_ORIGINS || '*';
 
   // Parse allowed origins
-  const originList = allowedOrigins === '*'
-    ? ['*']
-    : allowedOrigins.split(',').map(o => o.trim()).filter(Boolean);
+  const originList =
+    allowedOrigins === '*'
+      ? ['*']
+      : allowedOrigins
+          .split(',')
+          .map(o => o.trim())
+          .filter(Boolean);
 
   const corsMiddleware = cors({
-    origin: (origin) => {
+    origin: origin => {
       // Allow requests with no origin (e.g., curl, server-to-server)
       if (!origin) return '*';
       // Wildcard allows all
@@ -37,20 +41,26 @@ api.use('*', async (c, next) => {
 });
 
 // Rate limit: 10 requests per 15 minutes per IP
-api.use('/feedback', rateLimit({
-  windowMs: 15 * 60 * 1000,  // 15 minutes
-  maxRequests: 10,
-  keyPrefix: 'ip'
-}));
+api.use(
+  '/feedback',
+  rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    maxRequests: 10,
+    keyPrefix: 'ip',
+  })
+);
 
 // Rate limit: 50 requests per hour per repo
-api.use('/feedback', rateLimitByRepo({
-  windowMs: 60 * 60 * 1000,  // 1 hour
-  maxRequests: 50
-}));
+api.use(
+  '/feedback',
+  rateLimitByRepo({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    maxRequests: 50,
+  })
+);
 
 // Health check
-api.get('/health', (c) => {
+api.get('/health', c => {
   return c.json({
     status: 'ok',
     environment: c.env.ENVIRONMENT,
@@ -59,7 +69,7 @@ api.get('/health', (c) => {
 });
 
 // Check if app is installed on repo
-api.get('/check/:owner/:repo', async (c) => {
+api.get('/check/:owner/:repo', async c => {
   const { owner, repo } = c.req.param();
 
   const token = await getInstallationToken(c.env, owner, repo);
@@ -71,7 +81,7 @@ api.get('/check/:owner/:repo', async (c) => {
 });
 
 // Submit feedback
-api.post('/feedback', async (c) => {
+api.post('/feedback', async c => {
   // Parse payload
   let payload: FeedbackPayload;
   try {
@@ -82,9 +92,12 @@ api.post('/feedback', async (c) => {
 
   // Validate required fields (description is optional — many reports are title + screenshot)
   if (!payload.repo || !payload.title) {
-    return c.json({
-      error: 'Missing required fields: repo, title',
-    }, 400);
+    return c.json(
+      {
+        error: 'Missing required fields: repo, title',
+      },
+      400
+    );
   }
 
   // Validate screenshot size
@@ -93,18 +106,24 @@ api.post('/feedback', async (c) => {
     const sizeBytes = (payload.screenshot.length * 3) / 4; // Base64 to bytes
     const sizeMB = sizeBytes / (1024 * 1024);
     if (sizeMB > maxSizeMB) {
-      return c.json({
-        error: `Screenshot too large: ${sizeMB.toFixed(1)}MB exceeds ${maxSizeMB}MB limit`,
-      }, 400);
+      return c.json(
+        {
+          error: `Screenshot too large: ${sizeMB.toFixed(1)}MB exceeds ${maxSizeMB}MB limit`,
+        },
+        400
+      );
     }
   }
 
   // Parse owner/repo
   const [owner, repo] = payload.repo.split('/');
   if (!owner || !repo) {
-    return c.json({
-      error: 'Invalid repo format. Expected: owner/repo',
-    }, 400);
+    return c.json(
+      {
+        error: 'Invalid repo format. Expected: owner/repo',
+      },
+      400
+    );
   }
 
   try {
@@ -112,10 +131,13 @@ api.post('/feedback', async (c) => {
     const token = await getInstallationToken(c.env, owner, repo);
     if (!token) {
       const appName = c.env.GITHUB_APP_NAME || 'your-app-name';
-      return c.json({
-        error: 'GitHub App not installed on this repository',
-        installUrl: `https://github.com/apps/${appName}/installations/new`,
-      }, 403);
+      return c.json(
+        {
+          error: 'GitHub App not installed on this repository',
+          installUrl: `https://github.com/apps/${appName}/installations/new`,
+        },
+        403
+      );
     }
 
     // Upload screenshot as file and get URL
@@ -123,12 +145,7 @@ api.post('/feedback', async (c) => {
     const imageData = payload.screenshot;
     if (imageData && imageData.startsWith('data:image/')) {
       try {
-        screenshotUrl = await uploadScreenshotAsAsset(
-          token,
-          owner,
-          repo,
-          imageData
-        );
+        screenshotUrl = await uploadScreenshotAsAsset(token, owner, repo, imageData);
       } catch (error) {
         console.error('Failed to upload screenshot:', error);
         // Continue without screenshot rather than failing the whole submission
@@ -147,19 +164,13 @@ api.post('/feedback', async (c) => {
       feature: 'enhancement',
       question: 'question',
     };
-    const categoryLabel = payload.category
-      ? categoryLabels[payload.category] || 'bug'
-      : 'bug';
+    const categoryLabel = payload.category ? categoryLabels[payload.category] || 'bug' : 'bug';
 
     // Create issue with category label
-    const issue = await createIssue(
-      token,
-      owner,
-      repo,
-      payload.title,
-      body,
-      [categoryLabel, 'bugdrop']
-    );
+    const issue = await createIssue(token, owner, repo, payload.title, body, [
+      categoryLabel,
+      'bugdrop',
+    ]);
 
     return c.json({
       success: true,
@@ -167,22 +178,21 @@ api.post('/feedback', async (c) => {
       issueUrl: issue.html_url,
       isPublic,
     });
-
   } catch (error) {
     console.error('Error creating feedback:', error);
-    return c.json({
-      error: error instanceof Error ? error.message : 'Failed to create issue',
-    }, 500);
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to create issue',
+      },
+      500
+    );
   }
 });
 
 /**
  * Format the issue body with markdown
  */
-function formatIssueBody(
-  payload: FeedbackPayload,
-  screenshotDataUrl?: string
-): string {
+function formatIssueBody(payload: FeedbackPayload, screenshotDataUrl?: string): string {
   const sections: string[] = [];
 
   // Submitter info (if provided)
@@ -229,9 +239,7 @@ function formatIssueBody(
   }
 
   if (payload.metadata.os) {
-    const osVersion = payload.metadata.os.version
-      ? ` ${payload.metadata.os.version}`
-      : '';
+    const osVersion = payload.metadata.os.version ? ` ${payload.metadata.os.version}` : '';
     sections.push(`| **OS** | ${payload.metadata.os.name}${osVersion} |`);
   }
 
@@ -239,7 +247,9 @@ function formatIssueBody(
   const pixelRatio = payload.metadata.devicePixelRatio
     ? ` @${payload.metadata.devicePixelRatio}x`
     : '';
-  sections.push(`| **Viewport** | ${payload.metadata.viewport.width}×${payload.metadata.viewport.height}${pixelRatio} |`);
+  sections.push(
+    `| **Viewport** | ${payload.metadata.viewport.width}×${payload.metadata.viewport.height}${pixelRatio} |`
+  );
 
   // Language
   if (payload.metadata.language) {

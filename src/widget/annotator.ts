@@ -26,16 +26,13 @@ export function createAnnotator(
   // Load image
   const img = new Image();
   img.onload = () => {
-    // Scale to fit container
-    const maxWidth = container.clientWidth || 600;
-    const scale = Math.min(1, maxWidth / img.width);
-
-    canvas.width = img.width * scale;
-    canvas.height = img.height * scale;
+    // Keep full resolution in canvas, scale display via CSS
+    canvas.width = img.width;
+    canvas.height = img.height;
     canvas.style.maxWidth = '100%';
+    canvas.style.height = 'auto';
     canvas.style.cursor = 'crosshair';
 
-    ctx.scale(scale, scale);
     ctx.drawImage(img, 0, 0);
 
     // Save initial state
@@ -103,13 +100,13 @@ export function createAnnotator(
   }
 
   // Event handlers
-  canvas.addEventListener('mousedown', (e) => {
+  canvas.addEventListener('mousedown', e => {
     isDrawing = true;
     points = [getCanvasPoint(e)];
     saveState();
   });
 
-  canvas.addEventListener('mousemove', (e) => {
+  canvas.addEventListener('mousemove', e => {
     if (!isDrawing) return;
 
     const point = getCanvasPoint(e);
@@ -129,7 +126,7 @@ export function createAnnotator(
     }
   });
 
-  canvas.addEventListener('mouseup', (e) => {
+  canvas.addEventListener('mouseup', e => {
     if (!isDrawing) return;
     isDrawing = false;
 

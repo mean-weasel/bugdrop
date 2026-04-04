@@ -34,7 +34,7 @@ console.log(`Building widget version ${version}...`);
 
 // Build the main widget bundle
 execSync(
-  'npx esbuild src/widget/index.ts --bundle --minify --format=iife --outfile=public/widget.js',
+  `npx esbuild src/widget/index.ts --bundle --minify --format=iife --define:__BUGDROP_VERSION__='"${version}"' --outfile=public/widget.js`,
   { cwd: rootDir, stdio: 'inherit' }
 );
 
@@ -68,10 +68,7 @@ const versionsManifest = {
   generatedAt: new Date().toISOString(),
 };
 
-writeFileSync(
-  join(publicDir, 'versions.json'),
-  JSON.stringify(versionsManifest, null, 2)
-);
+writeFileSync(join(publicDir, 'versions.json'), JSON.stringify(versionsManifest, null, 2));
 console.log(`  Created versions.json manifest`);
 
 console.log(`\nWidget build complete!`);

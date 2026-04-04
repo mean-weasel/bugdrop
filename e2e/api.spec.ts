@@ -37,8 +37,8 @@ test.describe('Feedback API - Validation', () => {
     const response = await request.post('/api/feedback', {
       data: {
         title: 'Test',
-        description: 'Test description'
-      }
+        description: 'Test description',
+      },
     });
     expect(response.status()).toBe(400);
     const data = await response.json();
@@ -49,8 +49,8 @@ test.describe('Feedback API - Validation', () => {
     const response = await request.post('/api/feedback', {
       data: {
         repo: 'owner/repo',
-        description: 'Test description'
-      }
+        description: 'Test description',
+      },
     });
     expect(response.status()).toBe(400);
   });
@@ -59,8 +59,8 @@ test.describe('Feedback API - Validation', () => {
     const response = await request.post('/api/feedback', {
       data: {
         repo: 'owner/repo',
-        title: 'Test'
-      }
+        title: 'Test',
+      },
     });
     // Description is optional — server should not reject this.
     // Will get 500 due to missing GitHub secrets in E2E, but not 400.
@@ -77,9 +77,9 @@ test.describe('Feedback API - Validation', () => {
           url: 'http://test.com',
           userAgent: 'test',
           viewport: { width: 1920, height: 1080 },
-          timestamp: new Date().toISOString()
-        }
-      }
+          timestamp: new Date().toISOString(),
+        },
+      },
     });
     expect(response.status()).toBe(400);
     const data = await response.json();
@@ -89,14 +89,16 @@ test.describe('Feedback API - Validation', () => {
   test('POST /api/feedback returns 400 for invalid JSON', async ({ request }) => {
     const response = await request.post('/api/feedback', {
       headers: { 'Content-Type': 'application/json' },
-      data: 'not valid json{'
+      data: 'not valid json{',
     });
     expect(response.status()).toBe(400);
   });
 });
 
 test.describe('Feedback API - Valid Payloads', () => {
-  test('POST /api/feedback with valid payload returns 403 (app not installed)', async ({ request }) => {
+  test('POST /api/feedback with valid payload returns 403 (app not installed)', async ({
+    request,
+  }) => {
     // Without a real GitHub App configured, this should return 403
     const response = await request.post('/api/feedback', {
       data: {
@@ -107,9 +109,9 @@ test.describe('Feedback API - Valid Payloads', () => {
           url: 'http://localhost:8787/test/',
           userAgent: 'Playwright Test',
           viewport: { width: 1920, height: 1080 },
-          timestamp: new Date().toISOString()
-        }
-      }
+          timestamp: new Date().toISOString(),
+        },
+      },
     });
 
     // Should be 403 because GitHub App is not installed

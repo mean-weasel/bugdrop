@@ -3,10 +3,7 @@
  * Uses WebCrypto API (available in Cloudflare Workers)
  */
 
-export async function generateGitHubAppJWT(
-  appId: string,
-  privateKey: string
-): Promise<string> {
+export async function generateGitHubAppJWT(appId: string, privateKey: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
 
   // JWT Header
@@ -17,9 +14,9 @@ export async function generateGitHubAppJWT(
 
   // JWT Payload
   const payload = {
-    iat: now - 60,      // Issued 60 seconds ago (handles clock drift)
-    exp: now + 600,     // Expires in 10 minutes (GitHub maximum)
-    iss: appId,         // GitHub App ID
+    iat: now - 60, // Issued 60 seconds ago (handles clock drift)
+    exp: now + 600, // Expires in 10 minutes (GitHub maximum)
+    iss: appId, // GitHub App ID
   };
 
   // Encode header and payload
@@ -86,10 +83,21 @@ async function importPrivateKey(pem: string): Promise<CryptoKey> {
 function convertPkcs1ToPkcs8(pkcs1Bytes: Uint8Array): Uint8Array {
   // RSA algorithm identifier: OID 1.2.840.113549.1.1.1 + NULL
   const algorithmId = new Uint8Array([
-    0x30, 0x0d, // SEQUENCE, length 13
-    0x06, 0x09, // OID, length 9
-    0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, // 1.2.840.113549.1.1.1 (rsaEncryption)
-    0x05, 0x00  // NULL
+    0x30,
+    0x0d, // SEQUENCE, length 13
+    0x06,
+    0x09, // OID, length 9
+    0x2a,
+    0x86,
+    0x48,
+    0x86,
+    0xf7,
+    0x0d,
+    0x01,
+    0x01,
+    0x01, // 1.2.840.113549.1.1.1 (rsaEncryption)
+    0x05,
+    0x00, // NULL
   ]);
 
   // Build PKCS#8 structure
@@ -122,7 +130,13 @@ function wrapInAsn1(tag: number, data: Uint8Array): Uint8Array {
   } else if (length < 65536) {
     header = new Uint8Array([tag, 0x82, (length >> 8) & 0xff, length & 0xff]);
   } else {
-    header = new Uint8Array([tag, 0x83, (length >> 16) & 0xff, (length >> 8) & 0xff, length & 0xff]);
+    header = new Uint8Array([
+      tag,
+      0x83,
+      (length >> 16) & 0xff,
+      (length >> 8) & 0xff,
+      length & 0xff,
+    ]);
   }
 
   const result = new Uint8Array(header.length + data.length);
@@ -148,8 +162,5 @@ function base64UrlEncode(data: string | ArrayBuffer): string {
     base64 = btoa(binary);
   }
 
-  return base64
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }

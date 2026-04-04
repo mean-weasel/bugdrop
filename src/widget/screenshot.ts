@@ -1,5 +1,6 @@
 // Load html-to-image dynamically to reduce initial bundle size
-const HTML_TO_IMAGE_CDN = 'https://cdn.jsdelivr.net/npm/html-to-image@1.11.13/dist/html-to-image.js';
+const HTML_TO_IMAGE_CDN =
+  'https://cdn.jsdelivr.net/npm/html-to-image@1.11.13/dist/html-to-image.js';
 
 let htmlToImage: typeof import('html-to-image') | null = null;
 
@@ -18,14 +19,19 @@ async function loadHtmlToImage() {
   });
 }
 
-export async function captureScreenshot(element?: Element): Promise<string> {
+export async function captureScreenshot(
+  element?: Element,
+  screenshotScale?: number
+): Promise<string> {
   const lib = await loadHtmlToImage();
 
   const target = element || document.body;
+  const minScale = screenshotScale ?? 2;
+  const pixelRatio = Math.max(window.devicePixelRatio || 1, minScale);
 
   const dataUrl = await lib.toPng(target as HTMLElement, {
     cacheBust: true,
-    pixelRatio: window.devicePixelRatio || 1,
+    pixelRatio,
     filter: (node: HTMLElement) => {
       // Exclude our widget from screenshot
       return node.id !== 'bugdrop-host';
