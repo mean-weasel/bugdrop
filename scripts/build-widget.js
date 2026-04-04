@@ -68,10 +68,7 @@ const versionsManifest = {
   generatedAt: new Date().toISOString(),
 };
 
-writeFileSync(
-  join(publicDir, 'versions.json'),
-  JSON.stringify(versionsManifest, null, 2)
-);
+writeFileSync(join(publicDir, 'versions.json'), JSON.stringify(versionsManifest, null, 2));
 console.log(`  Created versions.json manifest`);
 
 console.log(`\nWidget build complete!`);

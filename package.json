@@ -25,10 +25,27 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "typecheck": "tsc --noEmit && tsc --project tsconfig.widget.json --noEmit"
+    "typecheck": "tsc --noEmit && tsc --project tsconfig.widget.json --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint --fix .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "validate": "npm run lint && npm run format:check && npm run typecheck && npm run test",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{js,jsx,json,md,css}": [
+      "prettier --write"
+    ]
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241127.0",
+    "@commitlint/cli": "^20.5.0",
+    "@commitlint/config-conventional": "^20.5.0",
     "@eslint/js": "^9.39.2",
     "@playwright/test": "^1.49.0",
     "@types/node": "^22.10.2",
@@ -37,8 +54,11 @@
     "eslint": "^9.39.2",
     "globals": "^16.5.0",
     "html-to-image": "^1.11.13",
+    "husky": "^9.1.7",
     "jsdom": "^29.0.1",
     "knip": "^5.76.1",
+    "lint-staged": "^16.4.0",
+    "prettier": "^3.8.1",
     "semantic-release": "^24.2.9",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.50.0",

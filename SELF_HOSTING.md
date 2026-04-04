@@ -72,6 +72,7 @@ preview_id = "<your-preview-id>"
 ```
 
 **Default limits:**
+
 - 10 requests per 15 minutes per IP
 - 50 requests per hour per repository
 
@@ -124,14 +125,14 @@ The release tag (e.g., `v1.2.0`) becomes the version number for the widget files
 
 ### Environment Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `GITHUB_APP_ID` | Yes | Your GitHub App's numeric ID |
-| `GITHUB_PRIVATE_KEY` | Yes | Private key from GitHub App settings |
-| `ALLOWED_ORIGINS` | No | Comma-separated allowed domains (default: `*`) |
-| `GITHUB_APP_NAME` | No | Your app's URL slug for install links |
-| `MAX_SCREENSHOT_SIZE_MB` | No | Max screenshot size in MB (default: `5`) |
-| `RATE_LIMIT` | No | KV namespace binding for rate limiting (see section 4) |
+| Variable                 | Required | Description                                            |
+| ------------------------ | -------- | ------------------------------------------------------ |
+| `GITHUB_APP_ID`          | Yes      | Your GitHub App's numeric ID                           |
+| `GITHUB_PRIVATE_KEY`     | Yes      | Private key from GitHub App settings                   |
+| `ALLOWED_ORIGINS`        | No       | Comma-separated allowed domains (default: `*`)         |
+| `GITHUB_APP_NAME`        | No       | Your app's URL slug for install links                  |
+| `MAX_SCREENSHOT_SIZE_MB` | No       | Max screenshot size in MB (default: `5`)               |
+| `RATE_LIMIT`             | No       | KV namespace binding for rate limiting (see section 4) |
 
 ### wrangler.toml
 

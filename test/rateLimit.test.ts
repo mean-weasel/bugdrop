@@ -22,26 +22,30 @@ describe('Rate Limit Middleware', () => {
       const app = new Hono<{ Bindings: Env }>();
 
       // Apply rate limit middleware
-      app.use('*', rateLimit({
-        windowMs: 60 * 1000, // 1 minute
-        maxRequests: 5,
-        keyPrefix: 'test'
-      }));
+      app.use(
+        '*',
+        rateLimit({
+          windowMs: 60 * 1000, // 1 minute
+          maxRequests: 5,
+          keyPrefix: 'test',
+        })
+      );
 
-      app.get('/test', (c) => c.json({ success: true }));
+      app.get('/test', c => c.json({ success: true }));
 
       return {
         app,
-        fetch: (req: Request) => app.fetch(req, {
-          RATE_LIMIT: kv as unknown as KVNamespace,
-          GITHUB_APP_ID: 'test',
-          GITHUB_PRIVATE_KEY: 'test',
-          ENVIRONMENT: 'test',
-          ALLOWED_ORIGINS: '*',
-          GITHUB_APP_NAME: 'test',
-          MAX_SCREENSHOT_SIZE_MB: '5',
-          ASSETS: {} as Fetcher,
-        } as Env),
+        fetch: (req: Request) =>
+          app.fetch(req, {
+            RATE_LIMIT: kv as unknown as KVNamespace,
+            GITHUB_APP_ID: 'test',
+            GITHUB_PRIVATE_KEY: 'test',
+            ENVIRONMENT: 'test',
+            ALLOWED_ORIGINS: '*',
+            GITHUB_APP_NAME: 'test',
+            MAX_SCREENSHOT_SIZE_MB: '5',
+            ASSETS: {} as Fetcher,
+          } as Env),
       };
     }
 
@@ -84,11 +88,9 @@ describe('Rate Limit Middleware', () => {
 
       await fetch(new Request('http://localhost/test'));
 
-      expect(mockKv.put).toHaveBeenCalledWith(
-        expect.stringMatching(/^test:/),
-        '1',
-        { expirationTtl: 60 }
-      );
+      expect(mockKv.put).toHaveBeenCalledWith(expect.stringMatching(/^test:/), '1', {
+        expirationTtl: 60,
+      });
     });
 
     it('handles KV errors gracefully (allows request)', async () => {
@@ -146,30 +148,34 @@ describe('Rate Limit Middleware', () => {
       const app = new Hono<{ Bindings: Env }>();
 
       // Apply repo rate limit middleware
-      app.use('*', rateLimitByRepo({
-        windowMs: 60 * 60 * 1000, // 1 hour
-        maxRequests: 50
-      }));
+      app.use(
+        '*',
+        rateLimitByRepo({
+          windowMs: 60 * 60 * 1000, // 1 hour
+          maxRequests: 50,
+        })
+      );
 
-      app.post('/feedback', async (c) => {
+      app.post('/feedback', async c => {
         const body = await c.req.json();
         return c.json({ success: true, repo: body.repo });
       });
 
-      app.get('/test', (c) => c.json({ success: true }));
+      app.get('/test', c => c.json({ success: true }));
 
       return {
         app,
-        fetch: (req: Request) => app.fetch(req, {
-          RATE_LIMIT: kv as unknown as KVNamespace,
-          GITHUB_APP_ID: 'test',
-          GITHUB_PRIVATE_KEY: 'test',
-          ENVIRONMENT: 'test',
-          ALLOWED_ORIGINS: '*',
-          GITHUB_APP_NAME: 'test',
-          MAX_SCREENSHOT_SIZE_MB: '5',
-          ASSETS: {} as Fetcher,
-        } as Env),
+        fetch: (req: Request) =>
+          app.fetch(req, {
+            RATE_LIMIT: kv as unknown as KVNamespace,
+            GITHUB_APP_ID: 'test',
+            GITHUB_PRIVATE_KEY: 'test',
+            ENVIRONMENT: 'test',
+            ALLOWED_ORIGINS: '*',
+            GITHUB_APP_NAME: 'test',
+            MAX_SCREENSHOT_SIZE_MB: '5',
+            ASSETS: {} as Fetcher,
+          } as Env),
       };
     }
 

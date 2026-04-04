@@ -1,11 +1,7 @@
 import { captureScreenshot } from './screenshot';
 import { createElementPicker } from './picker';
 import { createAnnotator } from './annotator';
-import {
-  injectStyles,
-  createModal,
-  showSuccessModal,
-} from './ui';
+import { injectStyles, createModal, showSuccessModal } from './ui';
 
 interface WidgetConfig {
   repo: string;
@@ -109,9 +105,10 @@ function parseOS(ua: string): { name: string; version: string } {
   for (const { name, pattern, versionIndex } of osPatterns) {
     const match = ua.match(pattern);
     if (match) {
-      const version = versionIndex !== undefined && match[versionIndex]
-        ? match[versionIndex].replace(/_/g, '.')
-        : '';
+      const version =
+        versionIndex !== undefined && match[versionIndex]
+          ? match[versionIndex].replace(/_/g, '.')
+          : '';
       return { name, version };
     }
   }
@@ -209,7 +206,9 @@ function markWelcomeSeen(repo: string): void {
 const script = (document.currentScript ||
   document.querySelector('script[src*="bugdrop"][src*="widget"]')) as HTMLScriptElement;
 if (!document.currentScript) {
-  console.warn('[BugDrop] document.currentScript is null — do not use async or defer on the BugDrop script tag.');
+  console.warn(
+    '[BugDrop] document.currentScript is null — do not use async or defer on the BugDrop script tag.'
+  );
 }
 const rawTheme = script?.dataset.theme as WidgetConfig['theme'] | undefined;
 const config: WidgetConfig = {
@@ -259,7 +258,9 @@ const config: WidgetConfig = {
 if (!config.repo) {
   console.error('[BugDrop] Missing data-repo attribute');
 } else if (!/^[^/]+\/[^/]+$/.test(config.repo)) {
-  console.error(`[BugDrop] Invalid data-repo format "${config.repo}". Expected "owner/repo" (e.g., "octocat/hello-world").`);
+  console.error(
+    `[BugDrop] Invalid data-repo format "${config.repo}". Expected "owner/repo" (e.g., "octocat/hello-world").`
+  );
 } else {
   initWidget(config);
 }
@@ -283,7 +284,8 @@ function getTriggerLabel(config: WidgetConfig): string {
 // Create the pull tab shown after dismissing the button
 function createPullTab(root: HTMLElement, config: WidgetConfig): HTMLElement {
   const tab = document.createElement('div');
-  tab.className = config.position === 'bottom-left' ? 'bd-pull-tab bd-pull-tab--left' : 'bd-pull-tab';
+  tab.className =
+    config.position === 'bottom-left' ? 'bd-pull-tab bd-pull-tab--left' : 'bd-pull-tab';
   tab.innerHTML = '<span class="bd-pull-tab-chevron">‹</span>';
   tab.setAttribute('role', 'button');
   tab.setAttribute('tabindex', '0');
@@ -306,7 +308,7 @@ function createPullTab(root: HTMLElement, config: WidgetConfig): HTMLElement {
   };
 
   tab.addEventListener('click', handleRestore);
-  tab.addEventListener('keydown', (e) => {
+  tab.addEventListener('keydown', e => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       handleRestore();
@@ -344,8 +346,8 @@ function initWidget(config: WidgetConfig) {
   _widgetRoot = root;
 
   // Determine if button should be rendered
-  const shouldShowButton = config.showButton &&
-    !(config.buttonDismissible && isButtonDismissed(config.dismissDuration));
+  const shouldShowButton =
+    config.showButton && !(config.buttonDismissible && isButtonDismissed(config.dismissDuration));
 
   if (shouldShowButton) {
     const trigger = document.createElement('button');
@@ -363,7 +365,7 @@ function initWidget(config: WidgetConfig) {
       trigger.appendChild(closeBtn);
 
       // Handle close button click
-      closeBtn.addEventListener('click', (e) => {
+      closeBtn.addEventListener('click', e => {
         e.stopPropagation(); // Don't trigger the main button
         dismissButton();
 
@@ -374,15 +376,19 @@ function initWidget(config: WidgetConfig) {
         trigger.classList.add('bd-trigger--dismissing');
 
         // Wait for animation to finish before removing
-        trigger.addEventListener('animationend', () => {
-          trigger.remove();
-          _triggerButton = null;
+        trigger.addEventListener(
+          'animationend',
+          () => {
+            trigger.remove();
+            _triggerButton = null;
 
-          // Show pull tab if enabled
-          if (config.showRestore) {
-            createPullTab(root, config);
-          }
-        }, { once: true });
+            // Show pull tab if enabled
+            if (config.showRestore) {
+              createPullTab(root, config);
+            }
+          },
+          { once: true }
+        );
       });
     }
 
@@ -391,7 +397,12 @@ function initWidget(config: WidgetConfig) {
 
     // Handle trigger click
     trigger.addEventListener('click', () => openFeedbackFlow(root, config));
-  } else if (config.showButton && config.buttonDismissible && config.showRestore && isButtonDismissed(config.dismissDuration)) {
+  } else if (
+    config.showButton &&
+    config.buttonDismissible &&
+    config.showRestore &&
+    isButtonDismissed(config.dismissDuration)
+  ) {
     // Button was previously dismissed - show pull tab
     createPullTab(root, config);
   }
@@ -460,8 +471,7 @@ function exposeBugDropAPI(root: HTMLElement, config: WidgetConfig) {
 
     // Check if floating button is visible
     isButtonVisible: () => {
-      return _triggerButton !== null &&
-        _triggerButton.style.display !== 'none';
+      return _triggerButton !== null && _triggerButton.style.display !== 'none';
     },
   };
 }
@@ -471,7 +481,7 @@ function createTriggerButton(root: HTMLElement, config: WidgetConfig, isRestorin
   const trigger = document.createElement('button');
   trigger.className = isRestoring ? 'bd-trigger bd-trigger--restoring' : 'bd-trigger';
   const iconHtml = getTriggerIconHtml(config);
-    trigger.innerHTML = `${iconHtml ? `<span class="bd-trigger-icon">${iconHtml}</span>` : ''}<span class="bd-trigger-label">${getTriggerLabel(config)}</span>`;
+  trigger.innerHTML = `${iconHtml ? `<span class="bd-trigger-icon">${iconHtml}</span>` : ''}<span class="bd-trigger-label">${getTriggerLabel(config)}</span>`;
   trigger.setAttribute('aria-label', 'Report a bug or send feedback');
 
   if (config.buttonDismissible) {
@@ -481,7 +491,7 @@ function createTriggerButton(root: HTMLElement, config: WidgetConfig, isRestorin
     closeBtn.setAttribute('aria-label', 'Dismiss feedback button');
     trigger.appendChild(closeBtn);
 
-    closeBtn.addEventListener('click', (e) => {
+    closeBtn.addEventListener('click', e => {
       e.stopPropagation();
       dismissButton();
 
@@ -492,15 +502,19 @@ function createTriggerButton(root: HTMLElement, config: WidgetConfig, isRestorin
       trigger.classList.add('bd-trigger--dismissing');
 
       // Wait for animation to finish before removing
-      trigger.addEventListener('animationend', () => {
-        trigger.remove();
-        _triggerButton = null;
+      trigger.addEventListener(
+        'animationend',
+        () => {
+          trigger.remove();
+          _triggerButton = null;
 
-        // Show pull tab if enabled
-        if (config.showRestore) {
-          createPullTab(root, config);
-        }
-      }, { once: true });
+          // Show pull tab if enabled
+          if (config.showRestore) {
+            createPullTab(root, config);
+          }
+        },
+        { once: true }
+      );
     });
   }
 
@@ -510,7 +524,11 @@ function createTriggerButton(root: HTMLElement, config: WidgetConfig, isRestorin
   trigger.addEventListener('click', () => openFeedbackFlow(root, config));
 }
 
-async function openFeedbackFlow(root: HTMLElement, config: WidgetConfig, opts?: { skipWelcome?: boolean }) {
+async function openFeedbackFlow(
+  root: HTMLElement,
+  config: WidgetConfig,
+  opts?: { skipWelcome?: boolean }
+) {
   // Mark modal as open
   _isModalOpen = true;
 
@@ -521,7 +539,11 @@ async function openFeedbackFlow(root: HTMLElement, config: WidgetConfig, opts?: 
     return;
   }
   if (installStatus === 'unreachable') {
-    showInstallPrompt(root, config, 'Unable to reach BugDrop API. Check your network connection or script tag URL.');
+    showInstallPrompt(
+      root,
+      config,
+      'Unable to reach BugDrop API. Check your network connection or script tag URL.'
+    );
     return;
   }
 
@@ -597,10 +619,7 @@ async function openFeedbackFlow(root: HTMLElement, config: WidgetConfig, opts?: 
   _isModalOpen = false;
 }
 
-async function captureWithLoading(
-  root: HTMLElement,
-  element?: Element
-): Promise<string | null> {
+async function captureWithLoading(root: HTMLElement, element?: Element): Promise<string | null> {
   // Show a temporary loading indicator
   const loadingModal = createModal(
     root,
@@ -621,7 +640,7 @@ async function captureWithLoading(
     loadingModal.remove();
 
     // Show error with retry option
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       const errorModal = createModal(
         root,
         'Capture Failed',
@@ -662,7 +681,9 @@ async function captureWithLoading(
   }
 }
 
-async function checkInstallation(config: WidgetConfig): Promise<'installed' | 'not_installed' | 'unreachable'> {
+async function checkInstallation(
+  config: WidgetConfig
+): Promise<'installed' | 'not_installed' | 'unreachable'> {
   try {
     const response = await fetch(`${config.apiUrl}/check/${config.repo}`);
     if (!response.ok) return 'unreachable';
@@ -706,7 +727,7 @@ function showInstallPrompt(root: HTMLElement, config: WidgetConfig, errorMessage
 }
 
 function showWelcomeScreen(root: HTMLElement): Promise<boolean> {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     const modal = createModal(
       root,
       'Share Your Feedback',
@@ -757,7 +778,7 @@ function showFeedbackFormWithScreenshotOption(
   root: HTMLElement,
   config: WidgetConfig
 ): Promise<FeedbackFormResult | null> {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     // Build optional name field
     const nameFieldHtml = config.showName
       ? `
@@ -841,7 +862,7 @@ function showFeedbackFormWithScreenshotOption(
     closeBtn?.addEventListener('click', closeModal);
     cancelBtn?.addEventListener('click', closeModal);
 
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', e => {
       e.preventDefault();
 
       // Validate required fields
@@ -866,7 +887,9 @@ function showFeedbackFormWithScreenshotOption(
       }
 
       // Get selected category
-      const categoryInput = modal.querySelector('input[name="category"]:checked') as HTMLInputElement;
+      const categoryInput = modal.querySelector(
+        'input[name="category"]:checked'
+      ) as HTMLInputElement;
       const category = (categoryInput?.value || 'bug') as FeedbackCategory;
 
       modal.remove();
@@ -888,7 +911,7 @@ function showFeedbackFormWithScreenshotOption(
 }
 
 function showScreenshotOptions(root: HTMLElement): Promise<'skip' | 'capture' | 'element'> {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     const modal = createModal(
       root,
       'Capture Screenshot',
@@ -929,8 +952,12 @@ function showScreenshotOptions(root: HTMLElement): Promise<'skip' | 'capture' | 
   });
 }
 
-function showAnnotationStep(root: HTMLElement, screenshot: string, config?: WidgetConfig): Promise<string> {
-  return new Promise((resolve) => {
+function showAnnotationStep(
+  root: HTMLElement,
+  screenshot: string,
+  config?: WidgetConfig
+): Promise<string> {
+  return new Promise(resolve => {
     const modal = createModal(
       root,
       'Annotate Screenshot',
@@ -954,15 +981,15 @@ function showAnnotationStep(root: HTMLElement, screenshot: string, config?: Widg
 
     // Tool buttons
     const toolButtons = modal.querySelectorAll('[data-tool]');
-    toolButtons.forEach((btn) => {
-      btn.addEventListener('click', (e) => {
+    toolButtons.forEach(btn => {
+      btn.addEventListener('click', e => {
         const target = e.target as HTMLElement;
         const tool = target.dataset.tool;
 
         if (tool === 'undo') {
           annotator.undo();
         } else if (tool) {
-          toolButtons.forEach((b) => b.classList.remove('active'));
+          toolButtons.forEach(b => b.classList.remove('active'));
           target.classList.add('active');
           annotator.setTool(tool as any);
         }
@@ -995,11 +1022,7 @@ function showAnnotationStep(root: HTMLElement, screenshot: string, config?: Widg
   });
 }
 
-async function submitFeedback(
-  root: HTMLElement,
-  config: WidgetConfig,
-  data: FeedbackData
-) {
+async function submitFeedback(root: HTMLElement, config: WidgetConfig, data: FeedbackData) {
   // Show submitting modal with loading state
   const modal = createModal(
     root,
@@ -1014,9 +1037,7 @@ async function submitFeedback(
 
   try {
     // Build submitter info if provided
-    const submitter = (data.name || data.email)
-      ? { name: data.name, email: data.email }
-      : undefined;
+    const submitter = data.name || data.email ? { name: data.name, email: data.email } : undefined;
 
     // Collect system info
     const systemInfo = getSystemInfo();
@@ -1054,19 +1075,19 @@ async function submitFeedback(
     if (response.status === 429) {
       const retryAfter = response.headers.get('Retry-After');
       const minutes = retryAfter ? Math.ceil(parseInt(retryAfter, 10) / 60) : 15;
-      showSubmitError(root, config, data, `Too many submissions. Please try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`);
+      showSubmitError(
+        root,
+        config,
+        data,
+        `Too many submissions. Please try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`
+      );
       return;
     }
 
     const result = await response.json();
 
     if (result.success) {
-      await showSuccessModal(
-        root,
-        result.issueNumber,
-        result.issueUrl,
-        result.isPublic ?? false
-      );
+      await showSuccessModal(root, result.issueNumber, result.issueUrl, result.isPublic ?? false);
     } else {
       showSubmitError(root, config, data, result.error || 'Failed to submit');
     }
@@ -1127,10 +1148,14 @@ function getElementSelector(element: Element): string {
 
     if (current.className) {
       // Handle SVG elements where className is SVGAnimatedString, not a string
-      const classNameStr = typeof current.className === 'string'
-        ? current.className
-        : (current.className as SVGAnimatedString).baseVal || '';
-      const classes = classNameStr.split(' ').filter(c => c).slice(0, 2);
+      const classNameStr =
+        typeof current.className === 'string'
+          ? current.className
+          : (current.className as SVGAnimatedString).baseVal || '';
+      const classes = classNameStr
+        .split(' ')
+        .filter(c => c)
+        .slice(0, 2);
       if (classes.length) {
         selector += `.${classes.join('.')}`;
       }

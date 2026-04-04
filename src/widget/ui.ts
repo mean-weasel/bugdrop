@@ -3,8 +3,8 @@ declare const __BUGDROP_VERSION__: string;
 interface WidgetConfig {
   repo: string;
   apiUrl: string;
-  position: "bottom-right" | "bottom-left";
-  theme: "light" | "dark" | "auto";
+  position: 'bottom-right' | 'bottom-left';
+  theme: 'light' | 'dark' | 'auto';
   accentColor?: string;
   font?: string;
   radius?: string;
@@ -16,43 +16,37 @@ interface WidgetConfig {
 }
 
 // Detect system dark mode preference
-function getSystemTheme(): "light" | "dark" {
-  if (typeof window !== "undefined" && window.matchMedia) {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches
-      ? "dark"
-      : "light";
+function getSystemTheme(): 'light' | 'dark' {
+  if (typeof window !== 'undefined' && window.matchMedia) {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }
-  return "light";
+  return 'light';
 }
 
 export function injectStyles(shadow: ShadowRoot, config: WidgetConfig) {
-  const pos = config.position === "bottom-left" ? "left: 20px" : "right: 20px";
+  const pos = config.position === 'bottom-left' ? 'left: 20px' : 'right: 20px';
   // Resolve 'auto' to actual theme based on system preference
-  const resolvedTheme =
-    config.theme === "auto" ? getSystemTheme() : config.theme;
-  const isDark = resolvedTheme === "dark";
+  const resolvedTheme = config.theme === 'auto' ? getSystemTheme() : config.theme;
+  const isDark = resolvedTheme === 'dark';
 
   // Determine font settings
-  const useInheritFont = config.font === "inherit";
-  const customFont =
-    config.font && config.font !== "inherit" ? config.font : null;
+  const useInheritFont = config.font === 'inherit';
+  const customFont = config.font && config.font !== 'inherit' ? config.font : null;
   const fontImport =
     useInheritFont || customFont
-      ? ""
+      ? ''
       : `@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');`;
   const fontFamily = useInheritFont
-    ? "inherit"
+    ? 'inherit'
     : customFont
       ? `${customFont}, system-ui, sans-serif`
       : `'Space Grotesk', system-ui, sans-serif`;
 
   // Determine radius settings
-  const radiusPx =
-    config.radius !== undefined ? parseInt(config.radius, 10) : null;
-  const radiusSm = radiusPx !== null ? `${radiusPx}px` : "6px";
-  const radiusMd =
-    radiusPx !== null ? `${Math.round(radiusPx * 1.4)}px` : "10px";
-  const radiusLg = radiusPx !== null ? `${Math.round(radiusPx * 2)}px` : "14px";
+  const radiusPx = config.radius !== undefined ? parseInt(config.radius, 10) : null;
+  const radiusSm = radiusPx !== null ? `${radiusPx}px` : '6px';
+  const radiusMd = radiusPx !== null ? `${Math.round(radiusPx * 1.4)}px` : '10px';
+  const radiusLg = radiusPx !== null ? `${Math.round(radiusPx * 2)}px` : '14px';
 
   // Determine border settings
   const borderW = config.borderWidth ? parseInt(config.borderWidth, 10) : null;
@@ -61,7 +55,7 @@ export function injectStyles(shadow: ShadowRoot, config: WidgetConfig) {
   // Determine shadow preset
   const shadowPreset = config.shadow || null; // 'none', 'soft', 'hard'
 
-  const styles = document.createElement("style");
+  const styles = document.createElement('style');
   styles.textContent = `
     ${fontImport}
 
@@ -75,7 +69,7 @@ export function injectStyles(shadow: ShadowRoot, config: WidgetConfig) {
       --bd-radius-lg: ${radiusLg};
 
       /* Border */
-      --bd-border-style: ${borderW !== null ? `${borderW}px` : "1px"} solid var(--bd-border);
+      --bd-border-style: ${borderW !== null ? `${borderW}px` : '1px'} solid var(--bd-border);
 
       /* Transitions */
       --bd-transition: 0.15s ease;
@@ -144,8 +138,8 @@ export function injectStyles(shadow: ShadowRoot, config: WidgetConfig) {
       ${pos};
       height: 44px;
       padding: 0 16px;
-      border-radius: ${radiusPx !== null ? `${radiusPx * 2}px` : "22px"};
-      border: ${borderW !== null ? "var(--bd-border-style)" : "none"};
+      border-radius: ${radiusPx !== null ? `${radiusPx * 2}px` : '22px'};
+      border: ${borderW !== null ? 'var(--bd-border-style)' : 'none'};
       background: var(--bd-primary);
       color: var(--bd-primary-text);
       cursor: pointer;
@@ -983,88 +977,79 @@ export function injectStyles(shadow: ShadowRoot, config: WidgetConfig) {
   shadow.appendChild(styles);
 
   // Create root wrapper with theme class
-  const root = document.createElement("div");
-  root.className = `bd-root${isDark ? " bd-dark" : ""}`;
+  const root = document.createElement('div');
+  root.className = `bd-root${isDark ? ' bd-dark' : ''}`;
 
   // Apply custom accent color if provided
   if (config.accentColor) {
     const color = config.accentColor;
     // Generate a slightly darker hover color by mixing with black
-    root.style.setProperty("--bd-primary", color);
-    root.style.setProperty(
-      "--bd-primary-hover",
-      `color-mix(in srgb, ${color} 85%, black)`,
-    );
-    root.style.setProperty("--bd-border-focus", color);
+    root.style.setProperty('--bd-primary', color);
+    root.style.setProperty('--bd-primary-hover', `color-mix(in srgb, ${color} 85%, black)`);
+    root.style.setProperty('--bd-border-focus', color);
   }
 
   // Apply custom background color if provided
   if (config.bgColor) {
-    root.style.setProperty("--bd-bg-primary", config.bgColor);
+    root.style.setProperty('--bd-bg-primary', config.bgColor);
     // Generate secondary/tertiary bg variants by mixing with black (light) or white (dark)
     if (isDark) {
       root.style.setProperty(
-        "--bd-bg-secondary",
-        `color-mix(in srgb, ${config.bgColor} 85%, white)`,
+        '--bd-bg-secondary',
+        `color-mix(in srgb, ${config.bgColor} 85%, white)`
       );
       root.style.setProperty(
-        "--bd-bg-tertiary",
-        `color-mix(in srgb, ${config.bgColor} 70%, white)`,
+        '--bd-bg-tertiary',
+        `color-mix(in srgb, ${config.bgColor} 70%, white)`
       );
     } else {
       root.style.setProperty(
-        "--bd-bg-secondary",
-        `color-mix(in srgb, ${config.bgColor} 93%, black)`,
+        '--bd-bg-secondary',
+        `color-mix(in srgb, ${config.bgColor} 93%, black)`
       );
       root.style.setProperty(
-        "--bd-bg-tertiary",
-        `color-mix(in srgb, ${config.bgColor} 85%, black)`,
+        '--bd-bg-tertiary',
+        `color-mix(in srgb, ${config.bgColor} 85%, black)`
       );
     }
   }
 
   // Apply custom text color if provided
   if (config.textColor) {
-    root.style.setProperty("--bd-text-primary", config.textColor);
+    root.style.setProperty('--bd-text-primary', config.textColor);
     // Generate secondary/muted text variants by mixing with the background
-    const bgBase = config.bgColor || (isDark ? "#0f172a" : "#fafaf9");
+    const bgBase = config.bgColor || (isDark ? '#0f172a' : '#fafaf9');
     root.style.setProperty(
-      "--bd-text-secondary",
-      `color-mix(in srgb, ${config.textColor} 65%, ${bgBase})`,
+      '--bd-text-secondary',
+      `color-mix(in srgb, ${config.textColor} 65%, ${bgBase})`
     );
     root.style.setProperty(
-      "--bd-text-muted",
-      `color-mix(in srgb, ${config.textColor} 40%, ${bgBase})`,
+      '--bd-text-muted',
+      `color-mix(in srgb, ${config.textColor} 40%, ${bgBase})`
     );
   }
 
   // Apply custom border styling if provided
   if (borderW !== null || borderC !== null) {
-    const bw = borderW !== null ? `${borderW}px` : "1px";
-    const bc = borderC || "var(--bd-border)";
-    root.style.setProperty("--bd-border", bc);
-    root.style.setProperty("--bd-border-style", `${bw} solid ${bc}`);
+    const bw = borderW !== null ? `${borderW}px` : '1px';
+    const bc = borderC || 'var(--bd-border)';
+    root.style.setProperty('--bd-border', bc);
+    root.style.setProperty('--bd-border-style', `${bw} solid ${bc}`);
   }
 
   // Apply shadow preset if provided
-  if (shadowPreset === "none") {
-    root.style.setProperty("--bd-shadow-sm", "none");
-    root.style.setProperty("--bd-shadow-md", "none");
-    root.style.setProperty("--bd-shadow-lg", "none");
-    root.style.setProperty("--bd-shadow-glow", "none");
-  } else if (shadowPreset === "hard") {
-    const shadowColor = borderC || (isDark ? "#000" : "#1a1a1a");
-    const offset = borderW !== null ? `${borderW + 2}px` : "6px";
-    root.style.setProperty("--bd-shadow-sm", `${shadowColor} 2px 2px 0 0`);
-    root.style.setProperty(
-      "--bd-shadow-md",
-      `${shadowColor} ${offset} ${offset} 0 0`,
-    );
-    root.style.setProperty(
-      "--bd-shadow-lg",
-      `${shadowColor} ${offset} ${offset} 0 0`,
-    );
-    root.style.setProperty("--bd-shadow-glow", "none");
+  if (shadowPreset === 'none') {
+    root.style.setProperty('--bd-shadow-sm', 'none');
+    root.style.setProperty('--bd-shadow-md', 'none');
+    root.style.setProperty('--bd-shadow-lg', 'none');
+    root.style.setProperty('--bd-shadow-glow', 'none');
+  } else if (shadowPreset === 'hard') {
+    const shadowColor = borderC || (isDark ? '#000' : '#1a1a1a');
+    const offset = borderW !== null ? `${borderW + 2}px` : '6px';
+    root.style.setProperty('--bd-shadow-sm', `${shadowColor} 2px 2px 0 0`);
+    root.style.setProperty('--bd-shadow-md', `${shadowColor} ${offset} ${offset} 0 0`);
+    root.style.setProperty('--bd-shadow-lg', `${shadowColor} ${offset} ${offset} 0 0`);
+    root.style.setProperty('--bd-shadow-glow', 'none');
   }
 
   shadow.appendChild(root);
@@ -1072,11 +1057,7 @@ export function injectStyles(shadow: ShadowRoot, config: WidgetConfig) {
   return root;
 }
 
-export function createModal(
-  container: HTMLElement,
-  title: string,
-  content: string,
-): HTMLElement {
+export function createModal(container: HTMLElement, title: string, content: string): HTMLElement {
   const overlay = document.createElement('div');
   overlay.className = 'bd-overlay';
   const widgetVersion = typeof __BUGDROP_VERSION__ !== 'undefined' ? __BUGDROP_VERSION__ : 'dev';
@@ -1101,9 +1082,9 @@ export function showSuccessModal(
   container: HTMLElement,
   issueNumber: number,
   issueUrl: string,
-  isPublic: boolean,
+  isPublic: boolean
 ): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     const issueInfo = isPublic
       ? `
         <p class="bd-success-issue">Issue <strong>#${issueNumber}</strong> has been created.</p>
@@ -1118,7 +1099,7 @@ export function showSuccessModal(
 
     const modal = createModal(
       container,
-      "Feedback Submitted!",
+      'Feedback Submitted!',
       `
         <div class="bd-success-content">
           <div class="bd-success-icon">
@@ -1135,10 +1116,10 @@ export function showSuccessModal(
         <div class="bd-powered-by">
           <a href="https://github.com/neonwatty/bugdrop" target="_blank" rel="noopener noreferrer">Powered by BugDrop</a>
         </div>
-      `,
+      `
     );
 
-    const closeBtn = modal.querySelector(".bd-close") as HTMLElement;
+    const closeBtn = modal.querySelector('.bd-close') as HTMLElement;
     const doneBtn = modal.querySelector('[data-action="done"]') as HTMLElement;
 
     const closeModal = () => {
@@ -1146,7 +1127,7 @@ export function showSuccessModal(
       resolve();
     };
 
-    closeBtn?.addEventListener("click", closeModal);
-    doneBtn?.addEventListener("click", closeModal);
+    closeBtn?.addEventListener('click', closeModal);
+    doneBtn?.addEventListener('click', closeModal);
   });
 }
