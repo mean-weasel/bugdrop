@@ -1934,7 +1934,7 @@ test.describe('Custom Icon', () => {
 
       const script = document.createElement('script');
       script.src = '/widget.js';
-      script.dataset.repo = 'neonwatty/feedback-widget-test';
+      script.dataset.repo = 'mean-weasel/bugdrop-widget-test';
       script.dataset.theme = 'dark';
       script.dataset.icon = 'https://invalid.example.com/nonexistent.png';
       document.body.appendChild(script);

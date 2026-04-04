@@ -1114,7 +1114,7 @@ export function showSuccessModal(
           <button class="bd-btn bd-btn-primary" data-action="done">Done</button>
         </div>
         <div class="bd-powered-by">
-          <a href="https://github.com/neonwatty/bugdrop" target="_blank" rel="noopener noreferrer">Powered by BugDrop</a>
+          <a href="https://github.com/mean-weasel/bugdrop" target="_blank" rel="noopener noreferrer">Powered by BugDrop</a>
         </div>
       `
     );

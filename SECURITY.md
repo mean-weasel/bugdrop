@@ -5,7 +5,7 @@
 If you discover a security vulnerability, please report it responsibly:
 
 1. **Do not** open a public GitHub issue
-2. **Email** security concerns to: neonwatty@gmail.com
+2. **Email** security concerns to: neonwatty@gmail.com or jeremy@mean-weasel.com
 3. **Include**:
    - Description of the vulnerability
    - Steps to reproduce

@@ -35,4 +35,4 @@ BugDrop is fully open source and self-hostable. If you run your own instance, yo
 
 ## Contact
 
-For privacy questions, open an issue at [github.com/neonwatty/bugdrop](https://github.com/neonwatty/bugdrop).
+For privacy questions, open an issue at [github.com/mean-weasel/bugdrop](https://github.com/mean-weasel/bugdrop).

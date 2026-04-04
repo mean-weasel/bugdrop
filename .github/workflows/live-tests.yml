@@ -12,8 +12,8 @@ on:
         required: true
         type: string
         default: preview
-  schedule:
-    - cron: '0 6 * * *'
+  # schedule:                          # Re-enable after filling placeholders
+  #   - cron: '0 6 * * *'             # (see Phase 3, Step 4 of org-transfer spec)
 
 jobs:
   live-tests:

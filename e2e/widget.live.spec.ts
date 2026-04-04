@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 /**
  * Live E2E tests for BugDrop widget on a real cross-origin deployment.
  *
- * These tests run against the Vercel preview of feedback-widget-test,
+ * These tests run against the Vercel preview of bugdrop-widget-test,
  * which loads the widget from the CF Workers preview deployment.
  * They validate cross-origin behavior that local tests cannot cover.
  *

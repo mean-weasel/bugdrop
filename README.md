@@ -1,9 +1,9 @@
 # BugDrop 🐛
 
-[![CI](https://github.com/neonwatty/bugdrop/actions/workflows/ci.yml/badge.svg)](https://github.com/neonwatty/bugdrop/actions/workflows/ci.yml)
+[![CI](https://github.com/mean-weasel/bugdrop/actions/workflows/ci.yml/badge.svg)](https://github.com/mean-weasel/bugdrop/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-1.11.0-14b8a6)](./CHANGELOG.md)
 [![Security Policy](https://img.shields.io/badge/Security-Policy-blue)](./SECURITY.md)
-[![Live Demo](https://img.shields.io/badge/Demo-Try_It_Live-ff9e64)](https://neonwatty.github.io/feedback-widget-test/)
+[![Live Demo](https://img.shields.io/badge/Demo-Try_It_Live-ff9e64)](https://neonwatty.github.io/feedback-widget-test/) <!-- TODO: update to Vercel URL after Phase 3 -->
 
 In-app feedback → GitHub Issues. Screenshots, annotations, the works.
 
@@ -454,7 +454,7 @@ Customize the `EXPECTED` object at the top to match your configuration. Set any 
 
 ## Live Demo
 
-Try it on [WienerMatch](https://neonwatty.github.io/feedback-widget-test/) — click the bug button in the bottom right corner.
+Try it on [WienerMatch](https://neonwatty.github.io/feedback-widget-test/) — click the bug button in the bottom right corner. <!-- TODO: update to Vercel URL after Phase 3 -->
 
 ## How It Works
 
