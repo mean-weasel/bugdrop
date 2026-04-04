@@ -13,7 +13,7 @@ import { test, expect } from '@playwright/test';
 test.describe('Widget Loading (Live)', () => {
   test('widget loads and renders on cross-origin site', async ({ page }) => {
     const errors: string[] = [];
-    page.on('console', (msg) => {
+    page.on('console', msg => {
       if (msg.type() === 'error' && !msg.text().includes('BugDrop')) {
         errors.push(msg.text());
       }
@@ -98,7 +98,7 @@ test.describe('Cross-Origin API (Live)', () => {
   test('widget derives API URL correctly from cross-origin script src', async ({ page }) => {
     // Register listener before navigation to capture all API calls
     const apiCalls: string[] = [];
-    page.on('request', (req) => {
+    page.on('request', req => {
       if (req.url().includes('/api/')) {
         apiCalls.push(req.url());
       }
@@ -132,7 +132,7 @@ test.describe('Cross-Origin API (Live)', () => {
 
     // Intercept the API response to check CORS headers
     const corsHeaders: Record<string, string> = {};
-    page.on('response', (res) => {
+    page.on('response', res => {
       if (res.url().includes('/api/check/')) {
         const headers = res.headers();
         if (headers['access-control-allow-origin']) {
@@ -173,7 +173,7 @@ test.describe('Powered By Link (Live)', () => {
 test.describe('Screenshot Capture (Live)', () => {
   test('screenshot option is available in cross-origin context', async ({ page }) => {
     // Mock the installation check to return installed: true
-    await page.route('**/api/check/**', async (route) => {
+    await page.route('**/api/check/**', async route => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -220,7 +220,7 @@ test.describe('Screenshot Capture (Live)', () => {
 test.describe('Feedback Submission (Live)', () => {
   test('feedback form submits and gets expected response', async ({ page }) => {
     // Mock the installation check to return installed: true
-    await page.route('**/api/check/**', async (route) => {
+    await page.route('**/api/check/**', async route => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',

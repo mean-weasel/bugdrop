@@ -137,7 +137,7 @@ jobs:
     with:
       target: preview
     secrets: inherit
-    continue-on-error: true  # Remove after 2 weeks of reliable green runs
+    continue-on-error: true # Remove after 2 weeks of reliable green runs
 
   # Automated release via semantic-release (only on push to main)
   release:
