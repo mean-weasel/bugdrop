@@ -693,21 +693,31 @@ async function captureWithLoading(
 
 async function checkInstallation(
   config: WidgetConfig
-): Promise<'installed' | 'not_installed' | 'unreachable'> {
+): Promise<{ status: 'installed' | 'not_installed' | 'unreachable'; appName?: string }> {
   try {
     const response = await fetch(`${config.apiUrl}/check/${config.repo}`);
-    if (!response.ok) return 'unreachable';
+    if (!response.ok) return { status: 'unreachable' };
     const data = await response.json();
-    return data.installed === true ? 'installed' : 'not_installed';
+    return {
+      status: data.installed === true ? 'installed' : 'not_installed',
+      appName: data.appName,
+    };
   } catch {
-    return 'unreachable';
+    return { status: 'unreachable' };
   }
 }
 
-function showInstallPrompt(root: HTMLElement, config: WidgetConfig, errorMessage?: string) {
-  const appName = config.apiUrl.includes('bugdrop.neonwatty.workers.dev')
-    ? 'neonwatty-bugdrop'
-    : config.apiUrl.replace(/https?:\/\//, '').replace(/\..*/, '');
+function showInstallPrompt(
+  root: HTMLElement,
+  config: WidgetConfig,
+  errorMessage?: string,
+  serverAppName?: string
+) {
+  const appName =
+    serverAppName ||
+    (config.apiUrl.includes('bugdrop.neonwatty.workers.dev')
+      ? 'neonwatty-bugdrop'
+      : config.apiUrl.replace(/https?:\/\//, '').replace(/\..*/, ''));
   const installUrl = `https://github.com/apps/${appName}/installations/new`;
   const message = errorMessage || 'BugDrop requires GitHub App installation to create issues.';
   const title = errorMessage ? 'Connection Error' : 'Install Required';
