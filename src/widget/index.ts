@@ -558,7 +558,8 @@ async function openFeedbackFlow(
     showInstallPrompt(
       root,
       config,
-      'Unable to reach BugDrop API. Check your network connection or script tag URL.'
+      'Unable to reach BugDrop API. Check your network connection or script tag URL.',
+      appName
     );
     return;
   }
