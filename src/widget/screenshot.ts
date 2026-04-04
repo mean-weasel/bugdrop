@@ -19,7 +19,10 @@ async function loadHtmlToImage() {
   });
 }
 
-export async function captureScreenshot(element?: Element, screenshotScale?: number): Promise<string> {
+export async function captureScreenshot(
+  element?: Element,
+  screenshotScale?: number
+): Promise<string> {
   const lib = await loadHtmlToImage();
 
   const target = element || document.body;
