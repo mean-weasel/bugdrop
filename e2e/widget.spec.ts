@@ -1104,15 +1104,82 @@ test.describe('Keyboard Event Isolation', () => {
       await getStartedBtn.click();
     }
 
-    // Type into the title input using real keyboard events
+    // Type into the title INPUT using real keyboard events
     const titleInput = page.locator('#bugdrop-host').locator('css=#title');
     await expect(titleInput).toBeVisible({ timeout: 5000 });
     await titleInput.click();
     await page.keyboard.type('Test keystroke isolation');
 
+    // Type into the description TEXTAREA
+    const descInput = page.locator('#bugdrop-host').locator('css=#description');
+    await expect(descInput).toBeVisible({ timeout: 5000 });
+    await descInput.click();
+    await page.keyboard.type('Also testing textarea');
+
     // Host page should NOT have received any keystrokes
     const leakedCount = await page.evaluate(() => (window as any).__hostKeystrokeCount);
     expect(leakedCount).toBe(0);
+  });
+});
+
+test.describe('Install URL from appName', () => {
+  test('uses server-provided appName in install link', async ({ page }) => {
+    // Mock /check to return installed: false with a custom appName
+    await page.route('**/api/check/**', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: false, appName: 'my-custom-app' }),
+      });
+    });
+
+    await page.goto('/test/keyboard-conflict.html');
+    await page.waitForTimeout(500);
+
+    // Open the widget
+    const button = page.locator('#bugdrop-host').locator('css=.bd-trigger');
+    await expect(button).toBeVisible({ timeout: 5000 });
+    await button.click();
+
+    const modal = page.locator('#bugdrop-host').locator('css=.bd-modal');
+    await expect(modal).toBeVisible({ timeout: 5000 });
+
+    // The install prompt should contain a link using the server-provided appName
+    const installLink = page.locator('#bugdrop-host').locator('css=a.bd-btn-primary');
+    await expect(installLink).toBeVisible({ timeout: 5000 });
+    await expect(installLink).toHaveAttribute(
+      'href',
+      'https://github.com/apps/my-custom-app/installations/new'
+    );
+  });
+
+  test('falls back to URL-derived appName when server omits it', async ({ page }) => {
+    // Mock /check to return installed: false without appName
+    await page.route('**/api/check/**', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: false }),
+      });
+    });
+
+    await page.goto('/test/keyboard-conflict.html');
+    await page.waitForTimeout(500);
+
+    const button = page.locator('#bugdrop-host').locator('css=.bd-trigger');
+    await expect(button).toBeVisible({ timeout: 5000 });
+    await button.click();
+
+    const modal = page.locator('#bugdrop-host').locator('css=.bd-modal');
+    await expect(modal).toBeVisible({ timeout: 5000 });
+
+    // Should still show an install link using the fallback-derived name
+    const installLink = page.locator('#bugdrop-host').locator('css=a.bd-btn-primary');
+    await expect(installLink).toBeVisible({ timeout: 5000 });
+    const href = await installLink.getAttribute('href');
+    expect(href).toMatch(/^https:\/\/github\.com\/apps\/.+\/installations\/new$/);
+    // Should NOT contain the custom app name (proving fallback was used)
+    expect(href).not.toContain('my-custom-app');
   });
 });
 
