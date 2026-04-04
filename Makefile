@@ -34,7 +34,7 @@ test-e2e-shard:
 		echo "Usage: make test-e2e-shard SHARD=1/2"; \
 		exit 1; \
 	fi
-	npx playwright test --shard=$(SHARD)
+	npx playwright test --project=chromium --shard=$(SHARD)
 
 # Code Quality
 lint:
