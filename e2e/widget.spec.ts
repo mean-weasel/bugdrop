@@ -1066,6 +1066,56 @@ test.describe('Dismiss Duration', () => {
   });
 });
 
+test.describe('Keyboard Event Isolation', () => {
+  test('typing in widget inputs does not leak keystrokes to host page', async ({ page }) => {
+    // Mock the installation check so the feedback form loads
+    await page.route('**/api/check/**', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/keyboard-conflict.html');
+    await page.waitForTimeout(500);
+
+    // Track host-page keydown events that fire while BugDrop is open
+    await page.evaluate(() => {
+      (window as any).__hostKeystrokeCount = 0;
+      document.addEventListener('keydown', () => {
+        if (document.getElementById('bugdrop-host')) {
+          (window as any).__hostKeystrokeCount++;
+        }
+      });
+    });
+
+    // Open the widget
+    const button = page.locator('#bugdrop-host').locator('css=.bd-trigger');
+    await expect(button).toBeVisible({ timeout: 5000 });
+    await button.click();
+
+    const modal = page.locator('#bugdrop-host').locator('css=.bd-modal');
+    await expect(modal).toBeVisible({ timeout: 5000 });
+
+    // Skip welcome screen if present
+    const getStartedBtn = page.locator('#bugdrop-host').locator('css=[data-action="continue"]');
+    if (await getStartedBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await getStartedBtn.click();
+    }
+
+    // Type into the title input using real keyboard events
+    const titleInput = page.locator('#bugdrop-host').locator('css=#title');
+    await expect(titleInput).toBeVisible({ timeout: 5000 });
+    await titleInput.click();
+    await page.keyboard.type('Test keystroke isolation');
+
+    // Host page should NOT have received any keystrokes
+    const leakedCount = await page.evaluate(() => (window as any).__hostKeystrokeCount);
+    expect(leakedCount).toBe(0);
+  });
+});
+
 test.describe('Widget Build', () => {
   test('widget.js is accessible', async ({ request }) => {
     const response = await request.get('/widget.js');
