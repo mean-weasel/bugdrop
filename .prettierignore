@@ -23,5 +23,8 @@ next-env.d.ts
 .DS_Store
 *.log
 
+# Docs
+docs/
+
 # Worktrees
 .worktrees/
