@@ -8,7 +8,7 @@ import { test, expect } from '@playwright/test';
 test.describe('Widget Loading', () => {
   test('page loads without console errors', async ({ page }) => {
     const errors: string[] = [];
-    page.on('console', (msg) => {
+    page.on('console', msg => {
       if (msg.type() === 'error' && !msg.text().includes('BugDrop')) {
         errors.push(msg.text());
       }
@@ -60,17 +60,17 @@ test.describe('Widget Interaction', () => {
   test('element picker handles SVG elements without errors', async ({ page }) => {
     // Track console errors - specifically looking for className.split errors
     const errors: string[] = [];
-    page.on('console', (msg) => {
+    page.on('console', msg => {
       if (msg.type() === 'error') {
         errors.push(msg.text());
       }
     });
-    page.on('pageerror', (err) => {
+    page.on('pageerror', err => {
       errors.push(err.message);
     });
 
     // Mock the installation check to return installed: true
-    await page.route('**/api/check/**', async (route) => {
+    await page.route('**/api/check/**', async route => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -124,9 +124,8 @@ test.describe('Widget Interaction', () => {
     await page.waitForTimeout(1000);
 
     // Check for the className.split error that was previously occurring
-    const classNameErrors = errors.filter(e =>
-      e.includes('className.split') ||
-      e.includes('split is not a function')
+    const classNameErrors = errors.filter(
+      e => e.includes('className.split') || e.includes('split is not a function')
     );
 
     expect(classNameErrors).toHaveLength(0);
@@ -140,17 +139,17 @@ test.describe('Widget Interaction', () => {
     // Track console errors - the fix must handle nested SVG elements too
     // since getElementSelector walks up the DOM tree
     const errors: string[] = [];
-    page.on('console', (msg) => {
+    page.on('console', msg => {
       if (msg.type() === 'error') {
         errors.push(msg.text());
       }
     });
-    page.on('pageerror', (err) => {
+    page.on('pageerror', err => {
       errors.push(err.message);
     });
 
     // Mock the installation check to return installed: true
-    await page.route('**/api/check/**', async (route) => {
+    await page.route('**/api/check/**', async route => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -205,9 +204,8 @@ test.describe('Widget Interaction', () => {
     await page.waitForTimeout(1000);
 
     // Check for the className.split error
-    const classNameErrors = errors.filter(e =>
-      e.includes('className.split') ||
-      e.includes('split is not a function')
+    const classNameErrors = errors.filter(
+      e => e.includes('className.split') || e.includes('split is not a function')
     );
 
     expect(classNameErrors).toHaveLength(0);
@@ -215,6 +213,185 @@ test.describe('Widget Interaction', () => {
     // Annotation canvas should appear
     const annotationCanvas = page.locator('#bugdrop-host').locator('css=#annotation-canvas');
     await expect(annotationCanvas).toBeVisible({ timeout: 5000 });
+  });
+
+  test('welcome screen only shows once per repo (default behavior)', async ({ page }) => {
+    await page.route('**/api/check/**', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/');
+
+    // Clear welcome-seen state for this repo
+    await page.evaluate(() =>
+      localStorage.removeItem('bugdrop_welcomed_neonwatty/feedback-widget-test')
+    );
+    await page.reload();
+
+    const button = page.locator('#bugdrop-host').locator('css=.bd-trigger');
+    await expect(button).toBeVisible({ timeout: 5000 });
+
+    // First open: welcome should appear
+    await button.click();
+    const getStartedBtn = page.locator('#bugdrop-host').locator('css=[data-action="continue"]');
+    await expect(getStartedBtn).toBeVisible({ timeout: 5000 });
+    await getStartedBtn.click();
+
+    // Form should appear
+    const titleInput = page.locator('#bugdrop-host').locator('css=#title');
+    await expect(titleInput).toBeVisible({ timeout: 5000 });
+
+    // Close the modal
+    const cancelBtn = page.locator('#bugdrop-host').locator('css=[data-action="cancel"]');
+    await cancelBtn.click();
+    const overlay = page.locator('#bugdrop-host').locator('css=.bd-overlay');
+    await expect(overlay).not.toBeVisible({ timeout: 5000 });
+
+    // Second open: welcome should be skipped, form appears directly
+    await button.click();
+    await expect(titleInput).toBeVisible({ timeout: 5000 });
+
+    // Verify "Get Started" button is NOT present (welcome was skipped)
+    await expect(getStartedBtn).not.toBeVisible();
+  });
+
+  test('data-welcome="false" skips welcome entirely', async ({ page }) => {
+    await page.route('**/api/check/**', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/welcome-disabled.html');
+
+    const button = page.locator('#bugdrop-host').locator('css=.bd-trigger');
+    await expect(button).toBeVisible({ timeout: 5000 });
+
+    await button.click();
+
+    // Form should appear directly, no welcome screen
+    const titleInput = page.locator('#bugdrop-host').locator('css=#title');
+    await expect(titleInput).toBeVisible({ timeout: 5000 });
+
+    // Welcome "Get Started" button should NOT be present
+    const getStartedBtn = page.locator('#bugdrop-host').locator('css=[data-action="continue"]');
+    await expect(getStartedBtn).not.toBeVisible();
+  });
+
+  test('data-welcome="always" shows welcome every time', async ({ page }) => {
+    await page.route('**/api/check/**', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/welcome-always.html');
+
+    const button = page.locator('#bugdrop-host').locator('css=.bd-trigger');
+    await expect(button).toBeVisible({ timeout: 5000 });
+
+    // First open: welcome should appear
+    await button.click();
+    const getStartedBtn = page.locator('#bugdrop-host').locator('css=[data-action="continue"]');
+    await expect(getStartedBtn).toBeVisible({ timeout: 5000 });
+    await getStartedBtn.click();
+
+    // Form should appear
+    const titleInput = page.locator('#bugdrop-host').locator('css=#title');
+    await expect(titleInput).toBeVisible({ timeout: 5000 });
+
+    // Close the modal and wait for it to disappear
+    const cancelBtn = page.locator('#bugdrop-host').locator('css=[data-action="cancel"]');
+    await cancelBtn.click();
+    const overlay = page.locator('#bugdrop-host').locator('css=.bd-overlay');
+    await expect(overlay).not.toBeVisible({ timeout: 5000 });
+
+    // Second open: welcome should appear AGAIN (always mode)
+    await button.click();
+    await expect(getStartedBtn).toBeVisible({ timeout: 5000 });
+  });
+
+  test('BugDrop.open() skips welcome screen', async ({ page }) => {
+    await page.route('**/api/check/**', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/');
+
+    // Wait for BugDrop API to be available, then open programmatically
+    await page.waitForFunction(() => typeof (window as any).BugDrop !== 'undefined', {
+      timeout: 5000,
+    });
+    await page.evaluate(() => {
+      (window as any).BugDrop?.open();
+    });
+
+    // Form should appear directly (no welcome screen)
+    const titleInput = page.locator('#bugdrop-host').locator('css=#title');
+    await expect(titleInput).toBeVisible({ timeout: 5000 });
+
+    // Welcome "Get Started" button should NOT be present
+    const getStartedBtn = page.locator('#bugdrop-host').locator('css=[data-action="continue"]');
+    await expect(getStartedBtn).not.toBeVisible();
+  });
+
+  test('screenshot checkbox is checked by default', async ({ page }) => {
+    await page.route('**/api/check/**', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/');
+
+    const button = page.locator('#bugdrop-host').locator('css=.bd-trigger');
+    await expect(button).toBeVisible({ timeout: 5000 });
+    await button.click();
+
+    // Click through welcome
+    const getStartedBtn = page.locator('#bugdrop-host').locator('css=[data-action="continue"]');
+    await expect(getStartedBtn).toBeVisible({ timeout: 5000 });
+    await getStartedBtn.click();
+
+    // Verify screenshot checkbox is checked by default
+    const screenshotCheckbox = page.locator('#bugdrop-host').locator('css=#include-screenshot');
+    await expect(screenshotCheckbox).toBeChecked();
+  });
+
+  test('version number appears in modal footer', async ({ page }) => {
+    await page.route('**/api/check/**', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/');
+
+    const button = page.locator('#bugdrop-host').locator('css=.bd-trigger');
+    await expect(button).toBeVisible({ timeout: 5000 });
+    await button.click();
+
+    // Version should appear in the modal
+    const versionEl = page.locator('#bugdrop-host').locator('css=.bd-version');
+    await expect(versionEl).toBeVisible({ timeout: 5000 });
+    const versionText = await versionEl.textContent();
+    expect(versionText).toMatch(/^BugDrop v/);
   });
 });
 
@@ -237,19 +414,19 @@ test.describe('API Endpoints', () => {
   test('feedback endpoint validates required fields', async ({ request }) => {
     // Missing repo
     const res1 = await request.post('/api/feedback', {
-      data: { title: 'Test', description: 'Test' }
+      data: { title: 'Test', description: 'Test' },
     });
     expect(res1.status()).toBe(400);
 
     // Missing title
     const res2 = await request.post('/api/feedback', {
-      data: { repo: 'owner/repo', description: 'Test' }
+      data: { repo: 'owner/repo', description: 'Test' },
     });
     expect(res2.status()).toBe(400);
 
     // Missing description (optional — should not return 400)
     const res3 = await request.post('/api/feedback', {
-      data: { repo: 'owner/repo', title: 'Test' }
+      data: { repo: 'owner/repo', title: 'Test' },
     });
     expect(res3.status()).not.toBe(400);
   });
@@ -264,9 +441,9 @@ test.describe('API Endpoints', () => {
           url: 'http://test.com',
           userAgent: 'test',
           viewport: { width: 1920, height: 1080 },
-          timestamp: new Date().toISOString()
-        }
-      }
+          timestamp: new Date().toISOString(),
+        },
+      },
     });
     expect(response.status()).toBe(400);
     const data = await response.json();
@@ -591,7 +768,9 @@ test.describe('Dismissible Button', () => {
     expect(Date.now() - timestamp).toBeLessThan(60000);
 
     // Verify only our key was set (no other bugdrop keys)
-    const allKeys = await page.evaluate(() => Object.keys(localStorage).filter(k => k.includes('bugdrop')));
+    const allKeys = await page.evaluate(() =>
+      Object.keys(localStorage).filter(k => k.includes('bugdrop'))
+    );
     expect(allKeys).toEqual(['bugdrop_dismissed']);
   });
 
@@ -719,8 +898,12 @@ test.describe('Dismissible Button', () => {
 
       Object.defineProperty(window, 'localStorage', {
         value: {
-          getItem: () => { throw new Error('localStorage blocked'); },
-          setItem: () => { throw new Error('localStorage blocked'); },
+          getItem: () => {
+            throw new Error('localStorage blocked');
+          },
+          setItem: () => {
+            throw new Error('localStorage blocked');
+          },
           removeItem: originalSetItem,
           clear: () => {},
           key: () => null,
@@ -807,7 +990,10 @@ test.describe('Dismiss Duration', () => {
 
     // Set an old timestamp (8 days ago, duration is 7 days)
     const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
-    await page.evaluate((ts) => localStorage.setItem('bugdrop_dismissed', ts.toString()), eightDaysAgo);
+    await page.evaluate(
+      ts => localStorage.setItem('bugdrop_dismissed', ts.toString()),
+      eightDaysAgo
+    );
 
     // Reload the page
     await page.reload();
@@ -823,7 +1009,10 @@ test.describe('Dismiss Duration', () => {
 
     // Set a recent timestamp (3 days ago, duration is 7 days)
     const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
-    await page.evaluate((ts) => localStorage.setItem('bugdrop_dismissed', ts.toString()), threeDaysAgo);
+    await page.evaluate(
+      ts => localStorage.setItem('bugdrop_dismissed', ts.toString()),
+      threeDaysAgo
+    );
 
     // Reload the page
     await page.reload();
@@ -864,7 +1053,10 @@ test.describe('Dismiss Duration', () => {
 
     // Set an old timestamp
     const oldTimestamp = Date.now() - 100 * 24 * 60 * 60 * 1000;
-    await page.evaluate((ts) => localStorage.setItem('bugdrop_dismissed', ts.toString()), oldTimestamp);
+    await page.evaluate(
+      ts => localStorage.setItem('bugdrop_dismissed', ts.toString()),
+      oldTimestamp
+    );
     await page.reload();
     await page.waitForTimeout(500);
 
@@ -954,10 +1146,13 @@ test.describe('JavaScript API', () => {
     await page.goto('/test/api-only.html');
 
     // Wait for the status to update (indicating bugdrop:ready was received)
-    await page.waitForFunction(() => {
-      const status = document.getElementById('status');
-      return status?.textContent?.includes('BugDrop ready');
-    }, { timeout: 5000 });
+    await page.waitForFunction(
+      () => {
+        const status = document.getElementById('status');
+        return status?.textContent?.includes('BugDrop ready');
+      },
+      { timeout: 5000 }
+    );
 
     // Verify the event was received
     const statusText = await page.locator('#status').textContent();
@@ -1127,7 +1322,7 @@ test.describe('Custom Accent Color', () => {
 
   test('custom color applies to focus ring on form inputs', async ({ page }) => {
     // Mock the installation check to return installed: true
-    await page.route('**/api/check/**', async (route) => {
+    await page.route('**/api/check/**', async route => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -1158,7 +1353,9 @@ test.describe('Custom Accent Color', () => {
 
     // Check that the --bd-border-focus CSS variable is set to the custom color
     const root = page.locator('#bugdrop-host').locator('css=.bd-root');
-    const borderFocusColor = await root.evaluate(el => getComputedStyle(el).getPropertyValue('--bd-border-focus').trim());
+    const borderFocusColor = await root.evaluate(el =>
+      getComputedStyle(el).getPropertyValue('--bd-border-focus').trim()
+    );
 
     // Should be the custom purple color
     expect(borderFocusColor).toBe('#9333EA');
@@ -1437,10 +1634,13 @@ test.describe('API-Only Mode (data-button="false")', () => {
     await page.goto('/test/api-only.html');
 
     // Wait for BugDrop to be ready
-    await page.waitForFunction(() => {
-      const status = document.getElementById('status');
-      return status?.textContent?.includes('BugDrop ready');
-    }, { timeout: 5000 });
+    await page.waitForFunction(
+      () => {
+        const status = document.getElementById('status');
+        return status?.textContent?.includes('BugDrop ready');
+      },
+      { timeout: 5000 }
+    );
 
     // Click the "Report Bug" link in the nav
     await page.click('#nav-report-bug');
@@ -1467,7 +1667,7 @@ test.describe('API-Only Mode (data-button="false")', () => {
 test.describe('Feedback Categories', () => {
   test('category selector is visible on feedback form', async ({ page }) => {
     // Mock installation check
-    await page.route('**/api/check/**', async (route) => {
+    await page.route('**/api/check/**', async route => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -1497,9 +1697,15 @@ test.describe('Feedback Categories', () => {
     await expect(categorySelector).toBeVisible();
 
     // All three options should be present
-    const bugOption = page.locator('#bugdrop-host').locator('css=input[name="category"][value="bug"]');
-    const featureOption = page.locator('#bugdrop-host').locator('css=input[name="category"][value="feature"]');
-    const questionOption = page.locator('#bugdrop-host').locator('css=input[name="category"][value="question"]');
+    const bugOption = page
+      .locator('#bugdrop-host')
+      .locator('css=input[name="category"][value="bug"]');
+    const featureOption = page
+      .locator('#bugdrop-host')
+      .locator('css=input[name="category"][value="feature"]');
+    const questionOption = page
+      .locator('#bugdrop-host')
+      .locator('css=input[name="category"][value="question"]');
 
     await expect(bugOption).toBeAttached();
     await expect(featureOption).toBeAttached();
@@ -1508,7 +1714,7 @@ test.describe('Feedback Categories', () => {
 
   test('bug category is selected by default', async ({ page }) => {
     // Mock installation check
-    await page.route('**/api/check/**', async (route) => {
+    await page.route('**/api/check/**', async route => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -1530,13 +1736,15 @@ test.describe('Feedback Categories', () => {
     await expect(titleInput).toBeVisible({ timeout: 5000 });
 
     // Bug should be checked by default
-    const bugOption = page.locator('#bugdrop-host').locator('css=input[name="category"][value="bug"]');
+    const bugOption = page
+      .locator('#bugdrop-host')
+      .locator('css=input[name="category"][value="bug"]');
     await expect(bugOption).toBeChecked();
   });
 
   test('can select different categories', async ({ page }) => {
     // Mock installation check
-    await page.route('**/api/check/**', async (route) => {
+    await page.route('**/api/check/**', async route => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -1558,16 +1766,22 @@ test.describe('Feedback Categories', () => {
     await expect(titleInput).toBeVisible({ timeout: 5000 });
 
     // Select feature
-    const featureOption = page.locator('#bugdrop-host').locator('css=input[name="category"][value="feature"]');
+    const featureOption = page
+      .locator('#bugdrop-host')
+      .locator('css=input[name="category"][value="feature"]');
     await featureOption.click();
     await expect(featureOption).toBeChecked();
 
     // Bug should no longer be checked
-    const bugOption = page.locator('#bugdrop-host').locator('css=input[name="category"][value="bug"]');
+    const bugOption = page
+      .locator('#bugdrop-host')
+      .locator('css=input[name="category"][value="bug"]');
     await expect(bugOption).not.toBeChecked();
 
     // Select question
-    const questionOption = page.locator('#bugdrop-host').locator('css=input[name="category"][value="question"]');
+    const questionOption = page
+      .locator('#bugdrop-host')
+      .locator('css=input[name="category"][value="question"]');
     await questionOption.click();
     await expect(questionOption).toBeChecked();
     await expect(featureOption).not.toBeChecked();

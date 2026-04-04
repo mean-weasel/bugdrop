@@ -14,7 +14,9 @@ app.use('*', async (c, next) => {
     if (!c.env.GITHUB_PRIVATE_KEY) missing.push('GITHUB_PRIVATE_KEY');
 
     if (missing.length > 0) {
-      console.warn(`[BugDrop] Missing env vars (feedback endpoint will fail): ${missing.join(', ')}`);
+      console.warn(
+        `[BugDrop] Missing env vars (feedback endpoint will fail): ${missing.join(', ')}`
+      );
     }
 
     // Warn about development-only settings
@@ -34,12 +36,12 @@ app.use('*', logger());
 app.route('/api', api);
 
 // Landing page
-app.get('/', async (c) => {
+app.get('/', async c => {
   return c.env.ASSETS.fetch(new Request(new URL('/index.html', c.req.url)));
 });
 
 // Serve widget.js from static assets
-app.get('/widget.js', async (c) => {
+app.get('/widget.js', async c => {
   return c.env.ASSETS.fetch(c.req.raw);
 });
 

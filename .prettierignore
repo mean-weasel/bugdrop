@@ -1,0 +1,30 @@
+# Build outputs
+dist/
+public/
+
+# Dependencies
+node_modules/
+
+# Test outputs
+playwright-report/
+test-results/
+coverage/
+
+# Lock files
+package-lock.json
+
+# Cloudflare
+.wrangler/
+
+# Config files
+next-env.d.ts
+
+# Misc
+.DS_Store
+*.log
+
+# Docs
+docs/
+
+# Worktrees
+.worktrees/

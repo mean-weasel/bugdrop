@@ -103,13 +103,13 @@ export function createAnnotator(
   }
 
   // Event handlers
-  canvas.addEventListener('mousedown', (e) => {
+  canvas.addEventListener('mousedown', e => {
     isDrawing = true;
     points = [getCanvasPoint(e)];
     saveState();
   });
 
-  canvas.addEventListener('mousemove', (e) => {
+  canvas.addEventListener('mousemove', e => {
     if (!isDrawing) return;
 
     const point = getCanvasPoint(e);
@@ -129,7 +129,7 @@ export function createAnnotator(
     }
   });
 
-  canvas.addEventListener('mouseup', (e) => {
+  canvas.addEventListener('mouseup', e => {
     if (!isDrawing) return;
     isDrawing = false;
 

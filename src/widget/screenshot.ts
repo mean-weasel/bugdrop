@@ -1,5 +1,6 @@
 // Load html-to-image dynamically to reduce initial bundle size
-const HTML_TO_IMAGE_CDN = 'https://cdn.jsdelivr.net/npm/html-to-image@1.11.13/dist/html-to-image.js';
+const HTML_TO_IMAGE_CDN =
+  'https://cdn.jsdelivr.net/npm/html-to-image@1.11.13/dist/html-to-image.js';
 
 let htmlToImage: typeof import('html-to-image') | null = null;
 
