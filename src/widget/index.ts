@@ -351,7 +351,7 @@ function initWidget(config: WidgetConfig) {
   for (const eventType of ['keydown', 'keypress', 'keyup'] as const) {
     shadow.addEventListener(eventType, (e: Event) => {
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
         e.stopPropagation();
       }
     });

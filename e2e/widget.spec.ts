@@ -1116,6 +1116,10 @@ test.describe('Keyboard Event Isolation', () => {
     await descInput.click();
     await page.keyboard.type('Also testing textarea');
 
+    // Verify text was actually entered (stopPropagation must not swallow input events)
+    await expect(titleInput).toHaveValue('Test keystroke isolation');
+    await expect(descInput).toHaveValue('Also testing textarea');
+
     // Host page should NOT have received any keystrokes
     const leakedCount = await page.evaluate(() => (window as any).__hostKeystrokeCount);
     expect(leakedCount).toBe(0);
