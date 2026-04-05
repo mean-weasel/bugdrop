@@ -454,6 +454,7 @@ Customize the `EXPECTED` object at the top to match your configuration. Set any 
 ## Live Demo
 
 Try it on [WienerMatch](https://bugdrop-widget-test.vercel.app) — click the bug button in the bottom right corner.
+
 ## How It Works
 
 ```
