@@ -24,12 +24,6 @@ export default defineConfig({
       fullyParallel: false,
       use: {
         ...devices['Desktop Chrome'],
-        ...(process.env.VERCEL_AUTOMATION_BYPASS_SECRET && {
-          extraHTTPHeaders: {
-            'x-vercel-protection-bypass': process.env.VERCEL_AUTOMATION_BYPASS_SECRET,
-            'x-vercel-set-bypass-cookie': 'samesitenone',
-          },
-        }),
       },
       testMatch: /.*\.live\.spec\.ts/,
       timeout: 60_000,
