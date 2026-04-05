@@ -12,8 +12,8 @@ on:
         required: true
         type: string
         default: preview
-  # schedule:                          # Re-enable after filling placeholders
-  #   - cron: '0 6 * * *'             # (see Phase 3, Step 4 of org-transfer spec)
+  schedule:
+    - cron: '0 6 * * *'
 
 jobs:
   live-tests:
@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       LIVE_TARGET: ${{ inputs.target || 'preview' }}
-      PLAYWRIGHT_BASE_URL: <STABLE_VERCEL_PREVIEW_URL>
+      PLAYWRIGHT_BASE_URL: https://bugdrop-widget-test-git-preview-jermwatts-projects.vercel.app
     steps:
       - uses: actions/checkout@v4
 
@@ -38,7 +38,7 @@ jobs:
 
       - name: Wait for preview widget deployment
         run: |
-          WORKER_URL="https://bugdrop-preview.<ACCOUNT>.workers.dev/api/health"
+          WORKER_URL="https://bugdrop-preview.neonwatty.workers.dev/api/health"
           echo "Polling $WORKER_URL until ready..."
           for i in $(seq 1 30); do
             if curl -sfo /dev/null "$WORKER_URL"; then
@@ -60,6 +60,8 @@ jobs:
 
       - name: Run live E2E tests
         run: npx playwright test --project=chromium-live --workers=1
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
       - name: Upload test report
         uses: actions/upload-artifact@v4

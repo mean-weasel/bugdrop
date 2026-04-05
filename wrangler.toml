@@ -32,6 +32,7 @@ preview_id = "ff8f3809037d4403befd09369a9f7e36"
 # Preview environment for live E2E tests (deployed in merge queue)
 [env.preview]
 name = "bugdrop-preview"
+workers_dev = true
 
 [env.preview.vars]
 ENVIRONMENT = "preview"
@@ -41,4 +42,4 @@ MAX_SCREENSHOT_SIZE_MB = "5"
 
 [[env.preview.kv_namespaces]]
 binding = "RATE_LIMIT"
-id = "<PREVIEW_KV_ID>"
+id = "cdb88fa95d6348d6ab84037751853d5d"
