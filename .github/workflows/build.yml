@@ -1,5 +1,5 @@
 name: CI
-# test: verify pull_request events fire after org transfer
+# test: verify pull_request events fire after org transfer (attempt 2)
 
 on:
   push:
