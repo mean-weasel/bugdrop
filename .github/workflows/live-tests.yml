@@ -55,8 +55,14 @@ jobs:
         run: |
           VENUE_URL="${PLAYWRIGHT_BASE_URL}"
           echo "Checking test venue at $VENUE_URL..."
-          curl -sfo /dev/null "$VENUE_URL" || (echo "Test venue unreachable at $VENUE_URL" && exit 1)
+          BYPASS_ARGS=""
+          if [ -n "$VERCEL_AUTOMATION_BYPASS_SECRET" ]; then
+            BYPASS_ARGS="-H x-vercel-protection-bypass:${VERCEL_AUTOMATION_BYPASS_SECRET}"
+          fi
+          curl -sfo /dev/null $BYPASS_ARGS "$VENUE_URL" || (echo "Test venue unreachable at $VENUE_URL" && exit 1)
           echo "Test venue reachable"
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
       - name: Run live E2E tests
         run: npx playwright test --project=chromium-live --workers=1
