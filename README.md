@@ -1,6 +1,6 @@
 # BugDrop 🐛
 
-[![CI](https://github.com/mean-weasel/bugdrop/actions/workflows/ci.yml/badge.svg)](https://github.com/mean-weasel/bugdrop/actions/workflows/ci.yml)
+[![CI](https://github.com/mean-weasel/bugdrop/actions/workflows/build.yml/badge.svg)](https://github.com/mean-weasel/bugdrop/actions/workflows/build.yml)
 [![Version](https://img.shields.io/badge/version-1.11.0-14b8a6)](./CHANGELOG.md)
 [![Security Policy](https://img.shields.io/badge/Security-Policy-blue)](./SECURITY.md)
 [![Live Demo](https://img.shields.io/badge/Demo-Try_It_Live-ff9e64)](https://neonwatty.github.io/feedback-widget-test/) <!-- TODO: update to Vercel URL after Phase 3 -->
