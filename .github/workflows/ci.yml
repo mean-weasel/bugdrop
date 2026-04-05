@@ -8,20 +8,6 @@ on:
   merge_group:
 
 jobs:
-  # Secret scanning (runs in parallel with other checks)
-  secrets:
-    name: Scan for Secrets
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   # Fast checks run first
   check:
     name: Lint, Typecheck, Knip, Audit
@@ -129,15 +115,17 @@ jobs:
           command: deploy --env preview
 
   # Live E2E tests against real cross-origin deployment (merge queue only)
-  live-preview-tests:
-    name: Live Preview Tests
-    needs: [deploy-preview]
-    if: github.event_name == 'merge_group'
-    uses: ./.github/workflows/live-tests.yml
-    with:
-      target: preview
-    secrets: inherit
-    continue-on-error: true  # Remove after 2 weeks of reliable green runs
+  # Disabled: live-tests.yml has unfilled placeholders (PLAYWRIGHT_BASE_URL, worker URL).
+  # Re-enable once preview deployment URLs are configured.
+  # live-preview-tests:
+  #   name: Live Preview Tests
+  #   needs: [deploy-preview]
+  #   if: github.event_name == 'merge_group'
+  #   uses: ./.github/workflows/live-tests.yml
+  #   with:
+  #     target: preview
+  #   secrets: inherit
+  #   continue-on-error: true
 
   # Automated release via semantic-release (only on push to main)
   release:

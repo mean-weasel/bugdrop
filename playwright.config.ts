@@ -34,10 +34,12 @@ export default defineConfig({
       timeout: 60_000,
     },
   ],
-  webServer: process.env.LIVE_TARGET ? undefined : {
-    command: 'npm run dev',
-    url: 'http://localhost:8787',
-    reuseExistingServer: !process.env.CI,
-    timeout: 120 * 1000,
-  },
+  webServer: process.env.LIVE_TARGET
+    ? undefined
+    : {
+        command: 'npm run dev',
+        url: 'http://localhost:8787',
+        reuseExistingServer: !process.env.CI,
+        timeout: 120 * 1000,
+      },
 });

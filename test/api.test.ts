@@ -82,6 +82,7 @@ describe('API Routes', () => {
       expect(data).toEqual({
         installed: true,
         repo: 'testowner/testrepo',
+        appName: 'test-bugdrop-app',
       });
       expect(mockGetInstallationToken).toHaveBeenCalledWith(mockEnv, 'testowner', 'testrepo');
     });
@@ -97,7 +98,24 @@ describe('API Routes', () => {
       expect(data).toEqual({
         installed: false,
         repo: 'testowner/testrepo',
+        appName: 'test-bugdrop-app',
       });
+    });
+
+    it('should omit appName when GITHUB_APP_NAME is not set', async () => {
+      mockGetInstallationToken.mockResolvedValue('test-token');
+
+      const envWithoutAppName = { ...mockEnv, GITHUB_APP_NAME: '' };
+      const req = new Request('http://localhost/check/testowner/testrepo');
+      const res = await app.fetch(req, envWithoutAppName);
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data).toEqual({
+        installed: true,
+        repo: 'testowner/testrepo',
+      });
+      expect(data).not.toHaveProperty('appName');
     });
 
     it('should include CORS headers', async () => {

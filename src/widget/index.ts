@@ -347,6 +347,16 @@ function initWidget(config: WidgetConfig) {
 
   const shadow = host.attachShadow({ mode: 'open' });
 
+  // Prevent keyboard events from leaking to host page (e.g., ERPNext console shortcuts)
+  for (const eventType of ['keydown', 'keypress', 'keyup'] as const) {
+    shadow.addEventListener(eventType, (e: Event) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        e.stopPropagation();
+      }
+    });
+  }
+
   // Inject styles and create root wrapper
   const root = injectStyles(shadow, config);
   _widgetRoot = root;
@@ -539,16 +549,17 @@ async function openFeedbackFlow(
   _isModalOpen = true;
 
   // Check if app is installed
-  const installStatus = await checkInstallation(config);
+  const { status: installStatus, appName } = await checkInstallation(config);
   if (installStatus === 'not_installed') {
-    showInstallPrompt(root, config);
+    showInstallPrompt(root, config, undefined, appName);
     return;
   }
   if (installStatus === 'unreachable') {
     showInstallPrompt(
       root,
       config,
-      'Unable to reach BugDrop API. Check your network connection or script tag URL.'
+      'Unable to reach BugDrop API. Check your network connection or script tag URL.',
+      appName
     );
     return;
   }
@@ -693,21 +704,31 @@ async function captureWithLoading(
 
 async function checkInstallation(
   config: WidgetConfig
-): Promise<'installed' | 'not_installed' | 'unreachable'> {
+): Promise<{ status: 'installed' | 'not_installed' | 'unreachable'; appName?: string }> {
   try {
     const response = await fetch(`${config.apiUrl}/check/${config.repo}`);
-    if (!response.ok) return 'unreachable';
+    if (!response.ok) return { status: 'unreachable' };
     const data = await response.json();
-    return data.installed === true ? 'installed' : 'not_installed';
+    return {
+      status: data.installed === true ? 'installed' : 'not_installed',
+      appName: data.appName,
+    };
   } catch {
-    return 'unreachable';
+    return { status: 'unreachable' };
   }
 }
 
-function showInstallPrompt(root: HTMLElement, config: WidgetConfig, errorMessage?: string) {
-  const appName = config.apiUrl.includes('bugdrop.neonwatty.workers.dev')
-    ? 'neonwatty-bugdrop'
-    : config.apiUrl.replace(/https?:\/\//, '').replace(/\..*/, '');
+function showInstallPrompt(
+  root: HTMLElement,
+  config: WidgetConfig,
+  errorMessage?: string,
+  serverAppName?: string
+) {
+  const appName =
+    serverAppName ||
+    (config.apiUrl.includes('bugdrop.neonwatty.workers.dev')
+      ? 'neonwatty-bugdrop'
+      : config.apiUrl.replace(/https?:\/\//, '').replace(/\..*/, ''));
   const installUrl = `https://github.com/apps/${appName}/installations/new`;
   const message = errorMessage || 'BugDrop requires GitHub App installation to create issues.';
   const title = errorMessage ? 'Connection Error' : 'Install Required';
