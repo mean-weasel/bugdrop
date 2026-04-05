@@ -1,0 +1,163 @@
+# Installation
+
+Getting BugDrop running on your site takes about 30 seconds. There are only two steps: install the GitHub App and add a script tag. No npm packages, no build configuration, no backend setup required.
+
+## Step 1: Install the GitHub App
+
+BugDrop needs access to your GitHub repository to create issues and store screenshots. Install the official GitHub App to grant these permissions.
+
+**[Install BugDrop GitHub App](https://github.com/apps/neonwatty-bugdrop/installations/new)**
+
+During installation you will be asked which repositories to grant access to. You can choose specific repositories or grant access to all repositories in your account or organization.
+
+### What permissions does the app request?
+
+| Permission | Access Level | Purpose |
+|-----------|-------------|---------|
+| Issues | Read & Write | Create bug reports as GitHub Issues |
+| Contents | Read & Write | Store screenshots in the repository |
+
+These are the minimum permissions required for BugDrop to function. The app does not request access to your code, pull requests, actions, or any other repository data.
+
+## Step 2: Add the Script Tag
+
+Add the BugDrop script tag to your HTML, just before the closing `</body>` tag:
+
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="your-username/your-repo"
+></script>
+```
+
+Replace `your-username/your-repo` with your actual GitHub repository path (e.g., `acme-corp/my-website`).
+
+### Full HTML Example
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Website</title>
+</head>
+<body>
+  <!-- Your site content here -->
+
+  <!-- BugDrop widget -->
+  <script
+    src="https://bugdrop.neonwatty.workers.dev/widget.js"
+    data-repo="your-username/your-repo"
+  ></script>
+</body>
+</html>
+```
+
+### Customized Example
+
+You can add data attributes to customize the widget's appearance and behavior:
+
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="your-username/your-repo"
+  data-theme="dark"
+  data-position="bottom-left"
+  data-color="#6366f1"
+  data-welcome="We'd love your feedback!"
+></script>
+```
+
+See the [Configuration](/docs/configuration) and [Styling](/docs/styling) docs for all available attributes.
+
+## Step 3: You Are Done
+
+That is it. Load your page and you will see the BugDrop button in the corner of your site. Click it to open the feedback form, fill it out, and submit -- a GitHub Issue will be created in your repository automatically.
+
+## Important Notes
+
+### Do Not Use async or defer
+
+The BugDrop script tag should **not** include the `async` or `defer` attributes. The widget needs to load synchronously to properly initialize:
+
+```html
+<!-- Correct -->
+<script src="https://bugdrop.neonwatty.workers.dev/widget.js" data-repo="owner/repo"></script>
+
+<!-- Incorrect - do NOT do this -->
+<script async src="https://bugdrop.neonwatty.workers.dev/widget.js" data-repo="owner/repo"></script>
+<script defer src="https://bugdrop.neonwatty.workers.dev/widget.js" data-repo="owner/repo"></script>
+```
+
+### Content Security Policy (CSP)
+
+If your site uses a Content Security Policy, you will need to allow `cdn.jsdelivr.net` in your CSP directives. BugDrop loads the html2canvas library from jsDelivr for screenshot functionality:
+
+```
+Content-Security-Policy: script-src 'self' https://bugdrop.neonwatty.workers.dev https://cdn.jsdelivr.net;
+```
+
+If you have a strict CSP, make sure both the BugDrop worker domain and jsDelivr are included in your `script-src` directive.
+
+### Branch Protection and the Screenshots Branch
+
+BugDrop stores screenshots in a dedicated branch called `bugdrop-screenshots` in your repository. This branch is created automatically when the first screenshot is uploaded.
+
+**If you use branch protection rules**, make sure the BugDrop GitHub App has permission to push to the `bugdrop-screenshots` branch. You can do this by either:
+
+1. **Excluding the branch from protection rules** -- Add `bugdrop-screenshots` to the exclusion list in your branch protection settings
+2. **Allowing the app to bypass protection** -- Add the BugDrop GitHub App (`neonwatty-bugdrop`) to the list of actors that can bypass branch protection
+
+Without this, screenshot uploads will fail silently, though the issue itself will still be created.
+
+### Framework-Specific Notes
+
+**React / Next.js**: Add the script tag to your `index.html`, or use a `<Script>` component. For Next.js App Router, place it in your root layout:
+
+```tsx
+// app/layout.tsx
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en">
+      <body>
+        {children}
+        <script
+          src="https://bugdrop.neonwatty.workers.dev/widget.js"
+          data-repo="your-username/your-repo"
+        />
+      </body>
+    </html>
+  );
+}
+```
+
+**Vue / Nuxt**: Add the script tag to your `index.html` or use the Nuxt `useHead` composable.
+
+**Svelte / SvelteKit**: Add to your `app.html` template.
+
+**Static sites (Hugo, Jekyll, Astro)**: Add to your base layout template, before the closing `</body>` tag.
+
+## Verifying the Installation
+
+After adding the script tag, open your browser's developer console. You should see:
+
+```
+[BugDrop] Widget initialized
+```
+
+If you see any errors, check that:
+
+1. The `data-repo` attribute matches your GitHub repository path exactly
+2. The GitHub App is installed on that repository
+3. Your CSP (if any) allows the required domains
+4. The script tag does not have `async` or `defer`
+
+You can also test by clicking the bug button and submitting a test report. Check your GitHub repository's Issues tab to confirm it was created successfully.
+
+## Next Steps
+
+- [Configure the widget](/docs/configuration) with custom attributes
+- [Style the widget](/docs/styling) to match your site's design
+- [Use the JavaScript API](/docs/javascript-api) for advanced integrations
+- [Pin to a specific version](/docs/version-pinning) for production stability

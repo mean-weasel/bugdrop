@@ -1,0 +1,202 @@
+# Styling
+
+BugDrop is designed to blend seamlessly into any website. Beyond the core theme and color options, a full set of styling attributes gives you fine-grained control over fonts, border radius, backgrounds, text colors, borders, and shadows. The widget renders inside a Shadow DOM, so your site's styles never leak in and the widget's styles never leak out.
+
+## Styling Attributes
+
+All styling is done through data attributes on the script tag. No CSS files to import, no class names to override.
+
+| Attribute | Default | Description |
+|-----------|---------|-------------|
+| `data-font` | `"system-ui, sans-serif"` | Font family for all widget text |
+| `data-radius` | `"8px"` | Border radius for the form and elements |
+| `data-bg` | Theme-dependent | Background color of the widget form |
+| `data-text` | Theme-dependent | Text color inside the widget |
+| `data-border-width` | `"1px"` | Border width of the form container |
+| `data-border-color` | Theme-dependent | Border color of the form container |
+| `data-shadow` | `"0 8px 30px rgba(0,0,0,0.12)"` | Box shadow of the form container |
+
+### Defaults by Theme
+
+The `data-theme` attribute sets sensible defaults for colors, which you can then override individually:
+
+| Attribute | Light Theme Default | Dark Theme Default |
+|-----------|--------------------|--------------------|
+| `data-bg` | `#ffffff` | `#1a1a2e` |
+| `data-text` | `#1a1a2e` | `#e0e0e0` |
+| `data-border-color` | `#e0e0e0` | `#2a2a4a` |
+
+## Shadow DOM Isolation
+
+BugDrop renders inside a [Shadow DOM](https://developer.mozilla.org/en-US/docs/Web/API/Web_components/Using_shadow_DOM), which provides complete CSS isolation between the widget and your website. This means:
+
+- **Your site's CSS cannot affect the widget** -- No accidental style overrides, even with aggressive global selectors
+- **The widget's CSS cannot affect your site** -- BugDrop's internal styles stay contained
+- **No class name collisions** -- BugDrop uses its own scoped styles internally
+- **Predictable rendering** -- The widget looks the same regardless of what CSS frameworks or resets your site uses
+
+This is why styling is done through data attributes rather than CSS classes. The Shadow DOM boundary means external CSS simply cannot reach the widget's internals.
+
+### The `data-font="inherit"` Exception
+
+There is one exception to the Shadow DOM isolation: the `data-font="inherit"` value. When you set `data-font="inherit"`, BugDrop reads your page's computed `font-family` at initialization time and applies it inside the Shadow DOM. This lets the widget match your site's typography without you needing to specify the exact font stack:
+
+```html
+<!-- Widget uses your site's font automatically -->
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-font="inherit"
+></script>
+```
+
+This is especially useful when your site uses a custom font loaded via `@font-face` or Google Fonts -- you do not need to repeat the font family name in the data attribute.
+
+## Design Examples
+
+### Elegant Serif Site
+
+For a sophisticated, editorial-style site with serif typography:
+
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-font="Georgia, 'Times New Roman', serif"
+  data-radius="2px"
+  data-bg="#faf9f6"
+  data-text="#2d2d2d"
+  data-border-width="1px"
+  data-border-color="#c9b99a"
+  data-shadow="0 2px 8px rgba(0,0,0,0.08)"
+  data-color="#8b6914"
+></script>
+```
+
+This creates a widget with:
+- Classic serif fonts that match an editorial design
+- Minimal border radius for sharp, refined corners
+- Warm off-white background with muted gold accents
+- Subtle shadow that does not compete with the content
+
+### Bold Brutalist Design
+
+For a bold, high-contrast site with a brutalist aesthetic:
+
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-font="'Courier New', monospace"
+  data-radius="0"
+  data-bg="#ffffff"
+  data-text="#000000"
+  data-border-width="3px"
+  data-border-color="#000000"
+  data-shadow="6px 6px 0 #000000"
+  data-color="#ff0000"
+></script>
+```
+
+This creates a widget with:
+- Monospace font for a raw, technical feel
+- Zero border radius for hard, square corners
+- Thick black borders with a hard offset shadow (no blur)
+- High contrast black and white with a red accent
+
+### Minimal Dark Mode
+
+For a clean dark-themed site:
+
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-theme="dark"
+  data-font="Inter, system-ui, sans-serif"
+  data-radius="12px"
+  data-bg="#0a0a0a"
+  data-text="#fafafa"
+  data-border-width="1px"
+  data-border-color="#262626"
+  data-shadow="0 16px 48px rgba(0,0,0,0.4)"
+  data-color="#3b82f6"
+></script>
+```
+
+### Soft Pastel Theme
+
+For a friendly, approachable site with soft colors:
+
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-font="'Nunito', sans-serif"
+  data-radius="16px"
+  data-bg="#fef7ff"
+  data-text="#4a2c5e"
+  data-border-width="2px"
+  data-border-color="#e8d5f5"
+  data-shadow="0 4px 20px rgba(124,58,237,0.1)"
+  data-color="#a855f7"
+></script>
+```
+
+## Custom Icon and Label
+
+The button's icon and label text can be customized through the `data-icon` and `data-label` attributes:
+
+### Custom Icon
+
+```html
+<!-- Use your own icon (SVG recommended for crisp rendering) -->
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-icon="https://example.com/feedback-icon.svg"
+></script>
+```
+
+The custom icon is rendered at 24x24 pixels inside the floating button. Use an SVG or a high-resolution PNG (at least 48x48) for best results on retina displays.
+
+### Hiding the Icon
+
+Set `data-icon="none"` to show only a text label:
+
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-icon="none"
+  data-label="Send Feedback"
+></script>
+```
+
+### Icon + Label Combination
+
+Combine a custom icon with a text label for maximum clarity:
+
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-icon="https://example.com/chat-icon.svg"
+  data-label="Talk to Us"
+  data-color="#10b981"
+></script>
+```
+
+## Tips for Consistent Styling
+
+1. **Match your site's border radius** -- If your site uses rounded corners (e.g., Tailwind's `rounded-lg` is `8px`), set `data-radius` to match
+2. **Use your brand's primary color** -- Set `data-color` to your brand's primary or accent color for the button and form highlights
+3. **Consider `data-font="inherit"`** -- Unless you want the widget to look deliberately different from your site, `inherit` is the easiest way to match typography
+4. **Test both themes** -- If your site supports light and dark mode, test BugDrop with both `data-theme="light"` and `data-theme="dark"`
+5. **Shadow depth signals importance** -- A larger shadow makes the widget feel more prominent; a subtle shadow lets it blend in
+
+## Next Steps
+
+- [Configure widget behavior](/docs/configuration) with all available attributes
+- [Use the JavaScript API](/docs/javascript-api) for programmatic control
+- [Test your configuration](/docs/ci-testing) with automated Playwright tests

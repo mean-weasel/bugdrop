@@ -1,0 +1,132 @@
+# Version Pinning
+
+BugDrop supports version pinning so you can control exactly which version of the widget runs on your site. By default, you always get the latest version. For production sites, you can pin to a major, minor, or exact patch version to avoid unexpected changes.
+
+## Default Behavior
+
+The default script URL always loads the latest version of the widget:
+
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+></script>
+```
+
+This is fine for development and testing, but for production sites you may want more control over when updates are applied.
+
+## Version URL Reference
+
+BugDrop follows [semantic versioning](https://semver.org/) (major.minor.patch). You can pin to any level of specificity:
+
+| URL | Example | Update Behavior | Best For |
+|-----|---------|----------------|----------|
+| `/widget.js` | Always latest | Gets all updates automatically | Development, testing |
+| `/widget.v1.js` | Major pin | Gets minor and patch updates (1.x.x) | **Production (recommended)** |
+| `/widget.v1.1.js` | Minor pin | Gets patch updates only (1.1.x) | Cautious production |
+| `/widget.v1.1.0.js` | Exact pin | Never updates automatically | Maximum control |
+
+### Major Version Pin (Recommended for Production)
+
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.v1.js"
+  data-repo="owner/repo"
+></script>
+```
+
+This loads the latest `1.x.x` release. You get bug fixes and new features automatically, but never a breaking change. This is the recommended approach for production sites because:
+
+- **You get bug fixes automatically** -- No action needed when patches are released
+- **You get new features** -- Minor version updates add functionality without breaking existing behavior
+- **You are protected from breaking changes** -- Major version bumps (which may change the API or behavior) require you to explicitly update the URL
+
+### Minor Version Pin
+
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.v1.1.js"
+  data-repo="owner/repo"
+></script>
+```
+
+This loads the latest `1.1.x` release. You only get patch updates (bug fixes and security patches). New features from minor versions are not included until you manually update the URL. Use this if you want maximum stability while still receiving critical fixes.
+
+### Exact Version Pin
+
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.v1.1.0.js"
+  data-repo="owner/repo"
+></script>
+```
+
+This loads exactly version `1.1.0` and never changes. You must manually update the URL to get any updates, including bug fixes and security patches. Use this only if you need absolute reproducibility or are running your own update process.
+
+## How Versioned URLs Work
+
+When a new version of BugDrop is released, the build process generates versioned copies of the widget file:
+
+- `widget.js` -- Always points to the latest version
+- `widget.v1.js` -- Points to the latest `1.x.x` version
+- `widget.v1.1.js` -- Points to the latest `1.1.x` version
+- `widget.v1.1.0.js` -- Points to exactly `1.1.0`
+
+All versioned files are served from the same Cloudflare Worker, so there is no performance difference between them.
+
+## Choosing the Right Pin Level
+
+Here is a decision guide:
+
+### Use `/widget.js` (no pin) when:
+- You are in active development
+- You are testing the widget locally
+- You want to always have the latest features and fixes
+- You are comfortable with occasional behavior changes
+
+### Use `/widget.v1.js` (major pin) when:
+- You are running a production site
+- You want automatic bug fixes and new features
+- You want protection from breaking API changes
+- **This is the recommended default for most production sites**
+
+### Use `/widget.v1.1.js` (minor pin) when:
+- You want only bug fixes, not new features
+- You have specific behavior you depend on and want to avoid any UI changes
+- You prefer to manually opt in to new features
+
+### Use `/widget.v1.1.0.js` (exact pin) when:
+- You need bit-for-bit reproducibility
+- You have a formal change management process
+- You run your own testing pipeline before updating dependencies
+- You are embedding BugDrop in a product where stability is critical
+
+## Upgrading Versions
+
+To upgrade from one version to another, simply change the URL in your script tag:
+
+```html
+<!-- Before: pinned to v1 -->
+<script src="https://bugdrop.neonwatty.workers.dev/widget.v1.js" ...></script>
+
+<!-- After: upgrading to v2 -->
+<script src="https://bugdrop.neonwatty.workers.dev/widget.v2.js" ...></script>
+```
+
+Before upgrading to a new major version, check the [CHANGELOG](https://github.com/mean-weasel/bugdrop/blob/main/CHANGELOG.md) for breaking changes and migration instructions.
+
+## Checking Your Current Version
+
+You can check which version of BugDrop is loaded by opening your browser's developer console and typing:
+
+```javascript
+console.log(window.BugDrop);
+```
+
+The widget version is also included in the console log message when the widget initializes.
+
+## Next Steps
+
+- [View the CHANGELOG](https://github.com/mean-weasel/bugdrop/blob/main/CHANGELOG.md) for release history
+- [Configure the widget](/docs/configuration) with data attributes
+- [Test your setup](/docs/ci-testing) with Playwright

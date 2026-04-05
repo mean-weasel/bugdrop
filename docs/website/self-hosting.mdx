@@ -1,0 +1,136 @@
+# Self-Hosting
+
+BugDrop can be self-hosted on your own infrastructure if you need full control over the API, custom rate limits, or want to keep everything within your own accounts. This page provides an overview of what is needed and points you to the full setup instructions.
+
+## Why Self-Host?
+
+The hosted version of BugDrop at `bugdrop.neonwatty.workers.dev` works great for most users. However, self-hosting makes sense when:
+
+- **You need custom rate limits** -- The hosted version has fixed rate limits (10 per IP / 15 min, 50 per repo / hour). Self-hosting lets you set whatever limits make sense for your traffic.
+- **Compliance requirements** -- Your organization may require that all services run on infrastructure you control.
+- **Custom domain** -- You want the API to run on your own domain (e.g., `bugdrop.yourcompany.com`).
+- **Network isolation** -- You want the API within your own Cloudflare account for network-level controls.
+- **Custom modifications** -- You want to modify the widget or API behavior beyond what the configuration options allow.
+
+## What You Need
+
+Self-hosting BugDrop requires two things:
+
+### 1. Cloudflare Workers Account
+
+BugDrop's API is built on [Cloudflare Workers](https://workers.cloudflare.com/), a serverless platform that runs at the edge. You need:
+
+- A Cloudflare account (free tier is sufficient for moderate usage)
+- The [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/) installed for deployment
+- A Workers route or custom domain configured
+
+### 2. GitHub App
+
+You need to create your own GitHub App to replace the hosted BugDrop app. The app needs:
+
+| Setting | Value |
+|---------|-------|
+| **Permissions: Issues** | Read & Write |
+| **Permissions: Contents** | Read & Write |
+| **Webhook** | Not required (optional) |
+| **Installation scope** | Your repositories |
+
+You will need the App ID, private key, and installation ID to configure the Worker.
+
+## Architecture Overview
+
+A self-hosted BugDrop deployment has the same architecture as the hosted version:
+
+```
+User's Browser
+    │
+    ├── Loads widget.js from your Cloudflare Worker
+    │
+    └── Submits feedback form
+            │
+            ▼
+    Your Cloudflare Worker (API)
+            │
+            ├── Creates GitHub Issue (via GitHub API)
+            │
+            └── Uploads screenshot to bugdrop-screenshots branch (via GitHub API)
+```
+
+The Cloudflare Worker acts as a secure proxy between the user's browser and the GitHub API. It holds the GitHub App credentials and handles authentication, so no secrets are ever exposed to the client.
+
+## Setup Instructions
+
+Full self-hosting instructions, including environment variables, Wrangler configuration, and deployment steps, are available in the repository:
+
+**[SELF_HOSTING.md on GitHub](https://github.com/mean-weasel/bugdrop/blob/main/SELF_HOSTING.md)**
+
+The guide covers:
+
+1. **Forking the repository** -- Get your own copy of the BugDrop codebase
+2. **Creating a GitHub App** -- Step-by-step instructions for creating and configuring the app
+3. **Configuring Wrangler** -- Setting up `wrangler.toml` with your account details
+4. **Setting secrets** -- Storing your GitHub App credentials as Worker secrets
+5. **Deploying** -- Publishing the Worker to your Cloudflare account
+6. **Testing** -- Verifying the deployment works end-to-end
+7. **Updating the script tag** -- Pointing your widget to your own Worker URL
+
+## Updating the Script Tag
+
+After deploying your own instance, update the script tag on your site to point to your Worker:
+
+```html
+<!-- Before: hosted version -->
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+></script>
+
+<!-- After: self-hosted version -->
+<script
+  src="https://your-subdomain.your-account.workers.dev/widget.js"
+  data-repo="owner/repo"
+></script>
+```
+
+If you have configured a custom domain for your Worker:
+
+```html
+<script
+  src="https://bugdrop.yourcompany.com/widget.js"
+  data-repo="owner/repo"
+></script>
+```
+
+All `data-*` attributes work the same regardless of whether you use the hosted or self-hosted version.
+
+## Keeping Up to Date
+
+When new versions of BugDrop are released, you can pull the latest changes into your fork and redeploy:
+
+```bash
+# Add the upstream remote (one-time setup)
+git remote add upstream https://github.com/mean-weasel/bugdrop.git
+
+# Pull latest changes
+git fetch upstream
+git merge upstream/main
+
+# Redeploy
+npx wrangler deploy
+```
+
+Check the [CHANGELOG](https://github.com/mean-weasel/bugdrop/blob/main/CHANGELOG.md) before updating to review any breaking changes or new configuration options.
+
+## Support
+
+If you run into issues with self-hosting:
+
+- Check the [FAQ](/docs/faq) for common questions
+- Open an issue on the [GitHub repository](https://github.com/mean-weasel/bugdrop/issues)
+- Review the [Security](/docs/security) page for permission and rate limiting details
+
+## Next Steps
+
+- [Read the full self-hosting guide](https://github.com/mean-weasel/bugdrop/blob/main/SELF_HOSTING.md)
+- [Review security and permissions](/docs/security)
+- [Configure the widget](/docs/configuration)

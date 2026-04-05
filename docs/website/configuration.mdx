@@ -1,0 +1,227 @@
+# Configuration
+
+BugDrop is configured entirely through data attributes on the script tag. No JavaScript configuration object, no external config file -- just HTML attributes. This page covers every available attribute.
+
+## Core Attributes
+
+These attributes control the fundamental behavior of the widget.
+
+| Attribute | Default | Description |
+|-----------|---------|-------------|
+| `data-repo` | **(required)** | GitHub repository in `owner/repo` format |
+| `data-theme` | `"light"` | Widget theme: `"light"` or `"dark"` |
+| `data-position` | `"bottom-right"` | Button position: `"bottom-right"` or `"bottom-left"` |
+| `data-color` | `"#7c3aed"` | Primary accent color (any CSS color value) |
+| `data-icon` | *(default bug icon)* | Custom icon: URL to an image, `"none"` to hide, or omit for default |
+| `data-label` | `""` | Text label displayed next to the button icon |
+| `data-button` | `"true"` | Show the floating button: `"true"` or `"false"` |
+| `data-welcome` | `"Report a bug or request a feature"` | Welcome message displayed at the top of the form |
+
+### Basic Example
+
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="acme-corp/my-app"
+  data-theme="dark"
+  data-position="bottom-left"
+  data-color="#ef4444"
+  data-welcome="Found a bug? Let us know!"
+></script>
+```
+
+### Theme Options
+
+The `data-theme` attribute controls the overall color scheme of the widget:
+
+- **`light`** (default) -- White background with dark text. Suitable for most sites.
+- **`dark`** -- Dark background with light text. Ideal for sites with dark color schemes.
+
+```html
+<!-- Light theme (default) -->
+<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo" data-theme="light"></script>
+
+<!-- Dark theme -->
+<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo" data-theme="dark"></script>
+```
+
+### Position Options
+
+The `data-position` attribute controls where the floating button appears:
+
+- **`bottom-right`** (default) -- Fixed to the bottom-right corner
+- **`bottom-left`** -- Fixed to the bottom-left corner
+
+## Submitter Information
+
+Control whether the feedback form collects the submitter's name and email address.
+
+| Attribute | Default | Description |
+|-----------|---------|-------------|
+| `data-show-name` | `"false"` | Show the name field in the form |
+| `data-require-name` | `"false"` | Make the name field required (implies `data-show-name="true"`) |
+| `data-show-email` | `"false"` | Show the email field in the form |
+| `data-require-email` | `"false"` | Make the email field required (implies `data-show-email="true"`) |
+
+### Submitter Info Example
+
+```html
+<!-- Show both name and email, require email only -->
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-show-name="true"
+  data-show-email="true"
+  data-require-email="true"
+></script>
+```
+
+When submitter information is collected, it is included in the GitHub Issue body so your team knows who reported the issue.
+
+## Dismissible Button
+
+Allow users to dismiss the floating button so it does not obstruct their view. This is especially useful for content-heavy sites where the button might overlay important elements.
+
+| Attribute | Default | Description |
+|-----------|---------|-------------|
+| `data-button-dismissible` | `"false"` | Allow users to dismiss (hide) the floating button |
+| `data-dismiss-duration` | `"session"` | How long the button stays dismissed: `"session"` (until tab close) or a number in minutes (e.g., `"60"`) |
+| `data-show-restore` | `"true"` | Show a small restore link after dismissing |
+
+### Dismissible Button Example
+
+```html
+<!-- Dismissible button that stays hidden for 60 minutes -->
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-button-dismissible="true"
+  data-dismiss-duration="60"
+  data-show-restore="true"
+></script>
+```
+
+When a user dismisses the button:
+
+1. The floating button hides
+2. If `data-show-restore` is `"true"`, a small "Restore feedback button" link appears in the corner
+3. The button stays hidden for the duration specified by `data-dismiss-duration`
+4. After the duration expires (or the session ends), the button reappears automatically
+
+## Feedback Categories
+
+Users can choose from three feedback categories when submitting a report. Each category maps to a specific GitHub label:
+
+| Category | Emoji | GitHub Label | Description |
+|----------|-------|-------------|-------------|
+| Bug | :beetle: | `bug` | Something is not working correctly |
+| Feature | :sparkles: | `enhancement` | A new feature or improvement request |
+| Question | :question: | `question` | A question about the product or usage |
+
+These categories are built into the widget and cannot be customized at this time. The corresponding GitHub labels are created automatically in your repository if they do not already exist.
+
+## Automatic System Information
+
+Every feedback submission automatically captures the following system information, with no configuration required:
+
+| Field | Example | Description |
+|-------|---------|-------------|
+| Browser | `Chrome 120.0.0.0` | Browser name and version |
+| OS | `macOS 14.2.1` | Operating system and version |
+| Viewport | `1920x1080` | Browser window dimensions |
+| Language | `en-US` | Browser language setting |
+| URL | `https://example.com/page` | Current page URL |
+
+This information is included in every GitHub Issue body under a "System Info" section, giving your team the context they need to reproduce and fix bugs.
+
+## Custom Icon and Label
+
+### Custom Icon
+
+The `data-icon` attribute lets you replace the default bug icon with your own:
+
+```html
+<!-- Use a custom icon image -->
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-icon="https://example.com/my-icon.svg"
+></script>
+
+<!-- Hide the icon entirely -->
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-icon="none"
+  data-label="Feedback"
+></script>
+```
+
+When using a custom icon URL, the image is displayed at 24x24 pixels inside the button. SVG format is recommended for best quality at all screen densities.
+
+### Custom Label
+
+The `data-label` attribute adds a text label next to the button icon:
+
+```html
+<!-- Icon + label -->
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-label="Report Bug"
+></script>
+
+<!-- Label only (no icon) -->
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-icon="none"
+  data-label="Send Feedback"
+></script>
+```
+
+## API-Only Mode
+
+Set `data-button="false"` to hide the floating button entirely. This is useful when you want to trigger the widget from your own UI elements using the [JavaScript API](/docs/javascript-api):
+
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-button="false"
+></script>
+```
+
+In API-only mode, the widget loads but no button appears. Use `window.BugDrop.open()` to show the feedback form programmatically. See the [JavaScript API documentation](/docs/javascript-api) for details.
+
+## Complete Configuration Example
+
+Here is a script tag using many configuration options together:
+
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="acme-corp/my-app"
+  data-theme="dark"
+  data-position="bottom-left"
+  data-color="#6366f1"
+  data-welcome="We'd love to hear from you!"
+  data-show-name="true"
+  data-show-email="true"
+  data-require-email="true"
+  data-button-dismissible="true"
+  data-dismiss-duration="120"
+  data-show-restore="true"
+  data-label="Feedback"
+></script>
+```
+
+This configuration creates a dark-themed widget in the bottom-left corner with an indigo accent color, collects the submitter's name and email (email required), and shows a "Feedback" label on the button. The button is dismissible for 2 hours with a restore link.
+
+## Next Steps
+
+- [Style the widget](/docs/styling) with custom fonts, colors, borders, and shadows
+- [Use the JavaScript API](/docs/javascript-api) for programmatic control
+- [Pin to a specific version](/docs/version-pinning) for production stability

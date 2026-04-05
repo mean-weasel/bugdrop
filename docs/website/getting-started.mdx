@@ -1,0 +1,83 @@
+# Getting Started with BugDrop
+
+BugDrop is a lightweight, open-source bug reporting widget that lets your users submit bugs, feature requests, and questions directly from your website -- straight into GitHub Issues. No backend to manage, no dashboard to maintain, and no third-party accounts for your users to create. Just a single script tag and you are up and running.
+
+## How It Works
+
+BugDrop operates in three simple steps, creating a seamless bridge between your users and your GitHub repository:
+
+### Step 1: User Clicks the Bug Button
+
+A small, customizable floating button appears on your site. When a user clicks it, a clean feedback form opens -- right inside the page, wrapped in a Shadow DOM so it never interferes with your site's styles.
+
+### Step 2: User Submits Feedback
+
+The user fills out the form with a title, description, and optional screenshot. They choose a category -- Bug, Feature Request, or Question -- and hit submit. BugDrop automatically captures system information like browser type, operating system, viewport size, language, and current URL.
+
+### Step 3: GitHub Issue Created
+
+BugDrop sends the report to your Cloudflare Worker API, which creates a GitHub Issue in your repository. Screenshots are committed to a dedicated `bugdrop-screenshots` branch, and the issue is labeled and formatted with all the context your team needs.
+
+That is it. No servers to run, no databases to manage, no user accounts required.
+
+## Why BugDrop?
+
+| Feature | BugDrop | Traditional Bug Trackers |
+|---------|---------|--------------------------|
+| Setup time | 30 seconds | Hours to days |
+| Backend required | No (Cloudflare Workers) | Yes |
+| User accounts | None required | Usually required |
+| Where issues live | GitHub Issues | Separate dashboard |
+| Cost | Free | Often paid |
+| Customizable | Fully | Limited |
+| Open source | Yes (MIT) | Rarely |
+
+## Key Features
+
+- **One-line installation** -- Add a single script tag and BugDrop is live on your site
+- **Automatic screenshots** -- Users can attach screenshots captured client-side with html2canvas
+- **System info capture** -- Browser, OS, viewport, language, and URL are automatically included
+- **GitHub-native** -- Issues land directly in your repository with proper labels and formatting
+- **Shadow DOM isolation** -- The widget never conflicts with your site's CSS
+- **Fully customizable** -- Colors, position, icons, labels, themes, and more
+- **JavaScript API** -- Programmatic control for advanced integrations
+- **Version pinning** -- Pin to major, minor, or patch versions for stability
+- **Rate limiting** -- Built-in protection against abuse
+- **Privacy-first** -- No user data stored on external servers
+
+## Quick Links
+
+Ready to get started? Here is where to go next:
+
+- **[Installation](/docs/installation)** -- Step-by-step setup guide to add BugDrop to your site
+- **[Configuration](/docs/configuration)** -- All widget attributes for customizing behavior
+- **[Styling](/docs/styling)** -- Theme your widget with colors, fonts, borders, and shadows
+- **[JavaScript API](/docs/javascript-api)** -- Programmatic control with `window.BugDrop`
+- **[Version Pinning](/docs/version-pinning)** -- Lock to specific versions for production stability
+- **[CI Testing](/docs/ci-testing)** -- Automated testing with Playwright
+- **[Security](/docs/security)** -- Permissions, data storage, privacy, and rate limiting
+- **[Self-Hosting](/docs/self-hosting)** -- Run your own BugDrop instance
+- **[FAQ](/docs/faq)** -- Common questions answered
+
+## Requirements
+
+BugDrop works with any website. There are no framework dependencies, no build step required, and no npm packages to install. All you need is:
+
+1. A **GitHub repository** where issues will be created
+2. The **BugDrop GitHub App** installed on that repository
+3. A **script tag** added to your HTML
+
+BugDrop supports all modern browsers including Chrome, Firefox, Safari, and Edge. The widget is built with vanilla JavaScript and Web Components, so it works alongside React, Next.js, Vue, Svelte, Angular, or any other framework -- or no framework at all.
+
+## Example
+
+Here is the simplest possible BugDrop installation:
+
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="your-username/your-repo"
+></script>
+```
+
+That single script tag gives your users a fully functional bug reporting widget. From there, you can customize everything -- read the [Configuration](/docs/configuration) and [Styling](/docs/styling) docs to make it your own.

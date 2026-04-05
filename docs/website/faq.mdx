@@ -1,0 +1,213 @@
+# Frequently Asked Questions
+
+Answers to the most common questions about BugDrop. If your question is not covered here, open an issue on the [GitHub repository](https://github.com/mean-weasel/bugdrop/issues).
+
+## General
+
+### What is BugDrop?
+
+BugDrop is a lightweight, open-source bug reporting widget that you add to your website with a single script tag. When users encounter a bug, they click the floating button, fill out a simple form, and the report is automatically created as a GitHub Issue in your repository -- complete with a screenshot and system information.
+
+### How does BugDrop work?
+
+BugDrop works in three steps:
+
+1. **User clicks the button** -- A floating button appears on your site. Clicking it opens a feedback form rendered inside a Shadow DOM.
+2. **User submits feedback** -- The user fills in a title, description, selects a category (Bug, Feature, or Question), and optionally attaches a screenshot. System info (browser, OS, viewport, language, URL) is captured automatically.
+3. **GitHub Issue created** -- The form submission is sent to a Cloudflare Worker API, which creates a GitHub Issue in your repository with all the details, labels, and screenshot.
+
+### Is BugDrop free?
+
+Yes. BugDrop is completely free and open source under the [MIT License](https://github.com/mean-weasel/bugdrop/blob/main/LICENSE). There are no paid tiers, usage limits (beyond rate limiting), or premium features. You can use it on personal projects, commercial products, and enterprise applications without restriction.
+
+### Is BugDrop free for commercial use?
+
+Yes. The MIT License permits commercial use, modification, distribution, and private use. You can use BugDrop on commercial websites, SaaS products, and internal tools without paying any fees or attributing the project (though attribution is appreciated).
+
+### Does BugDrop work with React, Next.js, Vue, and other frameworks?
+
+Yes. BugDrop is a plain JavaScript widget loaded via a `<script>` tag, so it is completely framework-agnostic. It works with:
+
+- **React** and **Next.js** (App Router and Pages Router)
+- **Vue** and **Nuxt**
+- **Svelte** and **SvelteKit**
+- **Angular**
+- **Astro**, **Hugo**, **Jekyll**, **Gatsby**
+- Plain HTML/CSS/JavaScript sites
+- Any other framework or static site generator
+
+Since BugDrop uses Shadow DOM for isolation, it does not conflict with any framework's rendering or styling. Just add the script tag to your HTML and it works.
+
+## Screenshots
+
+### How does BugDrop handle screenshots?
+
+BugDrop uses [html2canvas](https://html2canvas.hertzen.com/) to capture screenshots entirely on the client side. When a user clicks the screenshot button:
+
+1. html2canvas renders the current page to an HTML Canvas element in the user's browser
+2. The canvas is converted to a PNG image
+3. The image is sent to the BugDrop API along with the form submission
+4. The API commits the image to the `bugdrop-screenshots` branch in your GitHub repository
+5. A link to the screenshot is included in the GitHub Issue
+
+No server-side rendering or page access is involved. The screenshot captures exactly what the user sees in their browser at the time of submission.
+
+### Are screenshots stored securely?
+
+Screenshots are stored as image files in a `.bugdrop/` directory on the `bugdrop-screenshots` branch of your GitHub repository. They are subject to the same access controls as the rest of your repository. If your repository is private, screenshots are only accessible to collaborators.
+
+## Installation and Setup
+
+### What permissions does the GitHub App need?
+
+The BugDrop GitHub App requests two permissions:
+
+| Permission | Access Level | Purpose |
+|-----------|-------------|---------|
+| **Issues** | Read & Write | Create bug reports as GitHub Issues |
+| **Contents** | Read & Write | Store screenshots on the `bugdrop-screenshots` branch |
+
+These are the minimum permissions required. The app does not access your source code, pull requests, actions, secrets, or any other repository data.
+
+### Can I use BugDrop on multiple repos?
+
+Yes. When you install the BugDrop GitHub App, you can grant access to specific repositories or all repositories in your account or organization. Then add the script tag to each site with the corresponding `data-repo` attribute:
+
+```html
+<!-- Site A -->
+<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="your-org/site-a"></script>
+
+<!-- Site B -->
+<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="your-org/site-b"></script>
+```
+
+Each site sends feedback to its own repository. There is no limit to the number of repositories you can use BugDrop with.
+
+### How do I remove BugDrop?
+
+To completely remove BugDrop:
+
+1. **Remove the script tag** from your HTML. This immediately stops the widget from appearing on your site.
+2. **Uninstall the GitHub App** (optional) -- Go to GitHub Settings > Applications > Installed GitHub Apps and uninstall the BugDrop app. This revokes all permissions.
+3. **Delete the screenshots branch** (optional) -- Delete the `bugdrop-screenshots` branch from your repository to remove stored screenshots.
+
+Removing the script tag is all that is needed to stop BugDrop from appearing. Steps 2 and 3 are optional cleanup.
+
+### Why can't I use async or defer on the script tag?
+
+BugDrop needs to initialize synchronously to ensure the widget is ready as early as possible and to properly read its configuration from the script tag's data attributes. Using `async` or `defer` can cause the widget to initialize after other scripts have run, which may lead to race conditions with the `bugdrop:ready` event or the `window.BugDrop` API.
+
+## Configuration
+
+### Does BugDrop support custom labels?
+
+Yes. The `data-label` attribute adds a text label next to the button icon:
+
+```html
+<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-label="Send Feedback"></script>
+```
+
+You can also set `data-icon="none"` to show only the text label without an icon:
+
+```html
+<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-icon="none"
+  data-label="Report a Bug"></script>
+```
+
+### Can I customize the feedback categories?
+
+The three categories (Bug, Feature Request, and Question) are built into the widget and cannot currently be customized through data attributes. Each category maps to a GitHub label (`bug`, `enhancement`, and `question` respectively). If you need custom categories, consider [self-hosting](/docs/self-hosting) and modifying the widget source code.
+
+### Can I collect the user's name and email?
+
+Yes. By default, the name and email fields are hidden. Enable them with data attributes:
+
+```html
+<!-- Show both, require email -->
+<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-show-name="true"
+  data-show-email="true"
+  data-require-email="true"></script>
+```
+
+When enabled, the submitter's name and email are included in the GitHub Issue body.
+
+## Rate Limiting and Errors
+
+### What happens if the API is rate limited?
+
+When a rate limit is exceeded, the API returns an HTTP `429 Too Many Requests` response with a `Retry-After` header indicating how many seconds to wait. The widget displays a user-friendly message telling the user to try again later.
+
+Rate limits are:
+
+| Scope | Limit | Window |
+|-------|-------|--------|
+| Per IP | 10 requests | 15 minutes |
+| Per Repository | 50 requests | 1 hour |
+
+These limits are designed to be invisible to legitimate users while preventing automated abuse. If you need higher limits, consider [self-hosting](/docs/self-hosting).
+
+### What if the GitHub API is down?
+
+If the GitHub API is unavailable when a user submits feedback, the BugDrop API will return an error and the widget will display a message asking the user to try again later. Submissions are not queued or retried automatically -- the user must resubmit after the issue is resolved.
+
+## Privacy and Security
+
+### Does BugDrop track users?
+
+No. BugDrop does not set cookies, use local storage for tracking, send analytics, or fingerprint users. The only data sent to the server is the feedback form contents (title, description, category, optional screenshot, optional name/email, and automatically captured system information). This data goes directly to your GitHub repository and is not stored anywhere else.
+
+### Where is my data stored?
+
+All data is stored in your GitHub repository:
+
+- **Issues** are created as GitHub Issues with labels and formatted bodies
+- **Screenshots** are committed to the `bugdrop-screenshots` branch in a `.bugdrop/` directory
+
+No data is stored on the Cloudflare Worker. The API is stateless -- it receives the form submission, creates the GitHub Issue, and discards the data.
+
+### Can I self-host BugDrop?
+
+Yes. BugDrop can be self-hosted on your own Cloudflare Workers account with your own GitHub App. This gives you full control over the infrastructure, credentials, and rate limits. See the [Self-Hosting](/docs/self-hosting) page for an overview and the [SELF_HOSTING.md](https://github.com/mean-weasel/bugdrop/blob/main/SELF_HOSTING.md) file in the repository for full instructions.
+
+## Troubleshooting
+
+### The widget is not appearing on my site
+
+Check the following:
+
+1. **Verify the script tag** -- Make sure it does not have `async` or `defer` attributes
+2. **Check the console** -- Open your browser's developer console and look for `[BugDrop]` messages or errors
+3. **Check CSP** -- If your site uses a Content Security Policy, make sure `https://bugdrop.neonwatty.workers.dev` and `https://cdn.jsdelivr.net` are allowed in `script-src`
+4. **Check the repo** -- Ensure `data-repo` matches your GitHub repository path exactly (case-sensitive)
+5. **Check app installation** -- Verify the BugDrop GitHub App is installed on the repository
+
+### Issues are not being created
+
+If the widget appears but submissions fail:
+
+1. **Check the GitHub App** -- Make sure it is installed on the correct repository with Issues and Contents permissions
+2. **Check rate limits** -- You may have hit the per-IP or per-repository rate limit
+3. **Check the console** -- Look for error messages in the browser developer console
+4. **Check the network tab** -- Inspect the API request to see the response status and body
+
+### Screenshots are not being uploaded
+
+If issues are created but without screenshots:
+
+1. **Check branch protection** -- The GitHub App needs permission to push to the `bugdrop-screenshots` branch. See the [Installation](/docs/installation) page for details on branch protection configuration.
+2. **Check CSP** -- The html2canvas library is loaded from `cdn.jsdelivr.net`. Make sure it is allowed by your Content Security Policy.
+3. **Cross-origin content** -- html2canvas cannot capture cross-origin iframes or images loaded without CORS headers. These elements may appear blank in the screenshot.
+
+## Still Have Questions?
+
+- Browse the [GitHub Issues](https://github.com/mean-weasel/bugdrop/issues) for existing discussions
+- Open a new issue on the [GitHub repository](https://github.com/mean-weasel/bugdrop/issues/new)
+- Read the full [README](https://github.com/mean-weasel/bugdrop/blob/main/README.md) for additional details

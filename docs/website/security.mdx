@@ -1,0 +1,158 @@
+# Security
+
+BugDrop is designed with security and privacy at its core. This page covers the permissions the GitHub App requires, how data is stored, privacy guarantees, and the built-in rate limiting that protects against abuse.
+
+## GitHub App Permissions
+
+The BugDrop GitHub App requests the minimum permissions necessary to function:
+
+| Permission | Access Level | Purpose |
+|-----------|-------------|---------|
+| **Issues** | Read & Write | Create bug reports, feature requests, and questions as GitHub Issues |
+| **Contents** | Read & Write | Store screenshots in the repository on the `bugdrop-screenshots` branch |
+
+BugDrop does **not** request access to:
+
+- Your source code (contents access is limited to the `bugdrop-screenshots` branch)
+- Pull requests
+- Actions or workflows
+- Secrets or environment variables
+- Organization settings
+- Collaborators or team membership
+- Any other repository or account data
+
+You can review and revoke the app's access at any time from your GitHub settings under **Applications > Installed GitHub Apps**.
+
+## Data Storage
+
+BugDrop follows a "GitHub-native" storage model. All data stays within your GitHub repository -- nothing is stored on external servers.
+
+### Issues
+
+Feedback submissions are created as GitHub Issues in your repository. Each issue includes:
+
+- Title and description from the user
+- Feedback category (Bug, Feature, or Question) as a GitHub label
+- Automatic system information (browser, OS, viewport, language, URL)
+- Submitter name and email (if configured and provided)
+- Link to the screenshot (if attached)
+
+### Screenshots
+
+Screenshots are stored as image files in a `.bugdrop/` directory on a dedicated `bugdrop-screenshots` branch in your repository. This design has several benefits:
+
+- **Screenshots do not clutter your main branch** -- They live on a separate branch that never merges into your codebase
+- **Full version history** -- Every screenshot is a Git commit, giving you a full audit trail
+- **GitHub-hosted** -- Images are served directly from GitHub, with no external image hosting
+- **Easy cleanup** -- Delete the `bugdrop-screenshots` branch to remove all screenshots at once
+
+The screenshot branch is created automatically when the first screenshot is uploaded. No manual setup is required.
+
+### Screenshot Format
+
+Screenshots are captured client-side using [html2canvas](https://html2canvas.hertzen.com/), which renders the current page to a canvas element in the user's browser. The canvas is then converted to a PNG image and uploaded. This means:
+
+- The screenshot captures what the user actually sees
+- No server-side rendering or page access is required
+- The screenshot is generated entirely in the user's browser before being sent to the API
+
+## Privacy
+
+BugDrop is built with a privacy-first approach:
+
+- **No user tracking** -- BugDrop does not set cookies, use local storage for tracking, or fingerprint users
+- **No analytics** -- The widget does not send any telemetry, usage data, or analytics to any server
+- **No external data storage** -- All data (issues and screenshots) is stored in your GitHub repository
+- **No user accounts** -- Users submitting feedback do not need to create accounts or log in
+- **No PII collection by default** -- Name and email fields are off by default. When enabled, this data goes only to the GitHub Issue in your repository
+- **Client-side screenshots** -- Screenshots are rendered in the user's browser, not captured server-side
+- **Open source** -- The entire codebase is open source (MIT licensed) and auditable
+
+The only network requests BugDrop makes are:
+
+1. Loading the widget script from Cloudflare Workers
+2. Loading html2canvas from cdn.jsdelivr.net (for screenshot functionality)
+3. Submitting the feedback form to the BugDrop Cloudflare Worker API
+
+The API acts as a pass-through to the GitHub API -- it receives the form data, creates the issue and uploads the screenshot, and discards the data. Nothing is persisted on the Cloudflare Worker.
+
+## Rate Limiting
+
+BugDrop includes built-in rate limiting to protect against abuse and ensure fair usage. Rate limits are applied at the Cloudflare Worker API level.
+
+### Rate Limit Tiers
+
+| Scope | Limit | Window | Description |
+|-------|-------|--------|-------------|
+| **Per IP** | 10 requests | 15 minutes | Limits individual users from flooding the API |
+| **Per Repository** | 50 requests | 1 hour | Limits total submissions to any single repository |
+
+Both limits are enforced simultaneously. A request must pass both the per-IP and per-repository checks to succeed.
+
+### Rate Limit Headers
+
+Every API response includes rate limit headers so you can monitor usage:
+
+| Header | Description | Example |
+|--------|-------------|---------|
+| `X-RateLimit-Limit` | Maximum requests allowed in the window | `10` |
+| `X-RateLimit-Remaining` | Requests remaining in the current window | `7` |
+| `Retry-After` | Seconds until the rate limit resets (only on 429 responses) | `420` |
+
+### 429 Response Behavior
+
+When a rate limit is exceeded, the API returns an HTTP `429 Too Many Requests` response with:
+
+- A JSON body containing an error message explaining which limit was hit
+- A `Retry-After` header indicating how many seconds to wait before retrying
+
+The widget handles 429 responses gracefully by displaying a user-friendly message in the form. The user is told to try again later and shown approximately how long to wait.
+
+Example 429 response:
+
+```json
+{
+  "error": "Rate limit exceeded. Please try again later.",
+  "retryAfter": 420
+}
+```
+
+### Rate Limit Design Rationale
+
+The rate limits are set to be generous enough for legitimate usage while preventing abuse:
+
+- **10 per IP / 15 minutes** -- Even an active bug reporter rarely submits more than a few reports in 15 minutes. This limit stops automated scripts and spam while being invisible to real users.
+- **50 per repository / hour** -- This allows a team of users to submit feedback without hitting limits, while preventing a single repository from being overwhelmed by a flood of submissions.
+
+If these limits are too restrictive for your use case, consider [self-hosting](/docs/self-hosting) BugDrop with custom rate limit configuration.
+
+## Security Best Practices
+
+### For Site Owners
+
+1. **Review app permissions** -- Periodically check the BugDrop GitHub App's permissions in your GitHub settings
+2. **Monitor the screenshots branch** -- Occasionally review the `bugdrop-screenshots` branch for unexpected content
+3. **Use branch protection** -- Keep your main branch protected. BugDrop only needs write access to the `bugdrop-screenshots` branch
+4. **Set up CSP** -- If you use a Content Security Policy, explicitly whitelist the required domains rather than using broad wildcards
+
+### For Self-Hosters
+
+If you run your own instance of BugDrop:
+
+1. **Rotate your GitHub App credentials** regularly
+2. **Set appropriate rate limits** for your expected traffic
+3. **Monitor your Cloudflare Worker logs** for unusual activity
+4. **Keep your instance updated** with the latest version
+
+## Reporting Security Issues
+
+If you discover a security vulnerability in BugDrop, please report it responsibly:
+
+- **Do not** create a public GitHub Issue for security vulnerabilities
+- Contact the maintainers directly through GitHub's private vulnerability reporting feature on the [BugDrop repository](https://github.com/mean-weasel/bugdrop)
+
+## Next Steps
+
+- [Install BugDrop](/docs/installation) on your site
+- [Self-host BugDrop](/docs/self-hosting) for full control
+- [View the FAQ](/docs/faq) for common questions

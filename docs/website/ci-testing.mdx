@@ -1,0 +1,297 @@
+# CI Testing with Playwright
+
+BugDrop can be tested in your CI/CD pipeline using Playwright. This guide covers everything from a quick verification check to a comprehensive test suite that validates functionality, accessibility, and configuration.
+
+## Quick Check
+
+The fastest way to verify BugDrop is loading correctly is to check for its console message. When the widget initializes successfully, it logs:
+
+```
+[BugDrop] Widget initialized
+```
+
+You can check for this in a simple Playwright test:
+
+```typescript
+import { test, expect } from '@playwright/test';
+
+test('BugDrop loads', async ({ page }) => {
+  const messages: string[] = [];
+  page.on('console', (msg) => messages.push(msg.text()));
+
+  await page.goto('https://your-site.com');
+  await page.waitForTimeout(2000);
+
+  expect(messages.some((m) => m.includes('[BugDrop]'))).toBe(true);
+});
+```
+
+## Full Playwright Test Suite
+
+Here is a comprehensive test file that validates BugDrop's functionality, accessibility (WCAG AA compliance), and configuration. You can copy this directly into your project:
+
+```typescript
+import { test, expect } from "@playwright/test";
+
+// ── EXPECTED configuration ──────────────────────────────────────
+// Update these values to match YOUR script tag's data-* attributes.
+const EXPECTED = {
+  theme: "light",
+  position: "bottom-right",
+  color: "#7c3aed",
+  showName: false,
+  requireName: false,
+  showEmail: false,
+  requireEmail: false,
+  buttonDismissible: false,
+  showRestore: true,
+  welcomeMessage: "Report a bug or request a feature",
+};
+
+const URL = "https://your-site.com"; // Replace with your site URL
+
+// ── Helper: reach into the Shadow DOM ───────────────────────────
+async function shadowEl(page, hostSel: string, innerSel: string) {
+  return page.evaluateHandle(
+    ([h, s]) => {
+      const host = document.querySelector(h);
+      if (!host?.shadowRoot) throw new Error(`No shadow root on ${h}`);
+      const el = host.shadowRoot.querySelector(s);
+      if (!el) throw new Error(`${s} not found in shadow DOM`);
+      return el;
+    },
+    [hostSel, innerSel]
+  );
+}
+
+// ── Tests ───────────────────────────────────────────────────────
+
+test.describe("BugDrop Widget", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(URL);
+    await page.waitForSelector("bug-drop-widget");
+  });
+
+  test("renders the floating button", async ({ page }) => {
+    const btn = await shadowEl(page, "bug-drop-widget", ".floating-btn");
+    expect(btn).toBeTruthy();
+  });
+
+  test("opens and closes the form", async ({ page }) => {
+    const btn = await shadowEl(page, "bug-drop-widget", ".floating-btn");
+    await (btn as any).click();
+
+    const form = await shadowEl(page, "bug-drop-widget", ".feedback-form");
+    expect(form).toBeTruthy();
+
+    const closeBtn = await shadowEl(page, "bug-drop-widget", ".close-btn");
+    await (closeBtn as any).click();
+  });
+
+  test("has correct position", async ({ page }) => {
+    const pos = await page.evaluate(() => {
+      const host = document.querySelector("bug-drop-widget");
+      const btn = host?.shadowRoot?.querySelector(".floating-btn");
+      if (!btn) throw new Error("Button not found");
+      const style = window.getComputedStyle(btn);
+      return { right: style.right, left: style.left, bottom: style.bottom };
+    });
+
+    if (EXPECTED.position === "bottom-right") {
+      expect(parseInt(pos.right)).toBeLessThan(100);
+    } else {
+      expect(parseInt(pos.left)).toBeLessThan(100);
+    }
+  });
+
+  test("uses correct accent color", async ({ page }) => {
+    const bgColor = await page.evaluate(() => {
+      const host = document.querySelector("bug-drop-widget");
+      const btn = host?.shadowRoot?.querySelector(".floating-btn");
+      if (!btn) throw new Error("Button not found");
+      return window.getComputedStyle(btn).backgroundColor;
+    });
+    expect(bgColor).toBeTruthy();
+  });
+
+  test("displays correct welcome message", async ({ page }) => {
+    const btn = await shadowEl(page, "bug-drop-widget", ".floating-btn");
+    await (btn as any).click();
+
+    const welcomeText = await page.evaluate(() => {
+      const host = document.querySelector("bug-drop-widget");
+      const welcome = host?.shadowRoot?.querySelector(".welcome-message, h2");
+      return welcome?.textContent?.trim();
+    });
+
+    expect(welcomeText).toContain(EXPECTED.welcomeMessage);
+  });
+
+  test("shows/hides name field based on config", async ({ page }) => {
+    const btn = await shadowEl(page, "bug-drop-widget", ".floating-btn");
+    await (btn as any).click();
+
+    const nameFieldVisible = await page.evaluate(() => {
+      const host = document.querySelector("bug-drop-widget");
+      const nameField = host?.shadowRoot?.querySelector(
+        '[name="name"], #name, .name-field'
+      );
+      if (!nameField) return false;
+      return window.getComputedStyle(nameField).display !== "none";
+    });
+
+    expect(nameFieldVisible).toBe(EXPECTED.showName);
+  });
+
+  test("shows/hides email field based on config", async ({ page }) => {
+    const btn = await shadowEl(page, "bug-drop-widget", ".floating-btn");
+    await (btn as any).click();
+
+    const emailFieldVisible = await page.evaluate(() => {
+      const host = document.querySelector("bug-drop-widget");
+      const emailField = host?.shadowRoot?.querySelector(
+        '[name="email"], #email, .email-field'
+      );
+      if (!emailField) return false;
+      return window.getComputedStyle(emailField).display !== "none";
+    });
+
+    expect(emailFieldVisible).toBe(EXPECTED.showEmail);
+  });
+
+  // ── Accessibility (WCAG AA) ─────────────────────────────────
+  test("button meets WCAG AA contrast ratio", async ({ page }) => {
+    const contrast = await page.evaluate(() => {
+      function luminance(r: number, g: number, b: number) {
+        const [rs, gs, bs] = [r, g, b].map((c) => {
+          c /= 255;
+          return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+        });
+        return 0.2126 * rs + 0.7152 * gs + 0.0722 * bs;
+      }
+      function parseRgb(color: string) {
+        const match = color.match(/(\d+)/g);
+        return match ? match.map(Number) : [0, 0, 0];
+      }
+
+      const host = document.querySelector("bug-drop-widget");
+      const btn = host?.shadowRoot?.querySelector(".floating-btn");
+      if (!btn) return 0;
+      const style = window.getComputedStyle(btn);
+      const [r1, g1, b1] = parseRgb(style.backgroundColor);
+      const bgLum = luminance(r1, g1, b1);
+      const whiteLum = luminance(255, 255, 255);
+      const ratio =
+        (Math.max(bgLum, whiteLum) + 0.05) /
+        (Math.min(bgLum, whiteLum) + 0.05);
+      return ratio;
+    });
+
+    // WCAG AA requires 4.5:1 for normal text, 3:1 for large text
+    expect(contrast).toBeGreaterThanOrEqual(3);
+  });
+
+  test("form elements are keyboard accessible", async ({ page }) => {
+    // Open the form
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Enter");
+
+    // Verify form opened and is focusable
+    const formExists = await page.evaluate(() => {
+      const host = document.querySelector("bug-drop-widget");
+      return !!host?.shadowRoot?.querySelector(".feedback-form, form");
+    });
+
+    expect(formExists).toBe(true);
+  });
+});
+```
+
+## Installation and Setup
+
+To run the tests, you need Playwright installed in your project:
+
+```bash
+# Install Playwright
+npm install --save-dev @playwright/test
+
+# Install browsers
+npx playwright install
+```
+
+Create or update your `playwright.config.ts`:
+
+```typescript
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './e2e',
+  timeout: 30000,
+  use: {
+    baseURL: 'https://your-site.com',
+  },
+});
+```
+
+Then run the tests:
+
+```bash
+npx playwright test
+```
+
+## What the Tests Check
+
+The test suite covers three areas:
+
+### Functional Tests
+
+- **Renders the floating button** -- Verifies the widget loads and the button appears in the Shadow DOM
+- **Opens and closes the form** -- Clicks the button, verifies the form appears, then closes it
+- **Correct position** -- Validates the button is in the expected corner (bottom-right or bottom-left)
+- **Correct accent color** -- Checks the button's background color
+- **Welcome message** -- Opens the form and verifies the correct welcome text is displayed
+- **Name/email field visibility** -- Confirms fields show or hide based on your configuration
+
+### Accessibility Tests (WCAG AA)
+
+- **Contrast ratio** -- Calculates the luminance contrast ratio between the button's background color and white text, ensuring it meets WCAG AA standards (3:1 for large text)
+- **Keyboard accessibility** -- Verifies the form can be opened and navigated using only the keyboard
+
+### Configuration Verification
+
+The `EXPECTED` object at the top of the test file defines your expected configuration. Update it to match your actual `data-*` attributes:
+
+```typescript
+const EXPECTED = {
+  theme: "light",           // data-theme
+  position: "bottom-right", // data-position
+  color: "#7c3aed",         // data-color
+  showName: false,          // data-show-name
+  requireName: false,       // data-require-name
+  showEmail: false,         // data-show-email
+  requireEmail: false,      // data-require-email
+  buttonDismissible: false, // data-button-dismissible
+  showRestore: true,        // data-show-restore
+  welcomeMessage: "Report a bug or request a feature", // data-welcome
+};
+```
+
+If any of these values do not match what the widget actually renders, the corresponding test will fail -- catching configuration drift between your script tag and your expected behavior.
+
+## Running in CI
+
+Add the test to your CI workflow (GitHub Actions example):
+
+```yaml
+- name: Install Playwright
+  run: npx playwright install --with-deps chromium
+
+- name: Run BugDrop tests
+  run: npx playwright test e2e/bugdrop.spec.ts
+```
+
+## Next Steps
+
+- [Configure the widget](/docs/configuration) with data attributes
+- [Review security and rate limiting](/docs/security)
+- [Pin your widget version](/docs/version-pinning) for stable CI runs

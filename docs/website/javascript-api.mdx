@@ -1,0 +1,237 @@
+# JavaScript API
+
+BugDrop exposes a `window.BugDrop` API that gives you full programmatic control over the widget. Use it to open and close the feedback form, show and hide the button, and integrate BugDrop into your own UI elements.
+
+## API Reference
+
+The `window.BugDrop` object is available after the widget initializes. It provides the following methods and properties:
+
+| Method / Property | Type | Description |
+|------------------|------|-------------|
+| `BugDrop.open()` | Method | Opens the feedback form |
+| `BugDrop.close()` | Method | Closes the feedback form |
+| `BugDrop.hide()` | Method | Hides the floating button |
+| `BugDrop.show()` | Method | Shows the floating button |
+| `BugDrop.isOpen` | Property (boolean) | `true` if the feedback form is currently open |
+| `BugDrop.isButtonVisible` | Property (boolean) | `true` if the floating button is currently visible |
+
+### Basic Usage
+
+```html
+<script>
+  // Open the feedback form
+  window.BugDrop.open();
+
+  // Close the feedback form
+  window.BugDrop.close();
+
+  // Hide the floating button
+  window.BugDrop.hide();
+
+  // Show the floating button
+  window.BugDrop.show();
+
+  // Check if the form is open
+  if (window.BugDrop.isOpen) {
+    console.log('Form is currently open');
+  }
+
+  // Check if the button is visible
+  if (window.BugDrop.isButtonVisible) {
+    console.log('Button is visible');
+  }
+</script>
+```
+
+## API-Only Mode
+
+When you want to trigger BugDrop entirely from your own UI -- such as a menu item, button, or keyboard shortcut -- set `data-button="false"` to hide the default floating button:
+
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-button="false"
+></script>
+```
+
+In this mode, the widget loads and initializes but no floating button appears on the page. The feedback form is only accessible through `window.BugDrop.open()`.
+
+### Custom Trigger Button
+
+Here is a complete example of using API-only mode with your own button:
+
+```html
+<!-- Your custom button -->
+<button onclick="window.BugDrop.open()" class="my-feedback-btn">
+  Report a Bug
+</button>
+
+<!-- BugDrop in API-only mode -->
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-button="false"
+></script>
+```
+
+## Menu Item Integration
+
+A common pattern is integrating BugDrop into your application's navigation or help menu. The key is waiting for BugDrop to be ready before wiring up your UI.
+
+### Using the `bugdrop:ready` Event
+
+BugDrop dispatches a `bugdrop:ready` event on the `document` when it finishes initializing. This is the recommended way to set up integrations:
+
+```html
+<nav>
+  <ul>
+    <li><a href="/dashboard">Dashboard</a></li>
+    <li><a href="/settings">Settings</a></li>
+    <li>
+      <a href="#" id="report-bug-link" style="display:none">
+        Report a Bug
+      </a>
+    </li>
+  </ul>
+</nav>
+
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+  data-button="false"
+></script>
+
+<script>
+  document.addEventListener('bugdrop:ready', function () {
+    const link = document.getElementById('report-bug-link');
+    link.style.display = '';
+    link.addEventListener('click', function (e) {
+      e.preventDefault();
+      window.BugDrop.open();
+    });
+  });
+</script>
+```
+
+This pattern ensures:
+
+1. The "Report a Bug" link is hidden until BugDrop is ready
+2. Once the widget initializes, the link becomes visible
+3. Clicking the link opens the feedback form
+4. The default floating button is hidden (`data-button="false"`)
+
+### Synchronous Check
+
+If your code runs after the page is fully loaded and you want to check whether BugDrop is already available, you can do a synchronous check:
+
+```html
+<script>
+  if (window.BugDrop) {
+    // BugDrop is already initialized
+    window.BugDrop.open();
+  } else {
+    // Wait for it
+    document.addEventListener('bugdrop:ready', function () {
+      window.BugDrop.open();
+    });
+  }
+</script>
+```
+
+This "check first, listen second" pattern is useful in single-page applications where your code might run at various points in the page lifecycle.
+
+## Keyboard Shortcut Example
+
+You can bind BugDrop to a keyboard shortcut for power users:
+
+```html
+<script>
+  document.addEventListener('keydown', function (e) {
+    // Ctrl+Shift+B (or Cmd+Shift+B on Mac) to toggle bug report
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'B') {
+      e.preventDefault();
+      if (window.BugDrop && window.BugDrop.isOpen) {
+        window.BugDrop.close();
+      } else if (window.BugDrop) {
+        window.BugDrop.open();
+      }
+    }
+  });
+</script>
+```
+
+## React Integration Example
+
+In a React application, you can create a wrapper component:
+
+```tsx
+import { useEffect, useState } from 'react';
+
+function ReportBugButton() {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    if (window.BugDrop) {
+      setReady(true);
+    } else {
+      const handler = () => setReady(true);
+      document.addEventListener('bugdrop:ready', handler);
+      return () => document.removeEventListener('bugdrop:ready', handler);
+    }
+  }, []);
+
+  if (!ready) return null;
+
+  return (
+    <button onClick={() => window.BugDrop.open()}>
+      Report a Bug
+    </button>
+  );
+}
+```
+
+## Combining API with Visible Button
+
+You do not have to choose between the floating button and the API. You can use both:
+
+```html
+<!-- Show the floating button AND use the API -->
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo"
+></script>
+
+<!-- Your custom trigger in the nav -->
+<a href="#" onclick="event.preventDefault(); window.BugDrop.open()">
+  Report a Bug
+</a>
+```
+
+In this setup, users can either click the floating button or your navigation link to open the form. Both approaches open the same feedback form.
+
+## Programmatic Show/Hide
+
+The `show()` and `hide()` methods let you control the floating button's visibility. This is useful for contexts where the button should only appear on certain pages or under certain conditions:
+
+```html
+<script>
+  document.addEventListener('bugdrop:ready', function () {
+    // Hide the button on the checkout page
+    if (window.location.pathname.startsWith('/checkout')) {
+      window.BugDrop.hide();
+    }
+
+    // Show the button when user opens the help section
+    document.getElementById('help-tab').addEventListener('click', function () {
+      window.BugDrop.show();
+    });
+  });
+</script>
+```
+
+## Next Steps
+
+- [Configure the widget](/docs/configuration) with data attributes
+- [Style the widget](/docs/styling) to match your site design
+- [Test your integration](/docs/ci-testing) with Playwright
