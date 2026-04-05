@@ -3,8 +3,7 @@
 [![CI](https://github.com/mean-weasel/bugdrop/actions/workflows/ci.yml/badge.svg)](https://github.com/mean-weasel/bugdrop/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-1.11.0-14b8a6)](./CHANGELOG.md)
 [![Security Policy](https://img.shields.io/badge/Security-Policy-blue)](./SECURITY.md)
-[![Live Demo](https://img.shields.io/badge/Demo-Try_It_Live-ff9e64)](https://neonwatty.github.io/feedback-widget-test/) <!-- TODO: update to Vercel URL after Phase 3 -->
-
+[![Live Demo](https://img.shields.io/badge/Demo-Try_It_Live-ff9e64)](https://bugdrop-widget-test.vercel.app)
 In-app feedback → GitHub Issues. Screenshots, annotations, the works.
 
 ![bugdrop-demo-small](https://github.com/user-attachments/assets/22d234fa-aa0f-4d01-bc4f-4c3e8f107165)
@@ -454,8 +453,7 @@ Customize the `EXPECTED` object at the top to match your configuration. Set any 
 
 ## Live Demo
 
-Try it on [WienerMatch](https://neonwatty.github.io/feedback-widget-test/) — click the bug button in the bottom right corner. <!-- TODO: update to Vercel URL after Phase 3 -->
-
+Try it on [WienerMatch](https://bugdrop-widget-test.vercel.app) — click the bug button in the bottom right corner.
 ## How It Works
 
 ```
