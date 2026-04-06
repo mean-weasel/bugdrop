@@ -1951,6 +1951,37 @@ test.describe('Custom Icon', () => {
 });
 
 test.describe('Screenshot Crash Prevention (#67)', () => {
+  const STUB_PNG =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+  // Mock the html-to-image CDN with a custom toPng implementation
+  function mockHtmlToImage(page: Page, toPngBody: string) {
+    return page.route('**/html-to-image**', async route => {
+      await route.fulfill({
+        contentType: 'application/javascript',
+        body: `window.htmlToImage = { toPng: ${toPngBody} };`,
+      });
+    });
+  }
+
+  // Spy mock: records opts and returns a valid PNG
+  function spyToPng() {
+    return `function(el, opts) {
+      window.__captureOpts = opts;
+      return Promise.resolve('${STUB_PNG}');
+    }`;
+  }
+
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/check/**', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+  });
+
   // Helper: navigate widget to screenshot options and click "Full Page"
   async function navigateToFullPageCapture(page: Page) {
     const host = page.locator('#bugdrop-host');
@@ -1984,30 +2015,7 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
   }
 
   test('reduces pixelRatio on complex DOM pages (>3000 nodes)', async ({ page }) => {
-    await page.route('**/api/check/**', async route => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ installed: true }),
-      });
-    });
-
-    // Intercept html-to-image CDN to spy on the pixelRatio passed to toPng
-    await page.route('**/html-to-image**', async route => {
-      await route.fulfill({
-        contentType: 'application/javascript',
-        body: `
-          window.htmlToImage = {
-            toPng: function(el, opts) {
-              window.__captureOpts = opts;
-              // Return a minimal valid PNG data URL
-              return Promise.resolve('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==');
-            }
-          };
-        `,
-      });
-    });
-
+    await mockHtmlToImage(page, spyToPng());
     await page.goto('/test/complex-dom.html');
 
     // Verify the page actually has >3000 nodes
@@ -2026,29 +2034,7 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
   });
 
   test('uses normal pixelRatio on simple pages', async ({ page }) => {
-    await page.route('**/api/check/**', async route => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ installed: true }),
-      });
-    });
-
-    // Intercept html-to-image CDN to spy on pixelRatio
-    await page.route('**/html-to-image**', async route => {
-      await route.fulfill({
-        contentType: 'application/javascript',
-        body: `
-          window.htmlToImage = {
-            toPng: function(el, opts) {
-              window.__captureOpts = opts;
-              return Promise.resolve('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==');
-            }
-          };
-        `,
-      });
-    });
-
+    await mockHtmlToImage(page, spyToPng());
     await page.goto('/test/');
 
     // Verify simple page has <3000 nodes
@@ -2066,27 +2052,27 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
     expect(captureOpts.pixelRatio).toBeGreaterThanOrEqual(2);
   });
 
+  test('no unhandled rejections after successful capture', async ({ page }) => {
+    // Track unhandled promise rejections — verifies the timer is cleaned up
+    const rejections: string[] = [];
+    page.on('pageerror', err => rejections.push(err.message));
+
+    await mockHtmlToImage(page, spyToPng());
+    await page.goto('/test/');
+    await navigateToFullPageCapture(page);
+
+    const annotationCanvas = page.locator('#bugdrop-host').locator('css=#annotation-canvas');
+    await expect(annotationCanvas).toBeVisible({ timeout: 10000 });
+
+    // Wait long enough for a leaked timer to fire (timeout is 15s, capture is instant)
+    await page.waitForTimeout(2000);
+
+    const timeoutRejections = rejections.filter(m => m.includes('timed out'));
+    expect(timeoutRejections).toHaveLength(0);
+  });
+
   test('shows error modal when capture times out', async ({ page }) => {
-    await page.route('**/api/check/**', async route => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ installed: true }),
-      });
-    });
-
-    // Intercept html-to-image CDN: toPng returns a promise that never resolves
-    await page.route('**/html-to-image**', async route => {
-      await route.fulfill({
-        contentType: 'application/javascript',
-        body: `
-          window.htmlToImage = {
-            toPng: function() { return new Promise(function() {}); }
-          };
-        `,
-      });
-    });
-
+    await mockHtmlToImage(page, 'function() { return new Promise(function() {}); }');
     await page.goto('/test/');
     await navigateToFullPageCapture(page);
 
@@ -2104,26 +2090,7 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
   });
 
   test('skip button on error modal continues without screenshot', async ({ page }) => {
-    await page.route('**/api/check/**', async route => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ installed: true }),
-      });
-    });
-
-    // Make capture fail immediately
-    await page.route('**/html-to-image**', async route => {
-      await route.fulfill({
-        contentType: 'application/javascript',
-        body: `
-          window.htmlToImage = {
-            toPng: function() { return Promise.reject(new Error('mock failure')); }
-          };
-        `,
-      });
-    });
-
+    await mockHtmlToImage(page, "function() { return Promise.reject(new Error('mock failure')); }");
     await page.goto('/test/');
     await navigateToFullPageCapture(page);
 
@@ -2138,5 +2105,35 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
 
     // Error modal should be gone and submission should proceed
     await expect(errorText).not.toBeVisible({ timeout: 3000 });
+  });
+
+  test('retry button on error modal re-attempts capture', async ({ page }) => {
+    // First call fails, second call succeeds
+    await mockHtmlToImage(
+      page,
+      `function(el, opts) {
+        if (!window.__retryAttempted) {
+          window.__retryAttempted = true;
+          return Promise.reject(new Error('first attempt fails'));
+        }
+        return Promise.resolve('${STUB_PNG}');
+      }`
+    );
+
+    await page.goto('/test/');
+    await navigateToFullPageCapture(page);
+
+    // Wait for error modal from first failure
+    const host = page.locator('#bugdrop-host');
+    const errorText = host.locator('css=.bd-error-message__text');
+    await expect(errorText).toBeVisible({ timeout: 5000 });
+
+    // Click "Try Again"
+    const retryBtn = host.locator('css=[data-action="retry"]');
+    await retryBtn.click();
+
+    // Second attempt succeeds — annotation canvas should appear
+    const annotationCanvas = host.locator('css=#annotation-canvas');
+    await expect(annotationCanvas).toBeVisible({ timeout: 10000 });
   });
 });

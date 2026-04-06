@@ -32,14 +32,12 @@ export async function captureScreenshot(
   const isFullPage = !element;
 
   // For full-page captures on complex DOMs, reduce pixelRatio to prevent OOM crashes
-  const minScale = screenshotScale ?? 2;
-  let pixelRatio = Math.max(window.devicePixelRatio || 1, minScale);
-
-  if (isFullPage) {
-    const nodeCount = document.body.querySelectorAll('*').length;
-    if (nodeCount > DOM_COMPLEXITY_THRESHOLD) {
-      pixelRatio = 1;
-    }
+  let pixelRatio: number;
+  if (isFullPage && document.body.querySelectorAll('*').length > DOM_COMPLEXITY_THRESHOLD) {
+    pixelRatio = 1;
+  } else {
+    const minScale = screenshotScale ?? 2;
+    pixelRatio = Math.max(window.devicePixelRatio || 1, minScale);
   }
 
   const capturePromise = lib.toPng(target as HTMLElement, {
@@ -51,12 +49,17 @@ export async function captureScreenshot(
     },
   });
 
+  let timer: ReturnType<typeof setTimeout>;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(
+    timer = setTimeout(
       () => reject(new Error('Screenshot capture timed out — the page may be too complex')),
       CAPTURE_TIMEOUT_MS
     );
   });
 
-  return Promise.race([capturePromise, timeoutPromise]);
+  try {
+    return await Promise.race([capturePromise, timeoutPromise]);
+  } finally {
+    clearTimeout(timer!);
+  }
 }
