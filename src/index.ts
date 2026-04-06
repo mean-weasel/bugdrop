@@ -35,9 +35,9 @@ app.use('*', logger());
 // Mount API routes
 app.route('/api', api);
 
-// Landing page
-app.get('/', async c => {
-  return c.env.ASSETS.fetch(new Request(new URL('/index.html', c.req.url)));
+// Redirect to landing page on Vercel
+app.get('/', c => {
+  return c.redirect('https://bugdrop.dev', 301);
 });
 
 // Serve widget.js from static assets
