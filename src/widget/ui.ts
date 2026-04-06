@@ -1057,7 +1057,12 @@ export function injectStyles(shadow: ShadowRoot, config: WidgetConfig) {
   return root;
 }
 
-export function createModal(container: HTMLElement, title: string, content: string): HTMLElement {
+export function createModal(
+  container: HTMLElement,
+  title: string,
+  content: string,
+  showVersion: boolean = false
+): HTMLElement {
   const overlay = document.createElement('div');
   overlay.className = 'bd-overlay';
   const widgetVersion = typeof __BUGDROP_VERSION__ !== 'undefined' ? __BUGDROP_VERSION__ : 'dev';
@@ -1070,7 +1075,7 @@ export function createModal(container: HTMLElement, title: string, content: stri
       <div class="bd-body">
         ${content}
       </div>
-      <div class="bd-version">BugDrop v${widgetVersion}</div>
+      ${showVersion ? `<div class="bd-version">BugDrop v${widgetVersion}</div>` : ''}
     </div>
   `;
 
@@ -1116,7 +1121,8 @@ export function showSuccessModal(
         <div class="bd-powered-by">
           <a href="https://github.com/mean-weasel/bugdrop" target="_blank" rel="noopener noreferrer">Powered by BugDrop</a>
         </div>
-      `
+      `,
+      true
     );
 
     const closeBtn = modal.querySelector('.bd-close') as HTMLElement;
