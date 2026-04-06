@@ -19,6 +19,9 @@ async function loadHtmlToImage() {
   });
 }
 
+const CAPTURE_TIMEOUT_MS = 15_000;
+const DOM_COMPLEXITY_THRESHOLD = 3_000;
+
 export async function captureScreenshot(
   element?: Element,
   screenshotScale?: number
@@ -26,10 +29,18 @@ export async function captureScreenshot(
   const lib = await loadHtmlToImage();
 
   const target = element || document.body;
-  const minScale = screenshotScale ?? 2;
-  const pixelRatio = Math.max(window.devicePixelRatio || 1, minScale);
+  const isFullPage = !element;
 
-  const dataUrl = await lib.toPng(target as HTMLElement, {
+  // For full-page captures on complex DOMs, reduce pixelRatio to prevent OOM crashes
+  let pixelRatio: number;
+  if (isFullPage && document.body.querySelectorAll('*').length > DOM_COMPLEXITY_THRESHOLD) {
+    pixelRatio = 1;
+  } else {
+    const minScale = screenshotScale ?? 2;
+    pixelRatio = Math.max(window.devicePixelRatio || 1, minScale);
+  }
+
+  const capturePromise = lib.toPng(target as HTMLElement, {
     cacheBust: true,
     pixelRatio,
     filter: (node: HTMLElement) => {
@@ -38,5 +49,17 @@ export async function captureScreenshot(
     },
   });
 
-  return dataUrl;
+  let timer: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error('Screenshot capture timed out — the page may be too complex')),
+      CAPTURE_TIMEOUT_MS
+    );
+  });
+
+  try {
+    return await Promise.race([capturePromise, timeoutPromise]);
+  } finally {
+    clearTimeout(timer!);
+  }
 }
