@@ -676,7 +676,8 @@ async function captureWithLoading(
             <button class="bd-btn bd-btn-secondary" data-action="skip">Skip Screenshot</button>
             <button class="bd-btn bd-btn-primary" data-action="retry">Try Again</button>
           </div>
-        `
+        `,
+        true
       );
 
       const closeBtn = errorModal.querySelector('.bd-close') as HTMLElement;
@@ -741,7 +742,8 @@ function showInstallPrompt(
         <button class="bd-btn bd-btn-secondary" data-action="cancel">Cancel</button>
         ${!errorMessage ? `<a href="${installUrl}" target="_blank" class="bd-btn bd-btn-primary" style="text-decoration: none;">Install App</a>` : ''}
       </div>
-    `
+    `,
+    true
   );
 
   const closeBtn = modal.querySelector('.bd-close') as HTMLElement;
@@ -776,7 +778,8 @@ function showWelcomeScreen(root: HTMLElement): Promise<boolean> {
         <div class="bd-actions" style="justify-content: center;">
           <button class="bd-btn bd-btn-primary" data-action="continue">Get Started</button>
         </div>
-      `
+      `,
+      true
     );
 
     const closeBtn = modal.querySelector('.bd-close') as HTMLElement;
@@ -1148,7 +1151,8 @@ function showSubmitError(
         <button class="bd-btn bd-btn-secondary" data-action="cancel">Cancel</button>
         <button class="bd-btn bd-btn-primary" data-action="retry">Try Again</button>
       </div>
-    `
+    `,
+    true
   );
 
   const closeBtn = modal.querySelector('.bd-close') as HTMLElement;
