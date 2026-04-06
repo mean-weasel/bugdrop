@@ -15,7 +15,7 @@ test.describe('Widget Loading', () => {
     });
 
     await page.goto('/test/');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Filter out expected widget errors (missing repo in some test scenarios)
     const unexpectedErrors = errors.filter(e => !e.includes('Missing data-repo'));
@@ -24,7 +24,7 @@ test.describe('Widget Loading', () => {
 
   test('widget host element exists', async ({ page }) => {
     await page.goto('/test/');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Widget creates a host element
     const host = page.locator('#bugdrop-host');
@@ -33,7 +33,7 @@ test.describe('Widget Loading', () => {
 
   test('feedback button is visible in shadow DOM', async ({ page }) => {
     await page.goto('/test/');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Access button inside shadow DOM
     const button = page.locator('#bugdrop-host').locator('css=.bd-trigger');
@@ -113,15 +113,12 @@ test.describe('Widget Interaction', () => {
     await selectElementBtn.click();
 
     // Wait for element picker mode to be active
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(300);
 
     // Click on the SVG element - this previously caused className.split error
     const svgElement = page.locator('#test-svg');
     await expect(svgElement).toBeVisible();
     await svgElement.click();
-
-    // Wait for screenshot capture and annotation modal
-    await page.waitForTimeout(1000);
 
     // Check for the className.split error that was previously occurring
     const classNameErrors = errors.filter(
@@ -192,16 +189,13 @@ test.describe('Widget Interaction', () => {
     await selectElementBtn.click();
 
     // Wait for element picker mode to be active
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(300);
 
     // Click on nested SVG child element (text inside SVG)
     // This tests that getElementSelector handles SVG elements when walking up the tree
     const svgText = page.locator('#test-svg text');
     await expect(svgText).toBeVisible();
     await svgText.click();
-
-    // Wait for screenshot capture and annotation modal
-    await page.waitForTimeout(1000);
 
     // Check for the className.split error
     const classNameErrors = errors.filter(
@@ -476,7 +470,7 @@ test.describe('Dismissible Button', () => {
     await trigger.hover();
 
     // Wait for transition and check opacity is now 1 (visible)
-    await page.waitForTimeout(200);
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
     const hoverOpacity = await closeBtn.evaluate(el => getComputedStyle(el).opacity);
     expect(parseFloat(hoverOpacity)).toBeGreaterThan(0.5);
   });
@@ -489,10 +483,10 @@ test.describe('Dismissible Button', () => {
 
     // Hover to reveal close button
     await trigger.hover();
-    await page.waitForTimeout(200);
+    const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
 
     // Click the close button
-    const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
     await closeBtn.click();
 
     // Trigger should no longer exist
@@ -507,10 +501,10 @@ test.describe('Dismissible Button', () => {
 
     // Hover to reveal close button
     await trigger.hover();
-    await page.waitForTimeout(200);
+    const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
 
     // Click the close button
-    const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
     await closeBtn.click();
 
     // Modal should not appear
@@ -526,8 +520,8 @@ test.describe('Dismissible Button', () => {
 
     // Hover and click close button
     await trigger.hover();
-    await page.waitForTimeout(200);
     const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
     await closeBtn.click();
 
     // Verify button is gone
@@ -535,7 +529,7 @@ test.describe('Dismissible Button', () => {
 
     // Reload the page
     await page.reload();
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').waitFor({ state: 'attached' });
 
     // Button should still be hidden
     const triggerAfterReload = page.locator('#bugdrop-host').locator('css=.bd-trigger');
@@ -561,7 +555,7 @@ test.describe('Dismissible Button', () => {
 
     // Reload page (regular test page without dismissible)
     await page.reload();
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Button should still be visible because dismissible is not enabled
     const trigger = page.locator('#bugdrop-host').locator('css=.bd-trigger');
@@ -584,7 +578,7 @@ test.describe('Dismissible Button', () => {
 
     // Hover to reveal close button
     await trigger.hover();
-    await page.waitForTimeout(200);
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
 
     // Verify close button is visible
     const hoverOpacity = await closeBtn.evaluate(el => getComputedStyle(el).opacity);
@@ -596,7 +590,7 @@ test.describe('Dismissible Button', () => {
 
     // Verify persistence
     await page.reload();
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').waitFor({ state: 'attached' });
     await expect(page.locator('#bugdrop-host').locator('css=.bd-trigger')).not.toBeAttached();
   });
 
@@ -623,7 +617,7 @@ test.describe('Dismissible Button', () => {
 
     // Hover and dismiss
     await trigger.hover();
-    await page.waitForTimeout(200);
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
     await closeBtn.click();
     await expect(trigger).not.toBeAttached();
   });
@@ -669,9 +663,8 @@ test.describe('Dismissible Button', () => {
 
     // Hover to reveal close button
     await trigger.hover();
-    await page.waitForTimeout(200);
-
     const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
 
     // Focus the close button and press Enter
     await closeBtn.focus();
@@ -691,9 +684,8 @@ test.describe('Dismissible Button', () => {
 
     // Hover to reveal close button
     await trigger.hover();
-    await page.waitForTimeout(200);
-
     const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
 
     // Focus the close button and press Space
     await closeBtn.focus();
@@ -715,7 +707,7 @@ test.describe('Dismissible Button', () => {
 
     // Hover over trigger first to reveal close button
     await trigger.hover();
-    await page.waitForTimeout(200);
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
 
     // Get initial background color
     const initialBg = await closeBtn.evaluate(el => getComputedStyle(el).backgroundColor);
@@ -755,8 +747,8 @@ test.describe('Dismissible Button', () => {
 
     // Dismiss the button
     await trigger.hover();
-    await page.waitForTimeout(200);
     const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
     await closeBtn.click();
 
     // Verify localStorage key is set to a timestamp (number)
@@ -779,7 +771,7 @@ test.describe('Dismissible Button', () => {
     // Set legacy 'true' value
     await page.evaluate(() => localStorage.setItem('bugdrop_dismissed', 'true'));
     await page.reload();
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').waitFor({ state: 'attached' });
 
     // Button should be hidden
     const trigger = page.locator('#bugdrop-host').locator('css=.bd-trigger');
@@ -796,8 +788,8 @@ test.describe('Dismissible Button', () => {
 
     // Dismiss the button
     await trigger.hover();
-    await page.waitForTimeout(200);
     const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
     await closeBtn.click();
 
     // Verify button is gone
@@ -809,7 +801,7 @@ test.describe('Dismissible Button', () => {
 
     // Call BugDrop.show() to bring button back
     await page.evaluate(() => window.BugDrop?.show());
-    await page.waitForTimeout(300);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Button should be visible again
     const triggerAfterShow = page.locator('#bugdrop-host').locator('css=.bd-trigger');
@@ -830,20 +822,20 @@ test.describe('Dismissible Button', () => {
 
     // Dismiss the button
     await trigger.hover();
-    await page.waitForTimeout(200);
     const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
     await closeBtn.click();
     await expect(trigger).not.toBeAttached();
 
     // Reload the page - button should still be hidden
     await page.reload();
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').waitFor({ state: 'attached' });
     const triggerAfterReload = page.locator('#bugdrop-host').locator('css=.bd-trigger');
     await expect(triggerAfterReload).not.toBeAttached();
 
     // Call BugDrop.show() to bring button back
     await page.evaluate(() => window.BugDrop?.show());
-    await page.waitForTimeout(300);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Button should be visible
     const triggerAfterShow = page.locator('#bugdrop-host').locator('css=.bd-trigger');
@@ -861,15 +853,15 @@ test.describe('Dismissible Button', () => {
     await expect(trigger).toBeVisible({ timeout: 5000 });
 
     await trigger.hover();
-    await page.waitForTimeout(200);
     const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
     await closeBtn.click();
     await expect(trigger).not.toBeAttached();
 
     // Now clear localStorage and reload
     await page.evaluate(() => localStorage.removeItem('bugdrop_dismissed'));
     await page.reload();
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Button should be visible again
     const triggerRestored = page.locator('#bugdrop-host').locator('css=.bd-trigger');
@@ -915,7 +907,7 @@ test.describe('Dismissible Button', () => {
 
     // Reload with broken localStorage
     await page.reload();
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Widget should still load (graceful degradation)
     const trigger = page.locator('#bugdrop-host').locator('css=.bd-trigger');
@@ -923,8 +915,8 @@ test.describe('Dismissible Button', () => {
 
     // Dismiss should still work visually (even if not persisted)
     await trigger.hover();
-    await page.waitForTimeout(200);
     const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
     await closeBtn.click();
 
     // Button should be hidden
@@ -956,15 +948,11 @@ test.describe('Dismissible Button', () => {
 
     // Hover to reveal close button
     await trigger.hover();
-    await page.waitForTimeout(200);
-
     const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
 
     // Click the close button
     await closeBtn.click();
-
-    // Wait a moment for the dismiss to complete
-    await page.waitForTimeout(100);
 
     // Button should be removed (pull tab should appear instead)
     await expect(trigger).not.toBeAttached();
@@ -997,7 +985,7 @@ test.describe('Dismiss Duration', () => {
 
     // Reload the page
     await page.reload();
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Button should be visible again (8 days > 7 day duration)
     const trigger = page.locator('#bugdrop-host').locator('css=.bd-trigger');
@@ -1016,7 +1004,7 @@ test.describe('Dismiss Duration', () => {
 
     // Reload the page
     await page.reload();
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').waitFor({ state: 'attached' });
 
     // Button should still be hidden (3 days < 7 day duration)
     const trigger = page.locator('#bugdrop-host').locator('css=.bd-trigger');
@@ -1033,8 +1021,8 @@ test.describe('Dismiss Duration', () => {
 
     // Dismiss the button
     await trigger.hover();
-    await page.waitForTimeout(200);
     const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
     await closeBtn.click();
 
     // Button should be hidden
@@ -1042,7 +1030,7 @@ test.describe('Dismiss Duration', () => {
 
     // Reload and verify still hidden
     await page.reload();
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').waitFor({ state: 'attached' });
     const triggerAfterReload = page.locator('#bugdrop-host').locator('css=.bd-trigger');
     await expect(triggerAfterReload).not.toBeAttached();
   });
@@ -1058,7 +1046,7 @@ test.describe('Dismiss Duration', () => {
       oldTimestamp
     );
     await page.reload();
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Button should be visible because dismissible is not enabled
     const trigger = page.locator('#bugdrop-host').locator('css=.bd-trigger');
@@ -1078,7 +1066,7 @@ test.describe('Keyboard Event Isolation', () => {
     });
 
     await page.goto('/test/keyboard-conflict.html');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Track host-page keydown events that fire while BugDrop is open
     await page.evaluate(() => {
@@ -1138,7 +1126,7 @@ test.describe('Install URL from appName', () => {
     });
 
     await page.goto('/test/keyboard-conflict.html');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Open the widget
     const button = page.locator('#bugdrop-host').locator('css=.bd-trigger');
@@ -1168,7 +1156,7 @@ test.describe('Install URL from appName', () => {
     });
 
     await page.goto('/test/keyboard-conflict.html');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     const button = page.locator('#bugdrop-host').locator('css=.bd-trigger');
     await expect(button).toBeVisible({ timeout: 5000 });
@@ -1237,7 +1225,7 @@ test.describe('Widget Build', () => {
 test.describe('JavaScript API', () => {
   test('window.BugDrop exists after widget loads', async ({ page }) => {
     await page.goto('/test/');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     const hasBugDrop = await page.evaluate(() => {
       return typeof window.BugDrop === 'object' && window.BugDrop !== null;
@@ -1247,7 +1235,7 @@ test.describe('JavaScript API', () => {
 
   test('BugDrop API has all expected methods', async ({ page }) => {
     await page.goto('/test/');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     const apiMethods = await page.evaluate(() => {
       if (!window.BugDrop) return [];
@@ -1282,7 +1270,7 @@ test.describe('JavaScript API', () => {
 
   test('BugDrop.open() opens the modal', async ({ page }) => {
     await page.goto('/test/');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Modal should not be visible initially
     const modalBefore = page.locator('#bugdrop-host').locator('css=.bd-modal');
@@ -1290,7 +1278,7 @@ test.describe('JavaScript API', () => {
 
     // Call open API
     await page.evaluate(() => window.BugDrop?.open());
-    await page.waitForTimeout(300);
+    await page.locator('#bugdrop-host').locator('css=.bd-modal').waitFor();
 
     // Modal should now be visible
     const modalAfter = page.locator('#bugdrop-host').locator('css=.bd-modal');
@@ -1299,18 +1287,18 @@ test.describe('JavaScript API', () => {
 
   test('BugDrop.close() closes the modal', async ({ page }) => {
     await page.goto('/test/');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Open modal first
     await page.evaluate(() => window.BugDrop?.open());
-    await page.waitForTimeout(300);
+    await page.locator('#bugdrop-host').locator('css=.bd-modal').waitFor();
 
     const modal = page.locator('#bugdrop-host').locator('css=.bd-modal');
     await expect(modal).toBeVisible();
 
     // Close via API
     await page.evaluate(() => window.BugDrop?.close());
-    await page.waitForTimeout(300);
+    await expect(page.locator('#bugdrop-host').locator('css=.bd-modal')).not.toBeVisible();
 
     // Modal should be gone
     await expect(modal).not.toBeVisible();
@@ -1318,7 +1306,7 @@ test.describe('JavaScript API', () => {
 
   test('BugDrop.isOpen() returns correct state', async ({ page }) => {
     await page.goto('/test/');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Should be false initially
     const isOpenBefore = await page.evaluate(() => window.BugDrop?.isOpen());
@@ -1326,7 +1314,7 @@ test.describe('JavaScript API', () => {
 
     // Open modal
     await page.evaluate(() => window.BugDrop?.open());
-    await page.waitForTimeout(300);
+    await page.locator('#bugdrop-host').locator('css=.bd-modal').waitFor();
 
     // Should be true now
     const isOpenAfter = await page.evaluate(() => window.BugDrop?.isOpen());
@@ -1334,7 +1322,7 @@ test.describe('JavaScript API', () => {
 
     // Close modal
     await page.evaluate(() => window.BugDrop?.close());
-    await page.waitForTimeout(300);
+    await expect(page.locator('#bugdrop-host').locator('css=.bd-modal')).not.toBeVisible();
 
     // Should be false again
     const isOpenFinal = await page.evaluate(() => window.BugDrop?.isOpen());
@@ -1343,7 +1331,7 @@ test.describe('JavaScript API', () => {
 
   test('BugDrop.hide() hides the floating button', async ({ page }) => {
     await page.goto('/test/');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     const trigger = page.locator('#bugdrop-host').locator('css=.bd-trigger');
     await expect(trigger).toBeVisible();
@@ -1357,7 +1345,7 @@ test.describe('JavaScript API', () => {
 
   test('BugDrop.show() shows the hidden button', async ({ page }) => {
     await page.goto('/test/');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     const trigger = page.locator('#bugdrop-host').locator('css=.bd-trigger');
 
@@ -1371,7 +1359,7 @@ test.describe('JavaScript API', () => {
 
   test('BugDrop.isButtonVisible() returns correct state', async ({ page }) => {
     await page.goto('/test/');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Should be true initially
     const isVisibleBefore = await page.evaluate(() => window.BugDrop?.isButtonVisible());
@@ -1396,7 +1384,7 @@ test.describe('JavaScript API', () => {
 test.describe('Custom Accent Color', () => {
   test('default color is teal when data-color is not set', async ({ page }) => {
     await page.goto('/test/color-default.html');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     const trigger = page.locator('#bugdrop-host').locator('css=.bd-trigger');
     await expect(trigger).toBeVisible({ timeout: 5000 });
@@ -1420,7 +1408,7 @@ test.describe('Custom Accent Color', () => {
 
   test('custom color is applied when data-color is set', async ({ page }) => {
     await page.goto('/test/color-custom.html');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     const trigger = page.locator('#bugdrop-host').locator('css=.bd-trigger');
     await expect(trigger).toBeVisible({ timeout: 5000 });
@@ -1530,15 +1518,12 @@ test.describe('Pull Tab Restore', () => {
 
     // Dismiss the button
     await trigger.hover();
-    await page.waitForTimeout(200);
     const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
     await closeBtn.click();
 
-    // Wait for dismiss animation to complete
-    await page.waitForTimeout(400);
-
     // Pull tab should now be visible
-    await expect(pullTab).toBeVisible();
+    await expect(pullTab).toBeVisible({ timeout: 2000 });
   });
 
   test('clicking pull tab restores the feedback button', async ({ page }) => {
@@ -1549,24 +1534,18 @@ test.describe('Pull Tab Restore', () => {
 
     // Dismiss the button
     await trigger.hover();
-    await page.waitForTimeout(200);
     const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
     await closeBtn.click();
-
-    // Wait for dismiss animation
-    await page.waitForTimeout(400);
 
     // Click the pull tab
     const pullTab = page.locator('#bugdrop-host').locator('css=.bd-pull-tab');
-    await expect(pullTab).toBeVisible();
+    await expect(pullTab).toBeVisible({ timeout: 2000 });
     await pullTab.click();
-
-    // Wait for restore animation
-    await page.waitForTimeout(500);
 
     // Button should be visible again
     const triggerAfterRestore = page.locator('#bugdrop-host').locator('css=.bd-trigger');
-    await expect(triggerAfterRestore).toBeVisible();
+    await expect(triggerAfterRestore).toBeVisible({ timeout: 2000 });
 
     // Pull tab should be gone
     await expect(pullTab).not.toBeAttached();
@@ -1580,10 +1559,10 @@ test.describe('Pull Tab Restore', () => {
 
     // Dismiss the button
     await trigger.hover();
-    await page.waitForTimeout(200);
     const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
     await closeBtn.click();
-    await page.waitForTimeout(400);
+    await expect(trigger).not.toBeAttached({ timeout: 2000 });
 
     // Verify localStorage is set
     const dismissedBefore = await page.evaluate(() => localStorage.getItem('bugdrop_dismissed'));
@@ -1591,8 +1570,9 @@ test.describe('Pull Tab Restore', () => {
 
     // Click the pull tab
     const pullTab = page.locator('#bugdrop-host').locator('css=.bd-pull-tab');
+    await expect(pullTab).toBeVisible({ timeout: 2000 });
     await pullTab.click();
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // localStorage should be cleared
     const dismissedAfter = await page.evaluate(() => localStorage.getItem('bugdrop_dismissed'));
@@ -1607,14 +1587,15 @@ test.describe('Pull Tab Restore', () => {
 
     // Dismiss and restore
     await trigger.hover();
-    await page.waitForTimeout(200);
     const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
     await closeBtn.click();
-    await page.waitForTimeout(400);
+    await expect(trigger).not.toBeAttached({ timeout: 2000 });
 
     const pullTab = page.locator('#bugdrop-host').locator('css=.bd-pull-tab');
+    await expect(pullTab).toBeVisible({ timeout: 2000 });
     await pullTab.click();
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Click the restored button to open modal
     const restoredTrigger = page.locator('#bugdrop-host').locator('css=.bd-trigger');
@@ -1633,30 +1614,28 @@ test.describe('Pull Tab Restore', () => {
 
     // First dismiss
     await trigger.hover();
-    await page.waitForTimeout(200);
     let closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
     await closeBtn.click();
-    await page.waitForTimeout(400);
+    await expect(trigger).not.toBeAttached({ timeout: 2000 });
 
     // Restore via pull tab
     const pullTab = page.locator('#bugdrop-host').locator('css=.bd-pull-tab');
+    await expect(pullTab).toBeVisible({ timeout: 2000 });
     await pullTab.click();
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Second dismiss
     const restoredTrigger = page.locator('#bugdrop-host').locator('css=.bd-trigger');
     await restoredTrigger.hover();
-    await page.waitForTimeout(200);
     closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
     await closeBtn.click();
-
-    // Wait for the slide-out animation to complete (animation is 0.3s + buffer for CI)
-    await page.waitForTimeout(600);
 
     // Button should be gone, pull tab should reappear
     await expect(restoredTrigger).not.toBeAttached({ timeout: 5000 });
     const pullTabAgain = page.locator('#bugdrop-host').locator('css=.bd-pull-tab');
-    await expect(pullTabAgain).toBeVisible();
+    await expect(pullTabAgain).toBeVisible({ timeout: 2000 });
   });
 
   test('pull tab is keyboard accessible', async ({ page }) => {
@@ -1667,20 +1646,20 @@ test.describe('Pull Tab Restore', () => {
 
     // Dismiss the button
     await trigger.hover();
-    await page.waitForTimeout(200);
     const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
     await closeBtn.click();
-    await page.waitForTimeout(400);
+    await expect(trigger).not.toBeAttached({ timeout: 2000 });
 
     // Focus the pull tab and press Enter
     const pullTab = page.locator('#bugdrop-host').locator('css=.bd-pull-tab');
+    await expect(pullTab).toBeVisible({ timeout: 2000 });
     await pullTab.focus();
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(500);
 
     // Button should be restored
     const restoredTrigger = page.locator('#bugdrop-host').locator('css=.bd-trigger');
-    await expect(restoredTrigger).toBeVisible();
+    await expect(restoredTrigger).toBeVisible({ timeout: 2000 });
   });
 
   test('pull tab persists after page reload', async ({ page }) => {
@@ -1691,14 +1670,14 @@ test.describe('Pull Tab Restore', () => {
 
     // Dismiss the button
     await trigger.hover();
-    await page.waitForTimeout(200);
     const closeBtn = page.locator('#bugdrop-host').locator('css=.bd-trigger-close');
+    await expect(closeBtn).toHaveCSS('opacity', '1', { timeout: 2000 });
     await closeBtn.click();
-    await page.waitForTimeout(400);
+    await expect(trigger).not.toBeAttached({ timeout: 2000 });
 
     // Reload page
     await page.reload();
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').waitFor({ state: 'attached' });
 
     // Button should still be hidden
     const triggerAfterReload = page.locator('#bugdrop-host').locator('css=.bd-trigger');
@@ -1713,7 +1692,7 @@ test.describe('Pull Tab Restore', () => {
 test.describe('API-Only Mode (data-button="false")', () => {
   test('floating button is not rendered when data-button="false"', async ({ page }) => {
     await page.goto('/test/api-only.html');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').waitFor({ state: 'attached' });
 
     // Button should not exist
     const trigger = page.locator('#bugdrop-host').locator('css=.bd-trigger');
@@ -1722,7 +1701,7 @@ test.describe('API-Only Mode (data-button="false")', () => {
 
   test('BugDrop API is still available in API-only mode', async ({ page }) => {
     await page.goto('/test/api-only.html');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').waitFor({ state: 'attached' });
 
     const hasBugDrop = await page.evaluate(() => {
       return typeof window.BugDrop === 'object' && window.BugDrop !== null;
@@ -1732,11 +1711,11 @@ test.describe('API-Only Mode (data-button="false")', () => {
 
   test('BugDrop.open() works in API-only mode', async ({ page }) => {
     await page.goto('/test/api-only.html');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').waitFor({ state: 'attached' });
 
     // Open modal via API
     await page.evaluate(() => window.BugDrop?.open());
-    await page.waitForTimeout(300);
+    await page.locator('#bugdrop-host').locator('css=.bd-modal').waitFor();
 
     // Modal should be visible
     const modal = page.locator('#bugdrop-host').locator('css=.bd-modal');
@@ -1745,7 +1724,7 @@ test.describe('API-Only Mode (data-button="false")', () => {
 
   test('BugDrop.isButtonVisible() returns false in API-only mode', async ({ page }) => {
     await page.goto('/test/api-only.html');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').waitFor({ state: 'attached' });
 
     const isVisible = await page.evaluate(() => window.BugDrop?.isButtonVisible());
     expect(isVisible).toBeFalsy();
@@ -1765,7 +1744,6 @@ test.describe('API-Only Mode (data-button="false")', () => {
 
     // Click the "Report Bug" link in the nav
     await page.click('#nav-report-bug');
-    await page.waitForTimeout(500);
 
     // Modal should open
     const modal = page.locator('#bugdrop-host').locator('css=.bd-modal');
@@ -1774,7 +1752,7 @@ test.describe('API-Only Mode (data-button="false")', () => {
 
   test('BugDrop.show() does nothing in API-only mode (no button to show)', async ({ page }) => {
     await page.goto('/test/api-only.html');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').waitFor({ state: 'attached' });
 
     // Try to show button (should do nothing, no errors)
     await page.evaluate(() => window.BugDrop?.show());
@@ -1803,7 +1781,8 @@ test.describe('Feedback Categories', () => {
 
     // Click to open modal
     await trigger.click();
-    await page.waitForTimeout(300);
+    const modal = page.locator('#bugdrop-host').locator('css=.bd-modal');
+    await expect(modal).toBeVisible({ timeout: 5000 });
 
     // Click continue on welcome screen
     const continueBtn = page.locator('#bugdrop-host').locator('css=[data-action="continue"]');
@@ -1846,8 +1825,9 @@ test.describe('Feedback Categories', () => {
     await page.goto('/test/index.html');
 
     const trigger = page.locator('#bugdrop-host').locator('css=.bd-trigger');
+    await expect(trigger).toBeVisible({ timeout: 5000 });
     await trigger.click();
-    await page.waitForTimeout(300);
+    await page.locator('#bugdrop-host').locator('css=.bd-modal').waitFor();
 
     const continueBtn = page.locator('#bugdrop-host').locator('css=[data-action="continue"]');
     await continueBtn.click();
@@ -1876,8 +1856,9 @@ test.describe('Feedback Categories', () => {
     await page.goto('/test/index.html');
 
     const trigger = page.locator('#bugdrop-host').locator('css=.bd-trigger');
+    await expect(trigger).toBeVisible({ timeout: 5000 });
     await trigger.click();
-    await page.waitForTimeout(300);
+    await page.locator('#bugdrop-host').locator('css=.bd-modal').waitFor();
 
     const continueBtn = page.locator('#bugdrop-host').locator('css=[data-action="continue"]');
     await continueBtn.click();
@@ -1912,7 +1893,7 @@ test.describe('Feedback Categories', () => {
 test.describe('Custom Icon', () => {
   test('custom icon renders img element with correct src', async ({ page }) => {
     await page.goto('/test/icon-custom.html');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     const trigger = page.locator('#bugdrop-host').locator('css=.bd-trigger');
     await expect(trigger).toBeVisible({ timeout: 5000 });
@@ -1929,7 +1910,7 @@ test.describe('Custom Icon', () => {
   test('broken icon URL falls back to default emoji', async ({ page }) => {
     // Navigate to a page and inject widget with broken icon URL
     await page.goto('/test/icon-custom.html');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     // Modify the page to use a broken URL by evaluating script
     await page.evaluate(() => {
@@ -1943,7 +1924,6 @@ test.describe('Custom Icon', () => {
       script.dataset.icon = 'https://invalid.example.com/nonexistent.png';
       document.body.appendChild(script);
     });
-    await page.waitForTimeout(1000);
 
     const triggerIcon = page.locator('#bugdrop-host').locator('css=.bd-trigger-icon');
     await expect(triggerIcon).toBeVisible({ timeout: 5000 });
@@ -1955,7 +1935,7 @@ test.describe('Custom Icon', () => {
 
   test('default emoji shows when no data-icon is set', async ({ page }) => {
     await page.goto('/test/index.html');
-    await page.waitForTimeout(500);
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
 
     const triggerIcon = page.locator('#bugdrop-host').locator('css=.bd-trigger-icon');
     await expect(triggerIcon).toBeVisible({ timeout: 5000 });

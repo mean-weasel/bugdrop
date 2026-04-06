@@ -41,6 +41,7 @@ coverage/
 # Test artifacts
 playwright-report/
 test-results/
+.playwright-mcp/
 
 # Worktrees
 .worktrees/
