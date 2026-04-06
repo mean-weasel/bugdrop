@@ -22,7 +22,10 @@ private-key*.pem
 .idea/
 
 # Claude Code artifacts
-.claude/
+# Ignore .claude/ contents, but track settings and skills
+.claude/*
+!.claude/settings.json
+!.claude/skills/
 .plans/
 .superpowers/
 .playwright-mcp/
