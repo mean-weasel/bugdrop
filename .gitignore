@@ -24,6 +24,8 @@ private-key*.pem
 # Claude Code artifacts
 .claude/
 .plans/
+.superpowers/
+.playwright-mcp/
 
 # OS files
 .DS_Store
