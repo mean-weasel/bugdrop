@@ -695,7 +695,7 @@ async function captureWithLoading(
 
       retryBtn?.addEventListener('click', async () => {
         errorModal.remove();
-        const result = await captureWithLoading(root, element);
+        const result = await captureWithLoading(root, element, screenshotScale);
         resolve(result);
       });
     });
