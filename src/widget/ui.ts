@@ -1065,7 +1065,11 @@ export function createModal(
 ): HTMLElement {
   const overlay = document.createElement('div');
   overlay.className = 'bd-overlay';
-  const widgetVersion = typeof __BUGDROP_VERSION__ !== 'undefined' ? __BUGDROP_VERSION__ : 'dev';
+
+  const versionBadge = showVersion
+    ? `<div class="bd-version">BugDrop v${typeof __BUGDROP_VERSION__ !== 'undefined' ? __BUGDROP_VERSION__ : 'dev'}</div>`
+    : '';
+
   overlay.innerHTML = `
     <div class="bd-modal">
       <div class="bd-header">
@@ -1075,7 +1079,7 @@ export function createModal(
       <div class="bd-body">
         ${content}
       </div>
-      ${showVersion ? `<div class="bd-version">BugDrop v${widgetVersion}</div>` : ''}
+      ${versionBadge}
     </div>
   `;
 
