@@ -27,9 +27,8 @@ export function rateLimit(config: RateLimitConfig) {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const kv = c.env.RATE_LIMIT;
 
-    // Skip if KV not configured (development without KV)
-    if (!kv) {
-      console.warn('[RateLimit] KV not configured, skipping rate limit');
+    // Skip if KV not configured or in development (avoids blocking E2E tests)
+    if (!kv || c.env.ENVIRONMENT === 'development') {
       return next();
     }
 
@@ -79,7 +78,7 @@ export function rateLimitByRepo(config: Omit<RateLimitConfig, 'keyPrefix'>) {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const kv = c.env.RATE_LIMIT;
 
-    if (!kv) {
+    if (!kv || c.env.ENVIRONMENT === 'development') {
       return next();
     }
 

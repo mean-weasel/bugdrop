@@ -15,6 +15,11 @@ const headers = (token: string) => ({
  * Get installation ID for a repository
  */
 async function getInstallationId(env: Env, owner: string, repo: string): Promise<number | null> {
+  if (!env.GITHUB_APP_ID || !env.GITHUB_PRIVATE_KEY) {
+    console.error('Missing GITHUB_APP_ID or GITHUB_PRIVATE_KEY');
+    return null;
+  }
+
   const jwt = await generateGitHubAppJWT(env.GITHUB_APP_ID, env.GITHUB_PRIVATE_KEY);
 
   const response = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/installation`, {

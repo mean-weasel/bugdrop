@@ -39,23 +39,10 @@ if command -v gh &> /dev/null && [ "$BRANCH" != "main" ]; then
   fi
 fi
 
-# ── Step 1: ESLint ──────────────────────────────────────────
-info "Running ESLint..."
-if npm run lint; then
-  pass "ESLint"
-else
-  fail "ESLint found errors"
-fi
-
-# ── Step 2: Prettier format check ───────────────────────────
-info "Checking formatting..."
-if npx prettier --check . 2>/dev/null; then
-  pass "Prettier"
-else
-  fail "Prettier found unformatted files (run: npm run format)"
-fi
-
-# ── Step 3: TypeScript type check ───────────────────────────
+# ── Step 1: TypeScript type check ───────────────────────────
+# (ESLint + Prettier are handled by pre-commit via lint-staged;
+#  CI catches everything else. Type checking is the one thing
+#  lint-staged can't do on individual files.)
 info "Type checking..."
 if npm run typecheck; then
   pass "TypeScript"
@@ -63,7 +50,7 @@ else
   fail "TypeScript found type errors"
 fi
 
-# ── Step 4: Unit tests (only with FULL_CHECK=1) ─────────────
+# ── Step 2: Unit tests (only with FULL_CHECK=1) ─────────────
 if [ "${FULL_CHECK:-0}" = "1" ]; then
   info "Running unit tests (FULL_CHECK=1)..."
   if npm run test; then
