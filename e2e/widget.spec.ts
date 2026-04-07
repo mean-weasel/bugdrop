@@ -397,6 +397,61 @@ test.describe('Widget Interaction', () => {
     await expect(titleInput).toBeVisible({ timeout: 5000 });
     await expect(versionEl).not.toBeVisible();
   });
+
+  test('select area button appears and launches area picker overlay', async ({ page }) => {
+    await page.route('**/api/check/**', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/');
+
+    const host = page.locator('#bugdrop-host');
+    const button = host.locator('css=.bd-trigger');
+    await expect(button).toBeVisible({ timeout: 5000 });
+    await button.click();
+
+    // Click through welcome screen
+    const getStartedBtn = host.locator('css=[data-action="continue"]');
+    await expect(getStartedBtn).toBeVisible({ timeout: 5000 });
+    await getStartedBtn.click();
+
+    // Fill required title field and ensure screenshot checkbox is checked
+    const titleInput = host.locator('css=#title');
+    await expect(titleInput).toBeVisible({ timeout: 5000 });
+    await titleInput.fill('Test bug report');
+
+    const screenshotCheckbox = host.locator('css=#include-screenshot');
+    await screenshotCheckbox.check();
+
+    const submitBtn = host.locator('css=#submit-btn');
+    await submitBtn.click();
+
+    // Verify "Select Area" button appears in screenshot options
+    const areaBtn = host.locator('css=[data-action="area"]');
+    await expect(areaBtn).toBeVisible({ timeout: 5000 });
+
+    // Click Select Area
+    await areaBtn.click();
+
+    // Area picker overlay should appear on the page (outside shadow DOM)
+    const overlay = page.locator('#bugdrop-area-picker-overlay');
+    await expect(overlay).toBeVisible({ timeout: 5000 });
+
+    // Tooltip should be visible
+    const tooltip = page.locator('#bugdrop-area-picker-tooltip');
+    await expect(tooltip).toBeVisible();
+    await expect(tooltip).toContainText('Drag to select an area');
+
+    // Press ESC to cancel
+    await page.keyboard.press('Escape');
+
+    // Overlay should be removed
+    await expect(overlay).not.toBeVisible({ timeout: 3000 });
+  });
 });
 
 test.describe('API Endpoints', () => {

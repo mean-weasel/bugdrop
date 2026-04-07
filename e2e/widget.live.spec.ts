@@ -240,6 +240,40 @@ test.describe('Screenshot Capture (Live)', () => {
     const elementVisible = await elementBtn.isVisible().catch(() => false);
     expect(fullPageVisible || elementVisible).toBeTruthy();
   });
+
+  test('select area button is available in screenshot options', async ({ page }) => {
+    await page.route('**/api/check/**', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/');
+
+    const host = page.locator('#bugdrop-host');
+    const button = host.locator('css=.bd-trigger');
+    await expect(button).toBeVisible({ timeout: 10_000 });
+    await button.click();
+
+    const getStartedBtn = host.locator('css=[data-action="continue"]');
+    await expect(getStartedBtn).toBeVisible({ timeout: 5_000 });
+    await getStartedBtn.click();
+
+    const titleInput = host.locator('css=#title');
+    await expect(titleInput).toBeVisible({ timeout: 5_000 });
+    await titleInput.fill('Live test feedback');
+
+    const screenshotCheckbox = host.locator('css=#include-screenshot');
+    await screenshotCheckbox.check();
+
+    const continueBtn = host.locator('css=#submit-btn');
+    await continueBtn.click();
+
+    const areaBtn = host.locator('css=[data-action="area"]');
+    await expect(areaBtn).toBeVisible({ timeout: 5_000 });
+  });
 });
 
 test.describe('Feedback Submission (Live)', () => {

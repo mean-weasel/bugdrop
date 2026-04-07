@@ -1,4 +1,4 @@
-interface PickerStyle {
+export interface PickerStyle {
   accentColor?: string;
   font?: string;
   radius?: string;
@@ -7,6 +7,32 @@ interface PickerStyle {
   textColor?: string;
   borderColor?: string;
   theme?: string;
+}
+
+interface ResolvedPickerStyle {
+  accent: string;
+  fontFamily: string;
+  radius: string;
+  bw: string;
+  tooltipBg: string;
+  tooltipText: string;
+  tooltipBorder: string;
+}
+
+export function resolvePickerStyle(style?: PickerStyle): ResolvedPickerStyle {
+  const isDark = style?.theme === 'dark';
+  return {
+    accent: style?.accentColor || '#14b8a6',
+    fontFamily:
+      style?.font === 'inherit'
+        ? 'system-ui, sans-serif'
+        : style?.font || "'Space Grotesk', system-ui, sans-serif",
+    radius: style?.radius !== undefined ? `${style.radius}px` : '6px',
+    bw: style?.borderWidth || '3',
+    tooltipBg: style?.bgColor || (isDark ? '#0f172a' : '#1a1a1a'),
+    tooltipText: style?.textColor || '#f1f5f9',
+    tooltipBorder: style?.borderColor || (isDark ? '#334155' : '#333'),
+  };
 }
 
 export function createElementPicker(style?: PickerStyle): Promise<Element | null> {
@@ -19,17 +45,8 @@ export function createElementPicker(style?: PickerStyle): Promise<Element | null
 }
 
 function startPicker(resolve: (element: Element | null) => void, style?: PickerStyle): void {
-  const isDark = style?.theme === 'dark';
-  const accent = style?.accentColor || '#14b8a6';
-  const fontFamily =
-    style?.font === 'inherit'
-      ? 'system-ui, sans-serif'
-      : style?.font || "'Space Grotesk', system-ui, sans-serif";
-  const radius = style?.radius !== undefined ? `${style.radius}px` : '6px';
-  const bw = style?.borderWidth || '3';
-  const tooltipBg = style?.bgColor || (isDark ? '#0f172a' : '#1a1a1a');
-  const tooltipText = style?.textColor || '#f1f5f9';
-  const tooltipBorder = style?.borderColor || (isDark ? '#334155' : '#333');
+  const { accent, fontFamily, radius, bw, tooltipBg, tooltipText, tooltipBorder } =
+    resolvePickerStyle(style);
 
   // Create highlight overlay with higher z-index than modal (1000000)
   const highlight = document.createElement('div');
