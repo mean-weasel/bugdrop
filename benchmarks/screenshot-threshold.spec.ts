@@ -16,6 +16,17 @@ interface BenchmarkResult {
 
 const results: BenchmarkResult[] = [];
 
+// Mock the GitHub App installation check so the widget renders normally
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/check/**', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ installed: true }),
+    });
+  });
+});
+
 // Navigate widget to the "Full Page" capture button and click it.
 // Returns the timestamp immediately after clicking.
 async function navigateToFullPageCapture(page: Page): Promise<number> {
