@@ -12,7 +12,7 @@ interface BenchmarkResult {
   nodes: number;
   actualNodes: number;
   durationMs: number;
-  outcome: 'success' | 'error' | 'timeout';
+  outcome: 'success' | 'error' | 'timeout' | 'full_page_disabled';
 }
 
 const results: BenchmarkResult[] = [];
@@ -29,8 +29,9 @@ test.beforeEach(async ({ page }) => {
 });
 
 // Navigate widget to the "Full Page" capture button and click it.
-// Returns the timestamp immediately after clicking.
-async function navigateToFullPageCapture(page: Page): Promise<number> {
+// Returns the timestamp immediately after clicking, or null if the button
+// is hidden (DOM too complex — widget disables full-page capture at 10k+ nodes).
+async function navigateToFullPageCapture(page: Page): Promise<number | null> {
   const host = page.locator('#bugdrop-host');
 
   // Open widget
@@ -56,9 +57,14 @@ async function navigateToFullPageCapture(page: Page): Promise<number> {
   const submitBtn = host.locator('css=#submit-btn');
   await submitBtn.click();
 
-  // Click "Full Page"
+  // Wait for screenshot options to appear
+  const elementBtn = host.locator('css=[data-action="element"]');
+  await expect(elementBtn).toBeVisible({ timeout: 5_000 });
+
+  // Check if "Full Page" button exists (hidden when DOM ≥ 10k nodes)
   const captureBtn = host.locator('css=[data-action="capture"]');
-  await expect(captureBtn).toBeVisible({ timeout: 5_000 });
+  const isVisible = await captureBtn.isVisible();
+  if (!isVisible) return null;
 
   const startTime = Date.now();
   await captureBtn.click();
@@ -80,6 +86,17 @@ for (const nodeCount of NODE_COUNTS) {
     // Drive the widget to Full Page capture
     const startTime = await navigateToFullPageCapture(page);
 
+    // Widget hides "Full Page" button when DOM is too complex (≥10k nodes)
+    if (startTime === null) {
+      results.push({
+        nodes: nodeCount,
+        actualNodes,
+        durationMs: 0,
+        outcome: 'full_page_disabled',
+      });
+      return;
+    }
+
     const host = page.locator('#bugdrop-host');
     const annotationCanvas = host.locator('css=#annotation-canvas');
     const errorMessage = host.locator('css=.bd-error-message__text');
@@ -99,9 +116,11 @@ for (const nodeCount of NODE_COUNTS) {
         durationMs,
         outcome: succeeded ? 'success' : 'error',
       });
-    } catch {
+    } catch (error) {
       // Neither appeared within 60s — hard freeze / timeout
       const durationMs = Date.now() - startTime;
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[${nodeCount} nodes] Benchmark failed after ${durationMs}ms: ${message}`);
       results.push({
         nodes: nodeCount,
         actualNodes,
@@ -130,8 +149,14 @@ test.afterAll(() => {
   );
   console.log('| Nodes (target) | Nodes (actual) | Duration (ms) | Outcome |');
   console.log('|---------------:|---------------:|--------------:|---------|');
+  const outcomeFlags: Record<string, string> = {
+    timeout: ' ⚠️',
+    error: ' ❌',
+    full_page_disabled: ' ⏭️',
+  };
+
   for (const r of results) {
-    const flag = r.outcome === 'timeout' ? ' ⚠️' : r.outcome === 'error' ? ' ❌' : '';
+    const flag = outcomeFlags[r.outcome] ?? '';
     console.log(`| ${r.nodes} | ${r.actualNodes} | ${r.durationMs} | ${r.outcome}${flag} |`);
   }
   console.log(

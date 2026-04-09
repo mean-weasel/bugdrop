@@ -1,4 +1,11 @@
-import { captureScreenshot, cropScreenshot, getPixelRatio } from './screenshot';
+import {
+  captureScreenshot,
+  cropScreenshot,
+  FULL_PAGE_DISABLE_THRESHOLD,
+  getDomNodeCount,
+  getPixelRatio,
+  isFullPageDisabled,
+} from './screenshot';
 import { createElementPicker } from './picker';
 import { createAreaPicker } from './area-picker';
 import { createAnnotator } from './annotator';
@@ -966,17 +973,24 @@ function showFeedbackFormWithScreenshotOption(
 function showScreenshotOptions(
   root: HTMLElement
 ): Promise<'skip' | 'capture' | 'element' | 'area'> {
+  const fullPageDisabled = isFullPageDisabled();
+
   return new Promise(resolve => {
+    const complexNote = fullPageDisabled
+      ? `<p style="margin: 0 0 12px; padding: 8px 12px; background: var(--bd-bg-secondary, #f5f5f5); border-radius: 6px; font-size: 13px; color: var(--bd-text-secondary);">This page is too complex for full-page or area capture. Select a specific element instead.</p>`
+      : '';
+
     const modal = createModal(
       root,
       'Capture Screenshot',
       `
         <p style="margin: 0 0 16px; color: var(--bd-text-secondary);">Choose what to capture:</p>
+        ${complexNote}
         <div class="bd-actions" style="flex-wrap: wrap; gap: 8px;">
           <button class="bd-btn bd-btn-secondary" data-action="skip">Skip Screenshot</button>
           <button class="bd-btn bd-btn-secondary" data-action="element">Select Element</button>
-          <button class="bd-btn bd-btn-secondary" data-action="area">Select Area</button>
-          <button class="bd-btn bd-btn-primary" data-action="capture">Full Page</button>
+          ${fullPageDisabled ? '' : '<button class="bd-btn bd-btn-secondary" data-action="area">Select Area</button>'}
+          ${fullPageDisabled ? '' : '<button class="bd-btn bd-btn-primary" data-action="capture">Full Page</button>'}
         </div>
       `
     );
@@ -1111,6 +1125,7 @@ async function submitFeedback(root: HTMLElement, config: WidgetConfig, data: Fee
 
     // Collect system info
     const systemInfo = getSystemInfo();
+    const domNodeCount = getDomNodeCount();
 
     const response = await fetch(`${config.apiUrl}/feedback`, {
       method: 'POST',
@@ -1131,6 +1146,8 @@ async function submitFeedback(root: HTMLElement, config: WidgetConfig, data: Fee
           },
           timestamp: new Date().toISOString(),
           elementSelector: data.elementSelector,
+          domNodeCount,
+          fullPageDisabled: domNodeCount >= FULL_PAGE_DISABLE_THRESHOLD,
           // Parsed system info
           browser: systemInfo.browser,
           os: systemInfo.os,

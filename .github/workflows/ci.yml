@@ -5,8 +5,6 @@ on:
     branches: [main, develop]
   pull_request:
     types: [opened, synchronize, reopened]
-    paths-ignore:
-      - 'benchmarks/**'
   merge_group:
 
 jobs:

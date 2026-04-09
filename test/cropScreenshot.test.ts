@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getPixelRatio, cropScreenshot } from '../src/widget/screenshot';
+import {
+  getPixelRatio,
+  getDomNodeCount,
+  isFullPageDisabled,
+  FULL_PAGE_DISABLE_THRESHOLD,
+  cropScreenshot,
+} from '../src/widget/screenshot';
 
 describe('getPixelRatio', () => {
   let originalDPR: number;
@@ -67,6 +73,38 @@ describe('getPixelRatio', () => {
     );
 
     expect(getPixelRatio(false)).toBe(2); // max(0||1, 2) = 2
+  });
+});
+
+describe('getDomNodeCount', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('returns the number of child elements in document.body', () => {
+    const elements = new Array(500).fill(document.createElement('div'));
+    vi.spyOn(document.body, 'querySelectorAll').mockReturnValue(
+      elements as unknown as NodeListOf<Element>
+    );
+    expect(getDomNodeCount()).toBe(500);
+  });
+});
+
+describe('isFullPageDisabled', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('returns true when node count >= FULL_PAGE_DISABLE_THRESHOLD', () => {
+    const elements = new Array(FULL_PAGE_DISABLE_THRESHOLD).fill(document.createElement('div'));
+    vi.spyOn(document.body, 'querySelectorAll').mockReturnValue(
+      elements as unknown as NodeListOf<Element>
+    );
+    expect(isFullPageDisabled()).toBe(true);
+  });
+
+  it('returns false when node count < FULL_PAGE_DISABLE_THRESHOLD', () => {
+    const elements = new Array(FULL_PAGE_DISABLE_THRESHOLD - 1).fill(document.createElement('div'));
+    vi.spyOn(document.body, 'querySelectorAll').mockReturnValue(
+      elements as unknown as NodeListOf<Element>
+    );
+    expect(isFullPageDisabled()).toBe(false);
   });
 });
 

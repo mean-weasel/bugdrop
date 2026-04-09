@@ -1,29 +1,19 @@
-// Load html-to-image dynamically to reduce initial bundle size
-const HTML_TO_IMAGE_CDN =
-  'https://cdn.jsdelivr.net/npm/html-to-image@1.11.13/dist/html-to-image.js';
-
-let htmlToImage: typeof import('html-to-image') | null = null;
-
-async function loadHtmlToImage() {
-  if (htmlToImage) return htmlToImage;
-
-  return new Promise<typeof import('html-to-image')>((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = HTML_TO_IMAGE_CDN;
-    script.onload = () => {
-      htmlToImage = (window as any).htmlToImage;
-      resolve(htmlToImage!);
-    };
-    script.onerror = () => reject(new Error('Failed to load html-to-image'));
-    document.head.appendChild(script);
-  });
-}
+import * as htmlToImage from 'html-to-image';
 
 const CAPTURE_TIMEOUT_MS = 15_000;
 const DOM_COMPLEXITY_THRESHOLD = 3_000;
+export const FULL_PAGE_DISABLE_THRESHOLD = 10_000;
+
+export function getDomNodeCount(): number {
+  return document.body.querySelectorAll('*').length;
+}
+
+export function isFullPageDisabled(): boolean {
+  return getDomNodeCount() >= FULL_PAGE_DISABLE_THRESHOLD;
+}
 
 export function getPixelRatio(isFullPage: boolean, screenshotScale?: number): number {
-  if (isFullPage && document.body.querySelectorAll('*').length > DOM_COMPLEXITY_THRESHOLD) {
+  if (isFullPage && getDomNodeCount() > DOM_COMPLEXITY_THRESHOLD) {
     return 1;
   }
   const minScale = screenshotScale ?? 2;
@@ -34,21 +24,22 @@ export async function captureScreenshot(
   element?: Element,
   screenshotScale?: number
 ): Promise<string> {
-  const lib = await loadHtmlToImage();
-
   const target = element || document.body;
   const isFullPage = !element;
 
   const pixelRatio = getPixelRatio(isFullPage, screenshotScale);
 
-  const capturePromise = lib.toPng(target as HTMLElement, {
+  const toPng =
+    (window as unknown as { __bugdropMockToPng?: typeof htmlToImage.toPng }).__bugdropMockToPng ??
+    htmlToImage.toPng;
+
+  const opts = {
     cacheBust: true,
     pixelRatio,
-    filter: (node: HTMLElement) => {
-      // Exclude our widget from screenshot
-      return node.id !== 'bugdrop-host';
-    },
-  });
+    filter: (node: HTMLElement) => node.id !== 'bugdrop-host',
+  };
+
+  const capturePromise = toPng(target as HTMLElement, opts);
 
   let timer: ReturnType<typeof setTimeout>;
   const timeoutPromise = new Promise<never>((_, reject) => {

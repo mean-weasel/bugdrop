@@ -54,7 +54,6 @@
     "esbuild": "^0.24.0",
     "eslint": "^9.39.2",
     "globals": "^16.5.0",
-    "html-to-image": "^1.11.13",
     "husky": "^9.1.7",
     "jsdom": "^29.0.1",
     "knip": "^5.76.1",
@@ -67,6 +66,7 @@
     "wrangler": "^3.96.0"
   },
   "dependencies": {
-    "hono": "^4.6.14"
+    "hono": "^4.6.14",
+    "html-to-image": "^1.11.13"
   }
 }

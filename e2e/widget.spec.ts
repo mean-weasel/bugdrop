@@ -2075,14 +2075,10 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
   const STUB_PNG =
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
-  // Mock the html-to-image CDN with a custom toPng implementation
+  // Mock toPng via the widget's __bugdropMockToPng test seam (addInitScript
+  // runs before the bundled IIFE, so the mock is in place when captureScreenshot fires)
   function mockHtmlToImage(page: Page, toPngBody: string) {
-    return page.route('**/html-to-image**', async route => {
-      await route.fulfill({
-        contentType: 'application/javascript',
-        body: `window.htmlToImage = { toPng: ${toPngBody} };`,
-      });
-    });
+    return page.addInitScript(`window.__bugdropMockToPng = ${toPngBody};`);
   }
 
   // Spy mock: records opts and returns a valid PNG
@@ -2103,33 +2099,42 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
     });
   });
 
-  // Helper: navigate widget to screenshot options and click "Full Page"
-  async function navigateToFullPageCapture(page: Page) {
+  // Helper: open widget, click through welcome, fill title — returns the host locator
+  async function navigateToForm(page: Page, title = 'Screenshot test') {
     const host = page.locator('#bugdrop-host');
 
-    // Open widget
     const button = host.locator('css=.bd-trigger');
     await expect(button).toBeVisible({ timeout: 5000 });
     await button.click();
 
-    // Click through welcome screen
     const getStartedBtn = host.locator('css=[data-action="continue"]');
     await expect(getStartedBtn).toBeVisible({ timeout: 5000 });
     await getStartedBtn.click();
 
-    // Fill minimal form and check "Include screenshot"
     const titleInput = host.locator('css=#title');
     await expect(titleInput).toBeVisible({ timeout: 5000 });
-    await titleInput.fill('Screenshot test');
+    await titleInput.fill(title);
+
+    return host;
+  }
+
+  // Helper: navigate widget to screenshot options and return the host locator
+  async function navigateToScreenshotOptions(page: Page) {
+    const host = await navigateToForm(page);
 
     const screenshotCheckbox = host.locator('css=#include-screenshot');
     await screenshotCheckbox.check();
 
-    // Continue to screenshot options
     const continueBtn = host.locator('css=#submit-btn');
     await continueBtn.click();
 
-    // Click "Full Page"
+    await expect(host.locator('css=[data-action="element"]')).toBeVisible({ timeout: 5000 });
+    return host;
+  }
+
+  // Helper: navigate to screenshot options and click "Full Page"
+  async function navigateToFullPageCapture(page: Page) {
+    const host = await navigateToScreenshotOptions(page);
     const captureBtn = host.locator('css=[data-action="capture"]');
     await expect(captureBtn).toBeVisible({ timeout: 5000 });
     await captureBtn.click();
@@ -2256,5 +2261,118 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
     // Second attempt succeeds — annotation canvas should appear
     const annotationCanvas = host.locator('css=#annotation-canvas');
     await expect(annotationCanvas).toBeVisible({ timeout: 10000 });
+  });
+
+  // --- Full-page disable threshold (10k+ nodes) ---
+
+  test('hides Full Page and Select Area buttons on very complex pages (>10k nodes)', async ({
+    page,
+  }) => {
+    await mockHtmlToImage(page, spyToPng());
+    await page.goto('/test/complex-dom.html?nodes=12000');
+
+    const nodeCount = await page.evaluate(() => document.body.querySelectorAll('*').length);
+    expect(nodeCount).toBeGreaterThanOrEqual(10000);
+
+    const host = await navigateToScreenshotOptions(page);
+
+    // Select Element should still be visible
+    await expect(host.locator('css=[data-action="element"]')).toBeVisible();
+
+    // Full Page and Select Area should be hidden
+    await expect(host.locator('css=[data-action="capture"]')).not.toBeAttached();
+    await expect(host.locator('css=[data-action="area"]')).not.toBeAttached();
+
+    // Complexity notice should be shown
+    const notice = host.locator('css=p >> text=too complex');
+    await expect(notice).toBeVisible();
+  });
+
+  test('shows all buttons on pages below 10k nodes', async ({ page }) => {
+    await mockHtmlToImage(page, spyToPng());
+    await page.goto('/test/complex-dom.html?nodes=4000');
+
+    const nodeCount = await page.evaluate(() => document.body.querySelectorAll('*').length);
+    expect(nodeCount).toBeLessThan(10000);
+
+    const host = await navigateToScreenshotOptions(page);
+
+    await expect(host.locator('css=[data-action="element"]')).toBeVisible();
+    await expect(host.locator('css=[data-action="capture"]')).toBeVisible();
+    await expect(host.locator('css=[data-action="area"]')).toBeVisible();
+
+    // Complexity notice should NOT be shown
+    await expect(host.locator('css=p >> text=too complex')).not.toBeAttached();
+  });
+
+  // --- Metadata: domNodeCount and fullPageDisabled in submission payload ---
+
+  // Helper: submit feedback without screenshot, capturing the POST body
+  async function submitAndCaptureMetadata(page: Page) {
+    let capturedMetadata: Record<string, unknown> | null = null;
+
+    await page.route('**/feedback', async route => {
+      const body = route.request().postDataJSON();
+      capturedMetadata = body.metadata;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, issueNumber: 1, issueUrl: '#', isPublic: false }),
+      });
+    });
+
+    const host = await navigateToForm(page, 'Metadata test');
+
+    // Uncheck screenshot and submit
+    const screenshotCheckbox = host.locator('css=#include-screenshot');
+    await screenshotCheckbox.uncheck();
+
+    const submitBtn = host.locator('css=#submit-btn');
+    await submitBtn.click();
+
+    // Wait for success modal (confirms submission completed)
+    const successModal = host.locator('css=.bd-success-icon');
+    await expect(successModal).toBeVisible({ timeout: 10000 });
+
+    return capturedMetadata!;
+  }
+
+  test('includes domNodeCount and fullPageDisabled=false in metadata on simple pages', async ({
+    page,
+  }) => {
+    await page.goto('/test/');
+
+    const metadata = await submitAndCaptureMetadata(page);
+
+    expect(metadata).toBeTruthy();
+    expect(typeof metadata.domNodeCount).toBe('number');
+    expect(metadata.domNodeCount).toBeGreaterThan(0);
+    expect(metadata.domNodeCount).toBeLessThan(10000);
+    expect(metadata.fullPageDisabled).toBe(false);
+  });
+
+  test('includes domNodeCount and fullPageDisabled=true in metadata on complex pages', async ({
+    page,
+  }) => {
+    await page.goto('/test/complex-dom.html?nodes=12000');
+
+    const metadata = await submitAndCaptureMetadata(page);
+
+    expect(metadata).toBeTruthy();
+    expect(typeof metadata.domNodeCount).toBe('number');
+    expect(metadata.domNodeCount).toBeGreaterThanOrEqual(10000);
+    expect(metadata.fullPageDisabled).toBe(true);
+  });
+
+  // --- Real capture (no mock) — verifies bundled html-to-image works ---
+
+  test('real bundled html-to-image captures a screenshot without mocks', async ({ page }) => {
+    await page.goto('/test/');
+
+    // No __bugdropMockToPng — real html-to-image runs here
+    await navigateToFullPageCapture(page);
+
+    const annotationCanvas = page.locator('#bugdrop-host').locator('css=#annotation-canvas');
+    await expect(annotationCanvas).toBeVisible({ timeout: 30000 });
   });
 });
