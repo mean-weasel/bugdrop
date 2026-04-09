@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { cpus, totalmem, platform, release, arch } from 'os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -115,17 +116,27 @@ for (const nodeCount of NODE_COUNTS) {
 test.afterAll(() => {
   if (results.length === 0) return;
 
-  // Print markdown table to stdout
-  const header = '| Nodes | Actual | Duration (ms) | Outcome |';
-  const divider = '|------:|-------:|--------------:|---------|';
-  const rows = results.map(
-    r => `| ${r.nodes} | ${r.actualNodes} | ${r.durationMs} | ${r.outcome} |`
-  );
+  const machine = {
+    os: `${platform()} ${release()} (${arch()})`,
+    cpu: cpus()[0]?.model || 'unknown',
+    cores: cpus().length,
+    ramGb: Math.round(totalmem() / 1024 / 1024 / 1024),
+  };
 
+  // Print markdown table to stdout
   console.log('\n## Screenshot Threshold Benchmark Results\n');
-  console.log(header);
-  console.log(divider);
-  rows.forEach(row => console.log(row));
+  console.log(
+    `**Machine:** ${machine.cpu} | ${machine.cores} cores | ${machine.ramGb} GB RAM | ${machine.os}\n`
+  );
+  console.log('| Nodes (target) | Nodes (actual) | Duration (ms) | Outcome |');
+  console.log('|---------------:|---------------:|--------------:|---------|');
+  console.log(
+    '*Nodes (target) = requested via ?nodes=N; Nodes (actual) = total DOM nodes counted after generation*\n'
+  );
+  for (const r of results) {
+    const flag = r.outcome === 'timeout' ? ' ⚠️' : r.outcome === 'error' ? ' ❌' : '';
+    console.log(`| ${r.nodes} | ${r.actualNodes} | ${r.durationMs} | ${r.outcome}${flag} |`);
+  }
   console.log('');
 
   // Save JSON
@@ -136,7 +147,7 @@ test.afterAll(() => {
 
   const output = {
     timestamp: new Date().toISOString(),
-    userAgent: 'Playwright Chromium (headless)',
+    machine,
     results,
   };
 
