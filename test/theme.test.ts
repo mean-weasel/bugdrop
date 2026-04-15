@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 // test/theme.test.ts
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { applyThemeClass, getSystemTheme, isValidTheme, resolveTheme } from '../src/widget/theme';
+import {
+  applyCustomStyles,
+  applyThemeClass,
+  getSystemTheme,
+  isValidTheme,
+  resolveTheme,
+} from '../src/widget/theme';
 
 describe('theme module', () => {
   it('module loads', () => {
@@ -138,5 +144,141 @@ describe('applyThemeClass', () => {
     applyThemeClass(root, 'light');
     applyThemeClass(root, 'light');
     expect(root.classList.contains('bd-dark')).toBe(false);
+  });
+});
+
+describe('applyCustomStyles', () => {
+  function makeRoot(): HTMLElement {
+    const root = document.createElement('div');
+    root.className = 'bd-root';
+    return root;
+  }
+
+  it('no-ops when config is empty', () => {
+    const root = makeRoot();
+    applyCustomStyles(root, {}, 'light');
+    expect(root.getAttribute('style')).toBeFalsy();
+  });
+
+  describe('accentColor', () => {
+    it('sets --bd-primary, --bd-primary-hover, --bd-border-focus', () => {
+      const root = makeRoot();
+      applyCustomStyles(root, { accentColor: '#ff6b35' }, 'light');
+      expect(root.style.getPropertyValue('--bd-primary')).toBe('#ff6b35');
+      expect(root.style.getPropertyValue('--bd-primary-hover')).toBe(
+        'color-mix(in srgb, #ff6b35 85%, black)'
+      );
+      expect(root.style.getPropertyValue('--bd-border-focus')).toBe('#ff6b35');
+    });
+
+    it('is independent of theme', () => {
+      const rootLight = makeRoot();
+      const rootDark = makeRoot();
+      applyCustomStyles(rootLight, { accentColor: '#ff6b35' }, 'light');
+      applyCustomStyles(rootDark, { accentColor: '#ff6b35' }, 'dark');
+      expect(rootLight.style.getPropertyValue('--bd-primary-hover')).toBe(
+        rootDark.style.getPropertyValue('--bd-primary-hover')
+      );
+    });
+  });
+
+  describe('bgColor', () => {
+    it('light mode derives secondary/tertiary by mixing with black', () => {
+      const root = makeRoot();
+      applyCustomStyles(root, { bgColor: '#fffef0' }, 'light');
+      expect(root.style.getPropertyValue('--bd-bg-primary')).toBe('#fffef0');
+      expect(root.style.getPropertyValue('--bd-bg-secondary')).toBe(
+        'color-mix(in srgb, #fffef0 93%, black)'
+      );
+      expect(root.style.getPropertyValue('--bd-bg-tertiary')).toBe(
+        'color-mix(in srgb, #fffef0 85%, black)'
+      );
+    });
+
+    it('dark mode derives secondary/tertiary by mixing with white', () => {
+      const root = makeRoot();
+      applyCustomStyles(root, { bgColor: '#0a0a0a' }, 'dark');
+      expect(root.style.getPropertyValue('--bd-bg-primary')).toBe('#0a0a0a');
+      expect(root.style.getPropertyValue('--bd-bg-secondary')).toBe(
+        'color-mix(in srgb, #0a0a0a 85%, white)'
+      );
+      expect(root.style.getPropertyValue('--bd-bg-tertiary')).toBe(
+        'color-mix(in srgb, #0a0a0a 70%, white)'
+      );
+    });
+
+    it('re-running with different theme overwrites secondary/tertiary', () => {
+      const root = makeRoot();
+      applyCustomStyles(root, { bgColor: '#fffef0' }, 'light');
+      const lightSecondary = root.style.getPropertyValue('--bd-bg-secondary');
+      applyCustomStyles(root, { bgColor: '#fffef0' }, 'dark');
+      const darkSecondary = root.style.getPropertyValue('--bd-bg-secondary');
+      expect(lightSecondary).not.toBe(darkSecondary);
+      expect(darkSecondary).toContain('white');
+    });
+  });
+
+  describe('textColor', () => {
+    it('uses bgColor when provided for the bgBase fallback', () => {
+      const root = makeRoot();
+      applyCustomStyles(root, { textColor: '#1a1a1a', bgColor: '#fffef0' }, 'light');
+      expect(root.style.getPropertyValue('--bd-text-secondary')).toBe(
+        'color-mix(in srgb, #1a1a1a 65%, #fffef0)'
+      );
+    });
+
+    it('falls back to theme default in light mode when no bgColor', () => {
+      const root = makeRoot();
+      applyCustomStyles(root, { textColor: '#1a1a1a' }, 'light');
+      expect(root.style.getPropertyValue('--bd-text-secondary')).toBe(
+        'color-mix(in srgb, #1a1a1a 65%, #fafaf9)'
+      );
+    });
+
+    it('falls back to theme default in dark mode when no bgColor', () => {
+      const root = makeRoot();
+      applyCustomStyles(root, { textColor: '#f1f5f9' }, 'dark');
+      expect(root.style.getPropertyValue('--bd-text-secondary')).toBe(
+        'color-mix(in srgb, #f1f5f9 65%, #0f172a)'
+      );
+    });
+  });
+
+  describe('border', () => {
+    it('sets --bd-border and --bd-border-style when borderWidth is provided', () => {
+      const root = makeRoot();
+      applyCustomStyles(root, { borderWidth: '4' }, 'light');
+      expect(root.style.getPropertyValue('--bd-border-style')).toBe('4px solid var(--bd-border)');
+    });
+
+    it('uses explicit borderColor when provided', () => {
+      const root = makeRoot();
+      applyCustomStyles(root, { borderWidth: '2', borderColor: '#000' }, 'light');
+      expect(root.style.getPropertyValue('--bd-border')).toBe('#000');
+      expect(root.style.getPropertyValue('--bd-border-style')).toBe('2px solid #000');
+    });
+  });
+
+  describe('shadow', () => {
+    it('shadow: none sets all shadow vars to none', () => {
+      const root = makeRoot();
+      applyCustomStyles(root, { shadow: 'none' }, 'light');
+      expect(root.style.getPropertyValue('--bd-shadow-sm')).toBe('none');
+      expect(root.style.getPropertyValue('--bd-shadow-md')).toBe('none');
+      expect(root.style.getPropertyValue('--bd-shadow-lg')).toBe('none');
+      expect(root.style.getPropertyValue('--bd-shadow-glow')).toBe('none');
+    });
+
+    it('shadow: hard in light mode uses #1a1a1a fallback for shadowColor', () => {
+      const root = makeRoot();
+      applyCustomStyles(root, { shadow: 'hard' }, 'light');
+      expect(root.style.getPropertyValue('--bd-shadow-sm')).toContain('#1a1a1a');
+    });
+
+    it('shadow: hard in dark mode uses #000 fallback for shadowColor', () => {
+      const root = makeRoot();
+      applyCustomStyles(root, { shadow: 'hard' }, 'dark');
+      expect(root.style.getPropertyValue('--bd-shadow-sm')).toContain('#000');
+    });
   });
 });

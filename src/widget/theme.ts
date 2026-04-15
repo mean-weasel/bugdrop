@@ -47,7 +47,79 @@ export function applyCustomStyles(
   config: ThemeConfigSlice,
   resolved: ResolvedTheme
 ): void {
-  throw new Error('not implemented');
+  const isDark = resolved === 'dark';
+
+  // Apply custom accent color if provided
+  if (config.accentColor) {
+    const color = config.accentColor;
+    root.style.setProperty('--bd-primary', color);
+    root.style.setProperty('--bd-primary-hover', `color-mix(in srgb, ${color} 85%, black)`);
+    root.style.setProperty('--bd-border-focus', color);
+  }
+
+  // Apply custom background color if provided
+  if (config.bgColor) {
+    root.style.setProperty('--bd-bg-primary', config.bgColor);
+    if (isDark) {
+      root.style.setProperty(
+        '--bd-bg-secondary',
+        `color-mix(in srgb, ${config.bgColor} 85%, white)`
+      );
+      root.style.setProperty(
+        '--bd-bg-tertiary',
+        `color-mix(in srgb, ${config.bgColor} 70%, white)`
+      );
+    } else {
+      root.style.setProperty(
+        '--bd-bg-secondary',
+        `color-mix(in srgb, ${config.bgColor} 93%, black)`
+      );
+      root.style.setProperty(
+        '--bd-bg-tertiary',
+        `color-mix(in srgb, ${config.bgColor} 85%, black)`
+      );
+    }
+  }
+
+  // Apply custom text color if provided
+  if (config.textColor) {
+    root.style.setProperty('--bd-text-primary', config.textColor);
+    const bgBase = config.bgColor || (isDark ? '#0f172a' : '#fafaf9');
+    root.style.setProperty(
+      '--bd-text-secondary',
+      `color-mix(in srgb, ${config.textColor} 65%, ${bgBase})`
+    );
+    root.style.setProperty(
+      '--bd-text-muted',
+      `color-mix(in srgb, ${config.textColor} 40%, ${bgBase})`
+    );
+  }
+
+  // Apply custom border styling if provided
+  const borderW = config.borderWidth ? parseInt(config.borderWidth, 10) : null;
+  const borderC = config.borderColor || null;
+  if (borderW !== null || borderC !== null) {
+    const bw = borderW !== null ? `${borderW}px` : '1px';
+    const bc = borderC || 'var(--bd-border)';
+    root.style.setProperty('--bd-border', bc);
+    root.style.setProperty('--bd-border-style', `${bw} solid ${bc}`);
+  }
+
+  // Apply shadow preset if provided
+  const shadowPreset = config.shadow || null;
+  if (shadowPreset === 'none') {
+    root.style.setProperty('--bd-shadow-sm', 'none');
+    root.style.setProperty('--bd-shadow-md', 'none');
+    root.style.setProperty('--bd-shadow-lg', 'none');
+    root.style.setProperty('--bd-shadow-glow', 'none');
+  } else if (shadowPreset === 'hard') {
+    const shadowColor = borderC || (isDark ? '#000' : '#1a1a1a');
+    const offset = borderW !== null ? `${borderW + 2}px` : '6px';
+    root.style.setProperty('--bd-shadow-sm', `${shadowColor} 2px 2px 0 0`);
+    root.style.setProperty('--bd-shadow-md', `${shadowColor} ${offset} ${offset} 0 0`);
+    root.style.setProperty('--bd-shadow-lg', `${shadowColor} ${offset} ${offset} 0 0`);
+    root.style.setProperty('--bd-shadow-glow', 'none');
+  }
 }
 
 export function attachSystemThemeListener(
