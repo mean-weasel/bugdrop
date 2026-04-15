@@ -591,6 +591,28 @@
   </div>
 
   <!-- Load BugDrop (change data-theme to "light" to test light mode) -->
-  <script src="/widget.js" data-repo="mean-weasel/bugdrop-widget-test" data-theme="dark" data-color="#ff9e64"></script>
+  <script id="bugdrop-script" defer src="/widget.js" data-repo="mean-weasel/bugdrop-widget-test" data-theme="dark" data-color="#ff9e64"></script>
+  <script>
+    // E2E test harness: inject ?theme=... / ?bg=... query params as data-*
+    // attributes on the BugDrop script tag. This runs synchronously during
+    // parsing, AFTER the widget script tag has been inserted into the DOM.
+    // The widget script is marked `defer`, so it waits until parsing is
+    // complete before executing — by which point this harness has already
+    // set the overridden attributes.
+    (function () {
+      try {
+        var script = document.getElementById('bugdrop-script');
+        if (!script) return;
+        var params = new URLSearchParams(location.search);
+        var mapping = { theme: 'data-theme', bg: 'data-bg' };
+        Object.keys(mapping).forEach(function (key) {
+          var v = params.get(key);
+          if (v != null) script.setAttribute(mapping[key], v);
+        });
+      } catch (e) {
+        // harness must never break the page
+      }
+    })();
+  </script>
 </body>
 </html>

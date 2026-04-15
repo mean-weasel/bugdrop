@@ -1,0 +1,79 @@
+import { test, expect, type Page } from '@playwright/test';
+
+/**
+ * E2E tests for the runtime theme API (window.BugDrop.setTheme).
+ *
+ * These tests load /test/ with ?theme=... to seed the initial theme via the
+ * test harness in public/test/index.html, then exercise the runtime API and
+ * assert on the bd-root class list inside the shadow DOM.
+ */
+
+type BugDropWindow = Window & {
+  BugDrop?: {
+    setTheme: (mode: unknown) => void;
+  };
+};
+
+async function gotoWidget(page: Page, params: Record<string, string> = {}) {
+  const qs = new URLSearchParams(params).toString();
+  await page.goto(`/test/${qs ? '?' + qs : ''}`);
+  // Wait for the widget to install its global API AND mount its root element.
+  // `.bd-root` is a layout-only wrapper and may not be visible, so wait for
+  // attachment rather than visibility.
+  await page.locator('#bugdrop-host').locator('css=.bd-root').waitFor({ state: 'attached' });
+  await page.waitForFunction(() => (window as BugDropWindow).BugDrop != null);
+}
+
+async function rootClassList(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const host = document.getElementById('bugdrop-host');
+    const shadow = host?.shadowRoot;
+    const root = shadow?.querySelector('.bd-root') as HTMLElement | null;
+    return root ? Array.from(root.classList) : [];
+  });
+}
+
+test.describe('Runtime theme switching', () => {
+  test('setTheme("dark") adds bd-dark to the root', async ({ page }) => {
+    await gotoWidget(page, { theme: 'light' });
+    expect(await rootClassList(page)).not.toContain('bd-dark');
+
+    await page.evaluate(() => {
+      (window as BugDropWindow).BugDrop!.setTheme('dark');
+    });
+
+    expect(await rootClassList(page)).toContain('bd-dark');
+  });
+
+  test('setTheme("light") removes bd-dark from the root', async ({ page }) => {
+    await gotoWidget(page, { theme: 'dark' });
+    expect(await rootClassList(page)).toContain('bd-dark');
+
+    await page.evaluate(() => {
+      (window as BugDropWindow).BugDrop!.setTheme('light');
+    });
+
+    expect(await rootClassList(page)).not.toContain('bd-dark');
+  });
+
+  test('setTheme("blue") warns and does not change the class', async ({ page }) => {
+    const warnings: string[] = [];
+    page.on('console', msg => {
+      const type = msg.type();
+      if (type === 'warning' || type === 'warn') {
+        warnings.push(msg.text());
+      }
+    });
+
+    await gotoWidget(page, { theme: 'light' });
+    expect(await rootClassList(page)).not.toContain('bd-dark');
+
+    await page.evaluate(() => {
+      // Deliberately invalid runtime input.
+      (window as BugDropWindow).BugDrop!.setTheme('blue');
+    });
+
+    expect(await rootClassList(page)).not.toContain('bd-dark');
+    expect(warnings.some(w => w.includes('[BugDrop] Invalid theme'))).toBe(true);
+  });
+});
