@@ -1,3 +1,5 @@
+import { getSystemTheme } from './theme';
+
 declare const __BUGDROP_VERSION__: string;
 
 interface WidgetConfig {
@@ -13,14 +15,6 @@ interface WidgetConfig {
   borderWidth?: string;
   borderColor?: string;
   shadow?: string;
-}
-
-// Detect system dark mode preference
-function getSystemTheme(): 'light' | 'dark' {
-  if (typeof window !== 'undefined' && window.matchMedia) {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  }
-  return 'light';
 }
 
 export function injectStyles(shadow: ShadowRoot, config: WidgetConfig) {

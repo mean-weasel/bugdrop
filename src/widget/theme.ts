@@ -20,7 +20,10 @@ export interface ThemeConfigSlice {
 }
 
 export function getSystemTheme(): ResolvedTheme {
-  throw new Error('not implemented');
+  if (typeof window !== 'undefined' && window.matchMedia) {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  return 'light';
 }
 
 export function resolveTheme(
