@@ -64,3 +64,45 @@ describe('getSystemTheme', () => {
     expect(getSystemTheme()).toBe('light');
   });
 });
+
+describe('resolveTheme', () => {
+  it('returns "light" for mode "light"', () => {
+    expect(resolveTheme('light')).toBe('light');
+  });
+
+  it('returns "dark" for mode "dark"', () => {
+    expect(resolveTheme('dark')).toBe('dark');
+  });
+
+  it('resolves "auto" via the injected probe (dark)', () => {
+    expect(resolveTheme('auto', () => 'dark')).toBe('dark');
+  });
+
+  it('resolves "auto" via the injected probe (light)', () => {
+    expect(resolveTheme('auto', () => 'light')).toBe('light');
+  });
+
+  it('resolves "auto" via the default getSystemTheme fallback when no probe is given', () => {
+    // Rely on the real getSystemTheme path with a mocked matchMedia.
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockReturnValue({
+      matches: true,
+      media: '(prefers-color-scheme: dark)',
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+      onchange: null,
+    }) as unknown as typeof window.matchMedia;
+    try {
+      expect(resolveTheme('auto')).toBe('dark');
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
+  });
+
+  it('passes "light" for explicit modes through even when getSystem would say dark', () => {
+    expect(resolveTheme('light', () => 'dark')).toBe('light');
+  });
+});

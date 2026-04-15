@@ -30,7 +30,8 @@ export function resolveTheme(
   mode: ThemeMode,
   getSystem: () => ResolvedTheme = getSystemTheme
 ): ResolvedTheme {
-  throw new Error('not implemented');
+  if (mode === 'auto') return getSystem();
+  return mode;
 }
 
 export function isValidTheme(value: unknown): value is ThemeMode {
