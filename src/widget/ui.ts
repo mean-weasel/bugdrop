@@ -1,4 +1,4 @@
-import { getSystemTheme } from './theme';
+import { resolveTheme, applyThemeClass, applyCustomStyles } from './theme';
 
 declare const __BUGDROP_VERSION__: string;
 
@@ -19,9 +19,7 @@ interface WidgetConfig {
 
 export function injectStyles(shadow: ShadowRoot, config: WidgetConfig) {
   const pos = config.position === 'bottom-left' ? 'left: 20px' : 'right: 20px';
-  // Resolve 'auto' to actual theme based on system preference
-  const resolvedTheme = config.theme === 'auto' ? getSystemTheme() : config.theme;
-  const isDark = resolvedTheme === 'dark';
+  const resolved = resolveTheme(config.theme);
 
   // Determine font settings
   const useInheritFont = config.font === 'inherit';
@@ -42,12 +40,8 @@ export function injectStyles(shadow: ShadowRoot, config: WidgetConfig) {
   const radiusMd = radiusPx !== null ? `${Math.round(radiusPx * 1.4)}px` : '10px';
   const radiusLg = radiusPx !== null ? `${Math.round(radiusPx * 2)}px` : '14px';
 
-  // Determine border settings
+  // Determine border width for CSS variable (still needed by the style block below)
   const borderW = config.borderWidth ? parseInt(config.borderWidth, 10) : null;
-  const borderC = config.borderColor || null;
-
-  // Determine shadow preset
-  const shadowPreset = config.shadow || null; // 'none', 'soft', 'hard'
 
   const styles = document.createElement('style');
   styles.textContent = `
@@ -970,81 +964,11 @@ export function injectStyles(shadow: ShadowRoot, config: WidgetConfig) {
 
   shadow.appendChild(styles);
 
-  // Create root wrapper with theme class
+  // Create root wrapper and apply theme class + custom styles
   const root = document.createElement('div');
-  root.className = `bd-root${isDark ? ' bd-dark' : ''}`;
-
-  // Apply custom accent color if provided
-  if (config.accentColor) {
-    const color = config.accentColor;
-    // Generate a slightly darker hover color by mixing with black
-    root.style.setProperty('--bd-primary', color);
-    root.style.setProperty('--bd-primary-hover', `color-mix(in srgb, ${color} 85%, black)`);
-    root.style.setProperty('--bd-border-focus', color);
-  }
-
-  // Apply custom background color if provided
-  if (config.bgColor) {
-    root.style.setProperty('--bd-bg-primary', config.bgColor);
-    // Generate secondary/tertiary bg variants by mixing with black (light) or white (dark)
-    if (isDark) {
-      root.style.setProperty(
-        '--bd-bg-secondary',
-        `color-mix(in srgb, ${config.bgColor} 85%, white)`
-      );
-      root.style.setProperty(
-        '--bd-bg-tertiary',
-        `color-mix(in srgb, ${config.bgColor} 70%, white)`
-      );
-    } else {
-      root.style.setProperty(
-        '--bd-bg-secondary',
-        `color-mix(in srgb, ${config.bgColor} 93%, black)`
-      );
-      root.style.setProperty(
-        '--bd-bg-tertiary',
-        `color-mix(in srgb, ${config.bgColor} 85%, black)`
-      );
-    }
-  }
-
-  // Apply custom text color if provided
-  if (config.textColor) {
-    root.style.setProperty('--bd-text-primary', config.textColor);
-    // Generate secondary/muted text variants by mixing with the background
-    const bgBase = config.bgColor || (isDark ? '#0f172a' : '#fafaf9');
-    root.style.setProperty(
-      '--bd-text-secondary',
-      `color-mix(in srgb, ${config.textColor} 65%, ${bgBase})`
-    );
-    root.style.setProperty(
-      '--bd-text-muted',
-      `color-mix(in srgb, ${config.textColor} 40%, ${bgBase})`
-    );
-  }
-
-  // Apply custom border styling if provided
-  if (borderW !== null || borderC !== null) {
-    const bw = borderW !== null ? `${borderW}px` : '1px';
-    const bc = borderC || 'var(--bd-border)';
-    root.style.setProperty('--bd-border', bc);
-    root.style.setProperty('--bd-border-style', `${bw} solid ${bc}`);
-  }
-
-  // Apply shadow preset if provided
-  if (shadowPreset === 'none') {
-    root.style.setProperty('--bd-shadow-sm', 'none');
-    root.style.setProperty('--bd-shadow-md', 'none');
-    root.style.setProperty('--bd-shadow-lg', 'none');
-    root.style.setProperty('--bd-shadow-glow', 'none');
-  } else if (shadowPreset === 'hard') {
-    const shadowColor = borderC || (isDark ? '#000' : '#1a1a1a');
-    const offset = borderW !== null ? `${borderW + 2}px` : '6px';
-    root.style.setProperty('--bd-shadow-sm', `${shadowColor} 2px 2px 0 0`);
-    root.style.setProperty('--bd-shadow-md', `${shadowColor} ${offset} ${offset} 0 0`);
-    root.style.setProperty('--bd-shadow-lg', `${shadowColor} ${offset} ${offset} 0 0`);
-    root.style.setProperty('--bd-shadow-glow', 'none');
-  }
+  root.className = 'bd-root';
+  applyThemeClass(root, resolved);
+  applyCustomStyles(root, config, resolved);
 
   shadow.appendChild(root);
 
