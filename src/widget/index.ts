@@ -171,8 +171,6 @@ let _triggerButton: HTMLElement | null = null;
 let _pullTab: HTMLElement | null = null;
 let _isModalOpen = false;
 let _widgetConfig: WidgetConfig | null = null;
-let _currentMode: ThemeMode = 'auto';
-let _detachSystemListener: (() => void) | null = null;
 
 // Helper to check if button was dismissed
 function isButtonDismissed(dismissDuration?: number): boolean {
@@ -287,7 +285,6 @@ if (!config.repo) {
     `[BugDrop] Invalid data-repo format "${config.repo}". Expected "owner/repo" (e.g., "octocat/hello-world").`
   );
 } else {
-  _currentMode = config.theme;
   initWidget(config);
 }
 
@@ -452,6 +449,11 @@ function initWidget(config: WidgetConfig) {
 
 // Create and expose the BugDrop JavaScript API
 function exposeBugDropAPI(root: HTMLElement, config: WidgetConfig) {
+  // Closure-captured so each widget instance has its own mode state. Read by
+  // the matchMedia listener below and mutated by setTheme. No module-level
+  // state needed — keeps per-init isolation if multi-instance is ever added.
+  let currentMode: ThemeMode = config.theme;
+
   window.BugDrop = {
     // Open the feedback modal programmatically
     open: () => {
@@ -510,26 +512,31 @@ function exposeBugDropAPI(root: HTMLElement, config: WidgetConfig) {
       return _triggerButton !== null && _triggerButton.style.display !== 'none';
     },
 
-    // Set the widget theme at runtime.
-    // Accepts 'light' | 'dark' | 'auto'. Invalid input warns and no-ops.
+    // Set the widget theme at runtime. Accepts 'light' | 'dark' | 'auto'.
+    // Invalid input warns and no-ops. Only toggles the root class and re-runs
+    // the custom-color inline styles — it does NOT re-inject the <style> block
+    // because the dark-mode CSS variables are already defined statically in
+    // `.bd-root.bd-dark { ... }` and get activated by the class flip alone.
     setTheme: (mode: unknown) => {
       if (!isValidTheme(mode)) {
         console.warn(
-          `[BugDrop] Invalid theme ${JSON.stringify(mode)}. Expected 'light' | 'dark' | 'auto'.`
+          `[BugDrop] Invalid theme ${String(mode)}. Expected 'light' | 'dark' | 'auto'.`
         );
         return;
       }
-      _currentMode = mode;
+      currentMode = mode;
       const resolved = resolveTheme(mode);
       applyThemeClass(root, resolved);
       applyCustomStyles(root, config, resolved);
     },
   };
 
-  // Fix for data-theme="auto" not following OS changes after init.
-  // One persistent listener gated by _currentMode === 'auto'.
-  _detachSystemListener = attachSystemThemeListener(resolved => {
-    if (_currentMode !== 'auto') return;
+  // Fix for data-theme="auto" not following OS changes after init. One
+  // persistent listener gated by `currentMode === 'auto'` so explicit
+  // light/dark modes ignore OS changes. Cleanup fn is discarded — widgets
+  // live for the page lifetime.
+  attachSystemThemeListener(resolved => {
+    if (currentMode !== 'auto') return;
     applyThemeClass(root, resolved);
     applyCustomStyles(root, config, resolved);
   });

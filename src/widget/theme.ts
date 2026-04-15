@@ -92,7 +92,8 @@ export function applyCustomStyles(
   }
 
   // Apply custom border styling if provided
-  const borderW = config.borderWidth ? parseInt(config.borderWidth, 10) : null;
+  const parsedBorderW = config.borderWidth ? parseInt(config.borderWidth, 10) : null;
+  const borderW = parsedBorderW !== null && Number.isFinite(parsedBorderW) ? parsedBorderW : null;
   const borderC = config.borderColor || null;
   if (borderW !== null || borderC !== null) {
     const bw = borderW !== null ? `${borderW}px` : '1px';
@@ -122,13 +123,28 @@ export function attachSystemThemeListener(
   onSystemChange: (resolved: ResolvedTheme) => void
 ): () => void {
   if (typeof window === 'undefined' || !window.matchMedia) {
+    // Fires in SSR, sandboxed iframes, or environments without matchMedia.
+    // data-theme="auto" will still resolve correctly at init but won't react
+    // to runtime OS theme changes. Warn so integrators can debug.
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn(
+        '[BugDrop] window.matchMedia unavailable; data-theme="auto" will not react to OS theme changes.'
+      );
+    }
     return () => {
       /* no-op cleanup */
     };
   }
   const mql = window.matchMedia('(prefers-color-scheme: dark)');
   const handler = (e: MediaQueryListEvent) => {
-    onSystemChange(e.matches ? 'dark' : 'light');
+    try {
+      onSystemChange(e.matches ? 'dark' : 'light');
+    } catch (err) {
+      // A throw inside the callback (e.g. detached DOM root) would otherwise
+      // propagate into the browser's event loop. Catch it here so the listener
+      // keeps firing on subsequent OS theme changes.
+      console.warn('[BugDrop] Error applying system theme change:', err);
+    }
   };
   mql.addEventListener('change', handler);
   return () => mql.removeEventListener('change', handler);

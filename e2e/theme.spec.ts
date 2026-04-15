@@ -118,4 +118,55 @@ test.describe('Runtime theme switching', () => {
     expect(darkValue).toContain('white'); // dark-mode mix
     expect(darkValue).not.toBe(lightValue);
   });
+
+  test('explicit setTheme("light") resists subsequent OS theme flip to dark', async ({ page }) => {
+    // Gate-behavior proof: when the host has explicitly chosen a mode via
+    // setTheme, the matchMedia listener must NOT stomp that choice when the
+    // OS theme flips.
+    await page.emulateMedia({ colorScheme: 'light' });
+    await gotoWidget(page, { theme: 'auto' });
+    expect(await rootClassList(page)).not.toContain('bd-dark');
+
+    // Lock in explicit light mode.
+    await page.evaluate(() => (window as BugDropWindow).BugDrop!.setTheme('light'));
+    expect(await rootClassList(page)).not.toContain('bd-dark');
+
+    // Now flip the OS to dark. The listener fires but the gate should block it.
+    await page.emulateMedia({ colorScheme: 'dark' });
+    // Give the matchMedia change event a moment to propagate — we expect
+    // the class to still be light, so use a small timeout instead of waitForFunction.
+    await page.waitForTimeout(100);
+    expect(await rootClassList(page)).not.toContain('bd-dark');
+  });
+
+  test('auto mode + bgColor re-derives --bd-bg-secondary on OS theme flip', async ({ page }) => {
+    // Integration: auto mode + custom bgColor. When the OS theme flips, the
+    // matchMedia listener must call BOTH applyThemeClass (flip bd-dark) AND
+    // applyCustomStyles (re-derive --bd-bg-secondary via color-mix with the
+    // new theme's mix target). Exercises the full callback in Task 11.
+    await page.emulateMedia({ colorScheme: 'light' });
+    await gotoWidget(page, { theme: 'auto', bg: '#fffef0' });
+
+    const readSecondary = () =>
+      page.evaluate(() => {
+        const host = document.getElementById('bugdrop-host') as HTMLElement | null;
+        const root = host?.shadowRoot?.querySelector('.bd-root') as HTMLElement | null;
+        return root?.style.getPropertyValue('--bd-bg-secondary') ?? '';
+      });
+
+    const lightValue = await readSecondary();
+    expect(lightValue).toContain('black'); // light-mode mix
+
+    await page.emulateMedia({ colorScheme: 'dark' });
+    // Wait for the class flip to confirm the listener fired.
+    await page.waitForFunction(() => {
+      const host = document.getElementById('bugdrop-host') as HTMLElement | null;
+      const root = host?.shadowRoot?.querySelector('.bd-root') as HTMLElement | null;
+      return root?.classList.contains('bd-dark') === true;
+    });
+
+    const darkValue = await readSecondary();
+    expect(darkValue).toContain('white'); // dark-mode mix re-derived
+    expect(darkValue).not.toBe(lightValue);
+  });
 });
