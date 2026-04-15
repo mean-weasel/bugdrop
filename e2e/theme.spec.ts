@@ -99,4 +99,23 @@ test.describe('Runtime theme switching', () => {
     await page.evaluate(() => (window as BugDropWindow).BugDrop!.setTheme('auto'));
     expect(await rootClassList(page)).toContain('bd-dark');
   });
+
+  test('bgColor + setTheme re-derives --bd-bg-secondary via color-mix', async ({ page }) => {
+    await gotoWidget(page, { theme: 'light', bg: '#fffef0' });
+
+    const readSecondary = () =>
+      page.evaluate(() => {
+        const host = document.getElementById('bugdrop-host') as HTMLElement | null;
+        const root = host?.shadowRoot?.querySelector('.bd-root') as HTMLElement | null;
+        return root?.style.getPropertyValue('--bd-bg-secondary') ?? '';
+      });
+
+    const lightValue = await readSecondary();
+    expect(lightValue).toContain('black'); // light-mode mix
+
+    await page.evaluate(() => (window as BugDropWindow).BugDrop!.setTheme('dark'));
+    const darkValue = await readSecondary();
+    expect(darkValue).toContain('white'); // dark-mode mix
+    expect(darkValue).not.toBe(lightValue);
+  });
 });
