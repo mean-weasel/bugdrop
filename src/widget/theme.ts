@@ -1,8 +1,4 @@
 // src/widget/theme.ts
-// Stubs for Task 1 of the runtime theme API plan. Real implementations land
-// in Tasks 2-7 and will consume every parameter. Until then we silence the
-// no-unused-vars rule file-wide so the signatures can match the plan text.
-/* eslint-disable @typescript-eslint/no-unused-vars */
 
 export type ThemeMode = 'light' | 'dark' | 'auto';
 export type ResolvedTheme = 'light' | 'dark';
@@ -125,5 +121,15 @@ export function applyCustomStyles(
 export function attachSystemThemeListener(
   onSystemChange: (resolved: ResolvedTheme) => void
 ): () => void {
-  throw new Error('not implemented');
+  if (typeof window === 'undefined' || !window.matchMedia) {
+    return () => {
+      /* no-op cleanup */
+    };
+  }
+  const mql = window.matchMedia('(prefers-color-scheme: dark)');
+  const handler = (e: MediaQueryListEvent) => {
+    onSystemChange(e.matches ? 'dark' : 'light');
+  };
+  mql.addEventListener('change', handler);
+  return () => mql.removeEventListener('change', handler);
 }

@@ -4,6 +4,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   applyCustomStyles,
   applyThemeClass,
+  attachSystemThemeListener,
   getSystemTheme,
   isValidTheme,
   resolveTheme,
@@ -280,5 +281,74 @@ describe('applyCustomStyles', () => {
       applyCustomStyles(root, { shadow: 'hard' }, 'dark');
       expect(root.style.getPropertyValue('--bd-shadow-sm')).toContain('#000');
     });
+  });
+});
+
+describe('attachSystemThemeListener', () => {
+  const originalMatchMedia = window.matchMedia;
+
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia;
+  });
+
+  function mockMatchMedia() {
+    const listeners = new Set<(e: MediaQueryListEvent) => void>();
+    const mql = {
+      matches: false,
+      media: '(prefers-color-scheme: dark)',
+      addEventListener: vi.fn((_type: string, cb: (e: MediaQueryListEvent) => void) => {
+        listeners.add(cb);
+      }),
+      removeEventListener: vi.fn((_type: string, cb: (e: MediaQueryListEvent) => void) => {
+        listeners.delete(cb);
+      }),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+      onchange: null,
+    };
+    window.matchMedia = vi.fn().mockReturnValue(mql) as unknown as typeof window.matchMedia;
+    return {
+      fire(matches: boolean) {
+        listeners.forEach(cb =>
+          cb({ matches, media: '(prefers-color-scheme: dark)' } as MediaQueryListEvent)
+        );
+      },
+      mql,
+      listeners,
+    };
+  }
+
+  it('returns a no-op cleanup when matchMedia is missing', () => {
+    // @ts-expect-error deliberately remove
+    delete window.matchMedia;
+    const cleanup = attachSystemThemeListener(() => {});
+    expect(typeof cleanup).toBe('function');
+    expect(() => cleanup()).not.toThrow();
+  });
+
+  it('invokes callback with "dark" when the media query starts matching', () => {
+    const harness = mockMatchMedia();
+    const cb = vi.fn();
+    attachSystemThemeListener(cb);
+    harness.fire(true);
+    expect(cb).toHaveBeenCalledWith('dark');
+  });
+
+  it('invokes callback with "light" when the media query stops matching', () => {
+    const harness = mockMatchMedia();
+    const cb = vi.fn();
+    attachSystemThemeListener(cb);
+    harness.fire(false);
+    expect(cb).toHaveBeenCalledWith('light');
+  });
+
+  it('stops invoking the callback after cleanup()', () => {
+    const harness = mockMatchMedia();
+    const cb = vi.fn();
+    const cleanup = attachSystemThemeListener(cb);
+    cleanup();
+    harness.fire(true);
+    expect(cb).not.toHaveBeenCalled();
   });
 });
