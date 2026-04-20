@@ -22,7 +22,7 @@ Run your own instance of BugDrop with your own GitHub App.
 5. Note the **App ID** (shown at top)
 6. Scroll down and click **"Generate a private key"** (downloads a .pem file)
 
-## 2. Setup Development Environment
+## 2. Clone, Install, and Configure
 
 ```bash
 # Clone and install
@@ -43,7 +43,34 @@ GITHUB_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----
 -----END RSA PRIVATE KEY-----"
 ```
 
-## 3. Run Locally
+Next, update `wrangler.toml` with your app name and remove the upstream KV namespace IDs:
+
+```toml
+[vars]
+GITHUB_APP_NAME = "your-app-name"  # Must match your GitHub App's URL slug
+
+# Remove or replace the [[kv_namespaces]] section (and the
+# [[env.preview.kv_namespaces]] section) — the existing IDs belong
+# to the upstream deployment. See Step 5 to create your own,
+# or delete both sections entirely to disable rate limiting.
+```
+
+> **Note:** The test pages under `public/test/` have `data-repo` set to `mean-weasel/bugdrop-widget-test`. Change this in all test HTML files to a repo where your GitHub App is installed:
+>
+> ```bash
+> # macOS / BSD sed
+> find public/test -name '*.html' -exec sed -i '' 's/mean-weasel\/bugdrop-widget-test/your-org\/your-repo/g' {} +
+> ```
+
+## 3. Build the Widget
+
+The widget source must be compiled before the dev server can serve it (the built files are not checked into git):
+
+```bash
+make build-widget
+```
+
+## 4. Run Locally
 
 ```bash
 make dev
@@ -52,9 +79,11 @@ make dev
 
 Visit http://localhost:8787/test/ to try the widget.
 
-## 4. Set Up Rate Limiting (Optional)
+## 5. Set Up Rate Limiting (Optional)
 
 Rate limiting prevents spam and protects GitHub API quotas. It uses Cloudflare KV for distributed storage.
+
+> **Important:** The `[[kv_namespaces]]` IDs in `wrangler.toml` belong to the upstream deployment and will not work for your account. You must create your own namespaces below, or remove the section to disable rate limiting.
 
 ```bash
 # Create KV namespaces
@@ -73,14 +102,14 @@ preview_id = "<your-preview-id>"
 
 **Default limits:**
 
-- 10 requests per 15 minutes per IP
+- 20 requests per 15 minutes per IP
 - 50 requests per hour per repository
 
 To customize limits, edit `src/middleware/rateLimit.ts` and the middleware config in `src/routes/api.ts`.
 
 > **Note:** If you skip this step, rate limiting is disabled but the app still works.
 
-## 5. Deploy to Cloudflare
+## 6. Deploy to Cloudflare
 
 ### Manual Deploy
 
@@ -125,22 +154,42 @@ The release tag (e.g., `v1.2.0`) becomes the version number for the widget files
 
 ### Environment Variables
 
-| Variable                 | Required | Description                                            |
-| ------------------------ | -------- | ------------------------------------------------------ |
-| `GITHUB_APP_ID`          | Yes      | Your GitHub App's numeric ID                           |
-| `GITHUB_PRIVATE_KEY`     | Yes      | Private key from GitHub App settings                   |
-| `ALLOWED_ORIGINS`        | No       | Comma-separated allowed domains (default: `*`)         |
-| `GITHUB_APP_NAME`        | No       | Your app's URL slug for install links                  |
-| `MAX_SCREENSHOT_SIZE_MB` | No       | Max screenshot size in MB (default: `5`)               |
-| `RATE_LIMIT`             | No       | KV namespace binding for rate limiting (see section 4) |
+| Variable                 | Required | Description                                                           |
+| ------------------------ | -------- | --------------------------------------------------------------------- |
+| `GITHUB_APP_ID`          | Yes      | Your GitHub App's numeric ID                                          |
+| `GITHUB_PRIVATE_KEY`     | Yes      | Private key from GitHub App settings                                  |
+| `ENVIRONMENT`            | No       | `development` disables rate limiting; `production` enables all checks |
+| `ALLOWED_ORIGINS`        | No       | Comma-separated allowed domains (default: `*`)                        |
+| `GITHUB_APP_NAME`        | No       | Your app's URL slug for install links                                 |
+| `MAX_SCREENSHOT_SIZE_MB` | No       | Max screenshot size in MB (default: `5`)                              |
+| `RATE_LIMIT`             | No       | KV namespace binding for rate limiting (see section 5)                |
 
-### wrangler.toml
+### Locking Down Allowed Origins (Recommended)
+
+> **Security:** When self-hosting, you should always set `ALLOWED_ORIGINS` to only the domains where you embed the widget. The default `"*"` allows any website to submit requests to your worker — meaning anyone who discovers your worker URL could create issues on repos where your app is installed (subject to rate limits).
+
+For self-hosted deployments, restrict origins to your known domains:
 
 ```toml
 [vars]
 ENVIRONMENT = "production"
 ALLOWED_ORIGINS = "https://mysite.com,https://app.mysite.com"
 GITHUB_APP_NAME = "my-bugdrop-app"
+```
+
+Only list the exact origins (scheme + host) of sites where you embed the BugDrop widget. The worker validates the `Origin` header on incoming requests and rejects any not in this list.
+
+> **Note:** `ALLOWED_ORIGINS` is a CORS-level check — it only blocks browser-based cross-origin requests. Direct API calls (curl, scripts) don't send an `Origin` header and bypass CORS entirely. Rate limiting (section 5) is your primary defense against non-browser abuse.
+
+### Root URL Redirect
+
+By default, the worker redirects `/` to `https://bugdrop.dev` (the upstream landing page). For your own deployment, edit `src/index.ts` and change the redirect URL to your own site, or replace it with a custom response:
+
+```ts
+// src/index.ts — change this route handler:
+app.get('/', c => {
+  return c.redirect('https://your-site.com', 301);
+});
 ```
 
 ## Commands
