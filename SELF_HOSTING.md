@@ -22,7 +22,7 @@ Run your own instance of BugDrop with your own GitHub App.
 5. Note the **App ID** (shown at top)
 6. Scroll down and click **"Generate a private key"** (downloads a .pem file)
 
-## 2. Setup Development Environment
+## 2. Clone, Install, and Configure
 
 ```bash
 # Clone and install
