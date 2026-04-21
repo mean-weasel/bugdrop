@@ -110,6 +110,7 @@ export function injectStyles(shadow: ShadowRoot, config: WidgetConfig) {
 
     .bd-root {
       font-family: var(--bd-font);
+      color: var(--bd-text-primary);
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
     }
@@ -1037,7 +1038,7 @@ export function showSuccessModal(
           </div>
           ${issueInfo}
         </div>
-        <div class="bd-actions">
+        <div class="bd-actions" style="justify-content: center;">
           <button class="bd-btn bd-btn-primary" data-action="done">Done</button>
         </div>
         <div class="bd-powered-by">
