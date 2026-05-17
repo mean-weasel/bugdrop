@@ -10,6 +10,8 @@ import { beginViewportCapture, getRedactionCount, isFullPageDisabled } from './s
 import { showScreenshotOptions, type ScreenshotChoice } from './screenshot-options';
 
 const MAX_FULL_SELECTOR_CLASSES = 3;
+const ELEMENT_CONTEXT_MAX_VIEWPORT_AREA_MULTIPLIER = 1.5;
+const ELEMENT_CONTEXT_MIN_PADDING_PX = 80;
 
 export interface CaptureFlowConfig {
   screenshotMode: 'optional' | 'auto' | 'required';
@@ -245,8 +247,18 @@ async function captureFromElementChoice(
 
   const elementSelector = getElementSelector(element);
   const fullElementSelector = getFullElementSelector(element);
-  const result = await captureWithLoading(root, element, config.screenshotScale, {
+  const captureTarget = getElementContextCaptureTarget(element);
+  const result = await captureWithLoading(root, captureTarget, config.screenshotScale, {
     allowSkip: !screenshotRequired,
+    captureOptions: {
+      highlightElement: element,
+      highlightStyle: {
+        accentColor: config.accentColor,
+        radius: config.radius,
+        borderWidth: config.borderWidth,
+      },
+      pixelRatio: 1,
+    },
   });
   if (result.kind === 'cancelled') return { kind: 'returnToForm' };
   if (result.kind === 'skipped') {
@@ -262,7 +274,7 @@ async function captureFromElementChoice(
     screenshot: result.dataUrl,
     elementSelector,
     fullElementSelector,
-    redactionCount: getRedactionCount(element),
+    redactionCount: getRedactionCount(captureTarget),
     redactionUnavailable: false,
   };
 }
@@ -376,6 +388,43 @@ function getFullElementSelector(element: Element): string {
   }
 
   return path.join(' > ');
+}
+
+function getElementContextCaptureTarget(element: Element): Element {
+  const selectedRect = element.getBoundingClientRect();
+  if (!isUsableRect(selectedRect)) return element;
+
+  const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
+  const maxContextArea = viewportArea * ELEMENT_CONTEXT_MAX_VIEWPORT_AREA_MULTIPLIER;
+
+  let best: Element = element;
+  let current = element.parentElement;
+
+  while (current && current !== document.body && current !== document.documentElement) {
+    const rect = current.getBoundingClientRect();
+    const area = rect.width * rect.height;
+
+    if (isUsableRect(rect) && area <= maxContextArea && hasUsefulContext(rect, selectedRect)) {
+      best = current;
+    }
+
+    current = current.parentElement;
+  }
+
+  return best;
+}
+
+function isUsableRect(rect: DOMRect): boolean {
+  return rect.width > 0 && rect.height > 0;
+}
+
+function hasUsefulContext(candidate: DOMRect, selected: DOMRect): boolean {
+  const horizontalContext = candidate.width >= selected.width + ELEMENT_CONTEXT_MIN_PADDING_PX * 2;
+  const verticalContext = candidate.height >= selected.height + ELEMENT_CONTEXT_MIN_PADDING_PX * 2;
+  const selectedArea = selected.width * selected.height;
+  const candidateArea = candidate.width * candidate.height;
+
+  return horizontalContext || verticalContext || candidateArea >= selectedArea * 4;
 }
 
 function getFullSelectorSegment(element: Element): string {

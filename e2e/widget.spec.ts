@@ -14,6 +14,13 @@ declare global {
   interface Window {
     __hostKeystrokeCount?: number;
     __captureOpts?: CaptureOptions;
+    __captureTargetInfo?: {
+      tagName: string;
+      id: string;
+      className: string;
+      width: number;
+      height: number;
+    };
   }
 }
 
@@ -2354,6 +2361,21 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
     }`;
   }
 
+  function targetSpyToPng() {
+    return `function(el, opts) {
+      window.__captureOpts = opts;
+      var rect = el.getBoundingClientRect();
+      window.__captureTargetInfo = {
+        tagName: el.tagName,
+        id: el.id || '',
+        className: typeof el.className === 'string' ? el.className : '',
+        width: rect.width,
+        height: rect.height
+      };
+      return Promise.resolve('${STUB_PNG}');
+    }`;
+  }
+
   function redactionAwarePng() {
     return `function(el, opts) {
       window.__captureOpts = opts;
@@ -3004,6 +3026,37 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
 
     const timeoutRejections = rejections.filter(m => m.includes('timed out'));
     expect(timeoutRejections).toHaveLength(0);
+  });
+
+  test('element capture uses a surrounding context target', async ({ page }) => {
+    await mockHtmlToImage(page, targetSpyToPng());
+    await page.goto('/test/annotation-style.html');
+
+    const host = await navigateToScreenshotOptions(page);
+    await host.locator('css=[data-action="element"]').click();
+    await expect(page.locator('#bugdrop-element-picker-tooltip')).toBeVisible({ timeout: 5000 });
+
+    const selected = page.locator('.dot.green');
+    await expect(selected).toBeVisible();
+    const selectedBox = await selected.boundingBox();
+    expect(selectedBox).toBeTruthy();
+
+    await page.mouse.click(
+      selectedBox!.x + selectedBox!.width / 2,
+      selectedBox!.y + selectedBox!.height / 2
+    );
+
+    await expect(host.locator('css=#annotation-canvas')).toBeVisible({ timeout: 10000 });
+
+    const targetInfo = await page.evaluate(() => window.__captureTargetInfo);
+    expect(targetInfo).toBeDefined();
+    if (!targetInfo) throw new Error('Missing capture target info');
+    expect(targetInfo.className).not.toContain('dot');
+    expect(targetInfo.width).toBeGreaterThan(selectedBox!.width * 4);
+    expect(targetInfo.height).toBeGreaterThan(selectedBox!.height * 4);
+
+    const captureOpts = await page.evaluate(() => window.__captureOpts);
+    expect(captureOpts?.pixelRatio).toBe(1);
   });
 
   test('shows error modal when capture times out', async ({ page }) => {

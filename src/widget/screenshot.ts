@@ -11,6 +11,16 @@ const TRANSPARENT_IMAGE_PLACEHOLDER =
 export const FULL_PAGE_DISABLE_THRESHOLD = 10_000;
 export const SAFARI_FULL_PAGE_DISABLE_THRESHOLD = DOM_COMPLEXITY_THRESHOLD;
 
+export interface CaptureScreenshotOptions {
+  highlightElement?: Element;
+  highlightStyle?: {
+    accentColor?: string;
+    radius?: string;
+    borderWidth?: string;
+  };
+  pixelRatio?: number;
+}
+
 type DisplayMediaOptionsWithCurrentTab = DisplayMediaStreamOptions & {
   preferCurrentTab?: boolean;
 };
@@ -201,12 +211,18 @@ function withCaptureTimeout<T>(capturePromise: Promise<T>): Promise<T> {
 
 export async function captureScreenshot(
   element?: Element,
-  screenshotScale?: number
+  screenshotScale?: number,
+  captureOptions: CaptureScreenshotOptions = {}
 ): Promise<string> {
   const target = element || document.body;
   const isFullPage = !element;
+  const targetRect = element ? getDocumentRect(element) : getDocumentRect(document.body);
+  const highlightRect =
+    captureOptions.highlightElement && target.contains(captureOptions.highlightElement)
+      ? getDocumentRect(captureOptions.highlightElement)
+      : null;
 
-  const pixelRatio = getPixelRatio(isFullPage, screenshotScale);
+  const pixelRatio = captureOptions.pixelRatio ?? getPixelRatio(isFullPage, screenshotScale);
 
   const toPng = getToPng();
   const opts: HtmlToImageOptions = {
@@ -217,27 +233,40 @@ export async function captureScreenshot(
   };
 
   const redactionPlan = createRedactionPlan(target);
-  let originOffset = { x: 0, y: 0 };
-  if (element) {
-    const r = element.getBoundingClientRect();
-    originOffset = { x: r.left + window.scrollX, y: r.top + window.scrollY };
-  }
+  const originOffset = element ? { x: targetRect.x, y: targetRect.y } : { x: 0, y: 0 };
 
   const capturePromise = toPng(target as HTMLElement, opts);
   const dataUrl = await withCaptureTimeout(capturePromise);
-  return applyMaskToImage(
+  const maskedDataUrl = await applyMaskToImage(
     dataUrl,
     redactionPlan.targets.map(target => target.rect),
     pixelRatio,
     originOffset
   );
+
+  if (!highlightRect) {
+    return maskedDataUrl;
+  }
+
+  return applyHighlightToImage(
+    maskedDataUrl,
+    highlightRect,
+    targetRect,
+    captureOptions.highlightStyle
+  );
 }
 
 export async function captureAreaScreenshot(
   rect: DOMRect,
-  screenshotScale?: number
+  screenshotScale?: number,
+  captureOptions: CaptureScreenshotOptions = {}
 ): Promise<string> {
-  const pixelRatio = getPixelRatio(true, screenshotScale);
+  const pixelRatio = captureOptions.pixelRatio ?? getPixelRatio(true, screenshotScale);
+  const targetRect = { x: rect.x, y: rect.y, w: rect.width, h: rect.height };
+  const highlightRect =
+    captureOptions.highlightElement && document.body.contains(captureOptions.highlightElement)
+      ? getDocumentRect(captureOptions.highlightElement)
+      : null;
   const toPng = getToPng();
   const opts: HtmlToImageOptions = {
     cacheBust: false,
@@ -256,7 +285,7 @@ export async function captureAreaScreenshot(
 
   const dataUrl = await withCaptureTimeout(toPng(document.body, opts));
   const redactionPlan = createRedactionPlan(document.body);
-  return applyMaskToImage(
+  const maskedDataUrl = await applyMaskToImage(
     dataUrl,
     redactionPlan.targets.map(target => target.rect),
     pixelRatio,
@@ -264,6 +293,17 @@ export async function captureAreaScreenshot(
       x: rect.x,
       y: rect.y,
     }
+  );
+
+  if (!highlightRect) {
+    return maskedDataUrl;
+  }
+
+  return applyHighlightToImage(
+    maskedDataUrl,
+    highlightRect,
+    targetRect,
+    captureOptions.highlightStyle
   );
 }
 
@@ -279,6 +319,132 @@ function getToPng(): typeof htmlToImage.toPng {
     return window.__bugdropMockToPng;
   }
   return htmlToImage.toPng;
+}
+
+async function applyHighlightToImage(
+  dataUrl: string,
+  rect: { x: number; y: number; w: number; h: number },
+  targetRect: { x: number; y: number; w: number; h: number },
+  style: CaptureScreenshotOptions['highlightStyle'] = {}
+): Promise<string> {
+  if (rect.w <= 0 || rect.h <= 0) return dataUrl;
+
+  const img = await loadImage(dataUrl);
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth || img.width;
+  canvas.height = img.naturalHeight || img.height;
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('Failed to get canvas context for selected element highlight');
+  }
+
+  ctx.drawImage(img, 0, 0);
+
+  const scaleX = canvas.width / Math.max(1, targetRect.w);
+  const scaleY = canvas.height / Math.max(1, targetRect.h);
+  const averageScale = Math.max(1, (scaleX + scaleY) / 2);
+  const padding = 2 * averageScale;
+  const x = Math.max(0, Math.round((rect.x - targetRect.x) * scaleX - padding));
+  const y = Math.max(0, Math.round((rect.y - targetRect.y) * scaleY - padding));
+  const w = Math.min(canvas.width - x, Math.round(rect.w * scaleX + padding * 2));
+  const h = Math.min(canvas.height - y, Math.round(rect.h * scaleY + padding * 2));
+  const borderWidth = getHighlightBorderWidth(style.borderWidth, averageScale);
+  const radius = getHighlightRadius(style.radius, averageScale);
+  const accent = style.accentColor || '#14b8a6';
+
+  drawRoundedRect(ctx, x, y, w, h, radius);
+  ctx.fillStyle = colorMixWithTransparency(accent, 0.18);
+  ctx.fill();
+
+  ctx.lineWidth = Math.max(2, borderWidth + Math.round(4 * averageScale));
+  ctx.strokeStyle = colorMixWithTransparency(accent, 0.3);
+  ctx.stroke();
+
+  drawRoundedRect(ctx, x, y, w, h, radius);
+  ctx.lineWidth = borderWidth;
+  ctx.strokeStyle = accent;
+  ctx.stroke();
+
+  return canvas.toDataURL('image/png');
+}
+
+function drawRoundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  radius: number
+): void {
+  const r = Math.max(0, Math.min(radius, w / 2, h / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function getHighlightBorderWidth(borderWidth: string | undefined, pixelRatio: number): number {
+  const parsed = Number.parseFloat(borderWidth || '3');
+  return Math.max(1, Math.round((Number.isFinite(parsed) ? parsed : 3) * pixelRatio));
+}
+
+function getHighlightRadius(radius: string | undefined, pixelRatio: number): number {
+  const parsed = Number.parseFloat(radius || '6');
+  return Math.max(0, Math.round((Number.isFinite(parsed) ? parsed : 6) * pixelRatio));
+}
+
+function colorMixWithTransparency(color: string, alpha: number): string {
+  const fallback = `rgba(20, 184, 166, ${alpha})`;
+  const hexMatch = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (!hexMatch) {
+    const rgbMatch = color.match(
+      /^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)(?:\s*,\s*\d+(?:\.\d+)?)?\s*\)$/i
+    );
+    if (!rgbMatch) return fallback;
+
+    const [, r, g, b] = rgbMatch;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  const hex = hexMatch[1];
+  const fullHex =
+    hex.length === 3
+      ? hex
+          .split('')
+          .map(char => `${char}${char}`)
+          .join('')
+      : hex;
+  const r = Number.parseInt(fullHex.slice(0, 2), 16);
+  const g = Number.parseInt(fullHex.slice(2, 4), 16);
+  const b = Number.parseInt(fullHex.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function getDocumentRect(element: Element): { x: number; y: number; w: number; h: number } {
+  const rect = element.getBoundingClientRect();
+  return {
+    x: rect.left + window.scrollX,
+    y: rect.top + window.scrollY,
+    w: rect.width,
+    h: rect.height,
+  };
+}
+
+function loadImage(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Failed to load image for selected element highlight'));
+    img.src = dataUrl;
+  });
 }
 
 export async function cropScreenshot(

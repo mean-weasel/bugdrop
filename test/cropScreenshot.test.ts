@@ -239,10 +239,10 @@ describe('captureScreenshot integrates with mask pipeline', () => {
     (window as unknown as { Image: unknown }).Image = class FakeImage {
       onload: (() => void) | null = null;
       onerror: (() => void) | null = null;
-      naturalWidth = 1;
-      naturalHeight = 1;
-      width = 1;
-      height = 1;
+      naturalWidth = 800;
+      naturalHeight = 600;
+      width = 800;
+      height = 600;
       set src(_: string) {
         // Fire onload asynchronously so callers can set it first.
         Promise.resolve().then(() => this.onload?.());
@@ -251,9 +251,19 @@ describe('captureScreenshot integrates with mask pipeline', () => {
 
     // jsdom does not implement canvas 2D context; stub it to avoid "Failed to get canvas context".
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      beginPath: vi.fn(),
+      closePath: vi.fn(),
       drawImage: vi.fn(),
       fillRect: vi.fn(),
+      fill: vi.fn(),
+      lineTo: vi.fn(),
+      moveTo: vi.fn(),
+      quadraticCurveTo: vi.fn(),
+      stroke: vi.fn(),
+      strokeRect: vi.fn(),
       fillStyle: '',
+      lineWidth: 0,
+      strokeStyle: '',
     } as unknown as CanvasRenderingContext2D);
     vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue(
       'data:image/png;base64,masked'
@@ -320,5 +330,71 @@ describe('captureScreenshot integrates with mask pipeline', () => {
 
     // applyMaskToImage must have run: only it produces the masked sentinel.
     await expect(captureScreenshot(target)).resolves.toBe('data:image/png;base64,masked');
+  });
+
+  it('captures a context element and draws a selected descendant highlight', async () => {
+    const context = document.createElement('section');
+    context.getBoundingClientRect = () =>
+      ({
+        x: 20,
+        y: 30,
+        width: 400,
+        height: 300,
+        top: 30,
+        left: 20,
+        bottom: 330,
+        right: 420,
+        toJSON() {
+          return {};
+        },
+      }) as DOMRect;
+
+    const selected = document.createElement('button');
+    selected.getBoundingClientRect = () =>
+      ({
+        x: 120,
+        y: 90,
+        width: 80,
+        height: 40,
+        top: 90,
+        left: 120,
+        bottom: 130,
+        right: 200,
+        toJSON() {
+          return {};
+        },
+      }) as DOMRect;
+
+    context.appendChild(selected);
+    document.body.appendChild(context);
+
+    const STUB =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+    const toPng = vi.fn(() => Promise.resolve(STUB));
+    (window as unknown as { __bugdropMockToPng: typeof toPng }).__bugdropMockToPng = toPng;
+
+    const strokeRect = vi.fn();
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({
+      beginPath: vi.fn(),
+      closePath: vi.fn(),
+      drawImage: vi.fn(),
+      fillRect: vi.fn(),
+      fill: vi.fn(),
+      lineTo: vi.fn(),
+      moveTo: vi.fn(),
+      quadraticCurveTo: vi.fn(),
+      stroke: vi.fn(),
+      strokeRect,
+      fillStyle: '',
+      lineWidth: 0,
+      strokeStyle: '',
+    } as unknown as CanvasRenderingContext2D);
+
+    await expect(
+      captureScreenshot(context, undefined, { highlightElement: selected })
+    ).resolves.toBe('data:image/png;base64,masked');
+
+    expect(toPng).toHaveBeenCalledWith(context, expect.any(Object));
+    expect(strokeRect).not.toHaveBeenCalled();
   });
 });

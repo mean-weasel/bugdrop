@@ -93,18 +93,21 @@ function startPicker(resolve: (element: Element | null) => void, style?: PickerS
 
   let currentElement: Element | null = null;
 
-  function onMouseMove(e: MouseEvent) {
-    // Get the element under the cursor, ignoring our picker elements
-    const elementsAtPoint = document.elementsFromPoint(e.clientX, e.clientY);
+  function getSelectableElementAtPoint(x: number, y: number): Element | undefined {
+    const elementsAtPoint = document.elementsFromPoint(x, y);
 
-    // Find the first element that's not our picker UI
-    const target = elementsAtPoint.find(el => {
+    return elementsAtPoint.find(el => {
       if (el === highlight || el === tooltip) return false;
       if (el.id === 'bugdrop-element-picker-highlight') return false;
       if (el.id === 'bugdrop-element-picker-tooltip') return false;
       if (el.closest('#bugdrop-host')) return false;
       return true;
     });
+  }
+
+  function onMouseMove(e: MouseEvent) {
+    // Get the element under the cursor, ignoring our picker elements
+    const target = getSelectableElementAtPoint(e.clientX, e.clientY);
 
     if (!target) return;
 
@@ -122,6 +125,7 @@ function startPicker(resolve: (element: Element | null) => void, style?: PickerS
   function onClick(e: MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
+    currentElement = getSelectableElementAtPoint(e.clientX, e.clientY) ?? currentElement;
     cleanup();
     resolve(currentElement);
   }

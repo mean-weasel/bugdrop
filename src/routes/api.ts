@@ -549,6 +549,10 @@ function formatIssueBody(
   if (screenshotDataUrl) {
     sections.push('## Screenshot');
     sections.push(`![Screenshot](${screenshotDataUrl})`);
+    if (payload.metadata.elementSelector) {
+      sections.push('');
+      sections.push('_Selected element is indicated by the blue rounded highlight box._');
+    }
     sections.push('');
   }
 

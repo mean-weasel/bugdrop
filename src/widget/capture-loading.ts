@@ -1,5 +1,9 @@
 import { MaskApplicationError } from './mask';
-import { captureAreaScreenshot, captureScreenshot } from './screenshot';
+import {
+  captureAreaScreenshot,
+  captureScreenshot,
+  type CaptureScreenshotOptions,
+} from './screenshot';
 import { createModal } from './ui';
 
 export type CaptureWithLoadingResult =
@@ -11,12 +15,12 @@ export async function captureWithLoading(
   root: HTMLElement,
   element?: Element,
   screenshotScale?: number,
-  opts?: { allowSkip?: boolean }
+  opts?: { allowSkip?: boolean; captureOptions?: CaptureScreenshotOptions }
 ): Promise<CaptureWithLoadingResult> {
   return capturePromiseWithLoading(
     root,
-    captureScreenshot(element, screenshotScale),
-    () => captureScreenshot(element, screenshotScale),
+    captureScreenshot(element, screenshotScale, opts?.captureOptions),
+    () => captureScreenshot(element, screenshotScale, opts?.captureOptions),
     opts
   );
 }
@@ -25,12 +29,12 @@ export async function captureAreaWithLoading(
   root: HTMLElement,
   rect: DOMRect,
   screenshotScale?: number,
-  opts?: { allowSkip?: boolean }
+  opts?: { allowSkip?: boolean; captureOptions?: CaptureScreenshotOptions }
 ): Promise<CaptureWithLoadingResult> {
   return capturePromiseWithLoading(
     root,
-    captureAreaScreenshot(rect, screenshotScale),
-    () => captureAreaScreenshot(rect, screenshotScale),
+    captureAreaScreenshot(rect, screenshotScale, opts?.captureOptions),
+    () => captureAreaScreenshot(rect, screenshotScale, opts?.captureOptions),
     opts
   );
 }
