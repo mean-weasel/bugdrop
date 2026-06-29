@@ -13,6 +13,7 @@ export type CaptureWithLoadingResult =
   | { kind: 'cancelled' };
 
 type CapturePayload = string | CapturedScreenshot;
+type CaptureOperation = Promise<CapturePayload> | (() => Promise<CapturePayload>);
 
 export async function captureWithLoading(
   root: HTMLElement,
@@ -20,12 +21,8 @@ export async function captureWithLoading(
   screenshotScale?: number,
   opts?: { allowSkip?: boolean; captureOptions?: CaptureScreenshotOptions }
 ): Promise<CaptureWithLoadingResult> {
-  return capturePromiseWithLoading(
-    root,
-    captureScreenshot(element, screenshotScale, opts?.captureOptions),
-    () => captureScreenshot(element, screenshotScale, opts?.captureOptions),
-    opts
-  );
+  const startCapture = () => captureScreenshot(element, screenshotScale, opts?.captureOptions);
+  return capturePromiseWithLoading(root, startCapture, startCapture, opts);
 }
 
 export async function captureAreaWithLoading(
@@ -34,17 +31,13 @@ export async function captureAreaWithLoading(
   screenshotScale?: number,
   opts?: { allowSkip?: boolean; captureOptions?: CaptureScreenshotOptions }
 ): Promise<CaptureWithLoadingResult> {
-  return capturePromiseWithLoading(
-    root,
-    captureAreaScreenshot(rect, screenshotScale, opts?.captureOptions),
-    () => captureAreaScreenshot(rect, screenshotScale, opts?.captureOptions),
-    opts
-  );
+  const startCapture = () => captureAreaScreenshot(rect, screenshotScale, opts?.captureOptions);
+  return capturePromiseWithLoading(root, startCapture, startCapture, opts);
 }
 
 export async function capturePromiseWithLoading(
   root: HTMLElement,
-  capturePromise: Promise<CapturePayload>,
+  captureOperation: CaptureOperation,
   retryCapture: () => Promise<CapturePayload>,
   opts?: { allowSkip?: boolean; showLoading?: boolean }
 ): Promise<CaptureWithLoadingResult> {
@@ -63,6 +56,11 @@ export async function capturePromiseWithLoading(
         );
 
   try {
+    if (loadingModal) {
+      await waitForLoadingPaint();
+    }
+    const capturePromise =
+      typeof captureOperation === 'function' ? captureOperation() : captureOperation;
     const screenshot = await capturePromise;
     loadingModal?.remove();
     return normalizeCaptureResult(screenshot);
@@ -115,6 +113,18 @@ export async function capturePromiseWithLoading(
       });
     });
   }
+}
+
+function waitForLoadingPaint(): Promise<void> {
+  if (typeof requestAnimationFrame !== 'function') {
+    return new Promise(resolve => setTimeout(resolve, 0));
+  }
+
+  return new Promise(resolve => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve());
+    });
+  });
 }
 
 function showMaskFailureModal(root: HTMLElement): Promise<CaptureWithLoadingResult> {
