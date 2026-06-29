@@ -9,6 +9,7 @@ import { createModal } from './ui';
 
 export type CaptureWithLoadingResult =
   | { kind: 'ok'; dataUrl: string; redaction?: CapturedScreenshot['redaction'] }
+  | { kind: 'choose-again' }
   | { kind: 'skipped' }
   | { kind: 'cancelled' };
 
@@ -23,7 +24,6 @@ export async function captureWithLoading(
   return capturePromiseWithLoading(
     root,
     captureScreenshot(element, screenshotScale, opts?.captureOptions),
-    () => captureScreenshot(element, screenshotScale, opts?.captureOptions),
     opts
   );
 }
@@ -37,7 +37,6 @@ export async function captureAreaWithLoading(
   return capturePromiseWithLoading(
     root,
     captureAreaScreenshot(rect, screenshotScale, opts?.captureOptions),
-    () => captureAreaScreenshot(rect, screenshotScale, opts?.captureOptions),
     opts
   );
 }
@@ -45,7 +44,6 @@ export async function captureAreaWithLoading(
 export async function capturePromiseWithLoading(
   root: HTMLElement,
   capturePromise: Promise<CapturePayload>,
-  retryCapture: () => Promise<CapturePayload>,
   opts?: { allowSkip?: boolean; showLoading?: boolean }
 ): Promise<CaptureWithLoadingResult> {
   const loadingModal =
@@ -87,8 +85,8 @@ export async function capturePromiseWithLoading(
             <span class="bd-error-message__text">Failed to capture screenshot. The page may be too complex or browser restrictions may apply.</span>
           </div>
           <div class="bd-actions">
-            <button class="bd-btn bd-btn-secondary" data-action="skip">${allowSkip ? 'Skip Screenshot' : 'Choose Another Method'}</button>
-            <button class="bd-btn bd-btn-primary" data-action="retry">Try Again</button>
+            ${allowSkip ? '<button class="bd-btn bd-btn-secondary" data-action="skip">Skip Screenshot</button>' : ''}
+            <button class="bd-btn bd-btn-primary" data-action="choose-again">Choose Another Method</button>
           </div>
         `,
         true
@@ -96,7 +94,9 @@ export async function capturePromiseWithLoading(
 
       const closeBtn = errorModal.querySelector('.bd-close') as HTMLElement;
       const skipBtn = errorModal.querySelector('[data-action="skip"]') as HTMLElement;
-      const retryBtn = errorModal.querySelector('[data-action="retry"]') as HTMLElement;
+      const chooseAgainBtn = errorModal.querySelector(
+        '[data-action="choose-again"]'
+      ) as HTMLElement;
 
       closeBtn?.addEventListener('click', () => {
         errorModal.remove();
@@ -108,10 +108,9 @@ export async function capturePromiseWithLoading(
         resolve({ kind: 'skipped' });
       });
 
-      retryBtn?.addEventListener('click', async () => {
+      chooseAgainBtn?.addEventListener('click', () => {
         errorModal.remove();
-        const result = await capturePromiseWithLoading(root, retryCapture(), retryCapture, opts);
-        resolve(result);
+        resolve({ kind: 'choose-again' });
       });
     });
   }

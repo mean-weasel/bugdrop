@@ -34,8 +34,12 @@ async function loadCaptureFlowWithMocks(opts: {
   screenshotChoices?: ScreenshotChoice[];
   pickedElement?: Element | null;
   pickedElements?: Array<Element | null>;
+  pickedArea?: DOMRect | null;
+  pickedAreas?: Array<DOMRect | null>;
   captureResult?: CaptureWithLoadingResult;
   captureResults?: CaptureWithLoadingResult[];
+  areaCaptureResult?: CaptureWithLoadingResult;
+  areaCaptureResults?: CaptureWithLoadingResult[];
   annotationResult?: string | 'retake' | 'cancel';
   annotationResults?: Array<string | 'retake' | 'cancel'>;
 }) {
@@ -52,12 +56,22 @@ async function loadCaptureFlowWithMocks(opts: {
   }
   elementPickerMock.mockResolvedValue(opts.pickedElement ?? null);
 
+  const areaPickerMock = vi.fn();
+  for (const area of opts.pickedAreas ?? []) {
+    areaPickerMock.mockResolvedValueOnce(area);
+  }
+  areaPickerMock.mockResolvedValue(opts.pickedArea ?? null);
+
   const captureWithLoadingMock = vi.fn();
   for (const result of opts.captureResults ?? []) {
     captureWithLoadingMock.mockResolvedValueOnce(result);
   }
   captureWithLoadingMock.mockResolvedValue(opts.captureResult ?? { kind: 'skipped' });
   const captureAreaWithLoadingMock = vi.fn();
+  for (const result of opts.areaCaptureResults ?? []) {
+    captureAreaWithLoadingMock.mockResolvedValueOnce(result);
+  }
+  captureAreaWithLoadingMock.mockResolvedValue(opts.areaCaptureResult ?? { kind: 'skipped' });
 
   const annotationMock = vi.fn();
   for (const result of opts.annotationResults ?? []) {
@@ -72,7 +86,7 @@ async function loadCaptureFlowWithMocks(opts: {
     createElementPicker: elementPickerMock,
   }));
   vi.doMock('../src/widget/area-picker', () => ({
-    createAreaPicker: vi.fn(),
+    createAreaPicker: areaPickerMock,
   }));
   vi.doMock('../src/widget/capture-loading', () => ({
     captureWithLoading: captureWithLoadingMock,
@@ -90,6 +104,7 @@ async function loadCaptureFlowWithMocks(opts: {
 
   return {
     ...(await import('../src/widget/capture-flow')),
+    screenshotOptionsMock,
     captureWithLoadingMock,
     captureAreaWithLoadingMock,
   };
@@ -540,6 +555,40 @@ describe('capture flow state decisions', () => {
       fullElementSelector: null,
       returnToForm: true,
     });
+    expect(onComplexScreenshotSkipped).not.toHaveBeenCalled();
+  });
+
+  it('returns to screenshot options after a capture failure so another method can be selected', async () => {
+    const {
+      runScreenshotCaptureFlow,
+      screenshotOptionsMock,
+      captureWithLoadingMock,
+      captureAreaWithLoadingMock,
+    } = await loadCaptureFlowWithMocks({
+      screenshotChoices: [{ kind: 'capture' }, { kind: 'area' }],
+      captureResult: { kind: 'choose-again' } as CaptureWithLoadingResult,
+      pickedArea: rect(200, 120, 10, 20),
+      areaCaptureResult: { kind: 'ok', dataUrl: 'data:image/png;base64,AREA' },
+      annotationResult: 'data:image/png;base64,ANNOTATED_AREA',
+    });
+    const onComplexScreenshotSkipped = vi.fn();
+
+    const result = await runScreenshotCaptureFlow(
+      document.createElement('div'),
+      baseConfig,
+      true,
+      onComplexScreenshotSkipped
+    );
+
+    expect(result).toEqual({
+      screenshot: 'data:image/png;base64,ANNOTATED_AREA',
+      elementSelector: null,
+      fullElementSelector: null,
+      returnToForm: false,
+    });
+    expect(screenshotOptionsMock).toHaveBeenCalledTimes(2);
+    expect(captureWithLoadingMock).toHaveBeenCalledTimes(1);
+    expect(captureAreaWithLoadingMock).toHaveBeenCalledTimes(1);
     expect(onComplexScreenshotSkipped).not.toHaveBeenCalled();
   });
 
