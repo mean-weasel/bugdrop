@@ -14,6 +14,9 @@ type CaptureOptions = Record<string, unknown> & {
 declare global {
   interface Window {
     __hostKeystrokeCount?: number;
+    __hostModalOpen?: boolean;
+    __hostDismissEvents?: string[];
+    __hostFocusTrapEvents?: string[];
     __captureOpts?: CaptureOptions;
     __captureTargetInfo?: {
       tagName: string;
@@ -111,6 +114,128 @@ test.describe('Widget Loading', () => {
     // Access button inside shadow DOM
     const button = page.locator('#bugdrop-host').locator('css=.bd-trigger');
     await expect(button).toBeVisible();
+  });
+
+  test('widget pointer interactions do not dismiss Radix-style host modals', async ({ page }) => {
+    await page.route('**/api/check**', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/welcome-disabled.html');
+    await page.evaluate(() => {
+      window.__hostModalOpen = true;
+      window.__hostDismissEvents = [];
+
+      document.addEventListener(
+        'pointerdown',
+        event => {
+          const host = document.getElementById('bugdrop-host');
+          if (!host || !event.composedPath().includes(host)) {
+            return;
+          }
+
+          for (const eventType of [
+            'dismissableLayer.pointerDownOutside',
+            'dismissableLayer.interactOutside',
+          ]) {
+            const outsideEvent = new CustomEvent(eventType, {
+              bubbles: true,
+              cancelable: true,
+              composed: true,
+              detail: { originalEvent: event },
+            });
+
+            window.__hostDismissEvents?.push(eventType);
+            document.dispatchEvent(outsideEvent);
+
+            if (!outsideEvent.defaultPrevented) {
+              window.__hostModalOpen = false;
+            }
+          }
+        },
+        true
+      );
+    });
+
+    const host = page.locator('#bugdrop-host');
+    await host.locator('css=.bd-trigger').click();
+    await expect(host.locator('css=#title')).toBeVisible({ timeout: 5000 });
+
+    await expect.poll(() => page.evaluate(() => window.__hostModalOpen)).toBe(true);
+    await expect
+      .poll(() => page.evaluate(() => window.__hostDismissEvents))
+      .toEqual(['dismissableLayer.pointerDownOutside', 'dismissableLayer.interactOutside']);
+
+    await host.locator('css=#title').click();
+
+    await expect.poll(() => page.evaluate(() => window.__hostModalOpen)).toBe(true);
+    await expect
+      .poll(() => page.evaluate(() => window.__hostDismissEvents))
+      .toEqual([
+        'dismissableLayer.pointerDownOutside',
+        'dismissableLayer.interactOutside',
+        'dismissableLayer.pointerDownOutside',
+        'dismissableLayer.interactOutside',
+      ]);
+  });
+
+  test('widget text fields remain editable inside Radix-style focus traps', async ({ page }) => {
+    await page.route('**/api/check**', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/welcome-disabled.html');
+    await page.evaluate(() => {
+      window.__hostFocusTrapEvents = [];
+
+      const hostDialog = document.createElement('div');
+      hostDialog.id = 'host-dialog-content';
+      hostDialog.tabIndex = -1;
+      hostDialog.textContent = 'Host dialog';
+      document.body.appendChild(hostDialog);
+      hostDialog.focus();
+
+      document.addEventListener(
+        'focusin',
+        event => {
+          const host = document.getElementById('bugdrop-host');
+          const target = event.target as Node | null;
+          if (!host || !target || hostDialog.contains(target)) {
+            return;
+          }
+
+          if (event.composedPath().includes(host)) {
+            window.__hostFocusTrapEvents?.push((target as Element).id || 'bugdrop-host');
+            hostDialog.focus();
+          }
+        },
+        true
+      );
+    });
+
+    const host = page.locator('#bugdrop-host');
+    await host.locator('css=.bd-trigger').click();
+    await expect(host.locator('css=#title')).toBeVisible({ timeout: 5000 });
+
+    const titleInput = host.locator('css=#title');
+    await titleInput.click();
+    await page.keyboard.type('Radix title');
+    await expect(titleInput).toHaveValue('Radix title');
+
+    const descriptionInput = host.locator('css=#description');
+    await descriptionInput.click();
+    await page.keyboard.type('Radix description');
+    await expect(descriptionInput).toHaveValue('Radix description');
+
+    await expect.poll(() => page.evaluate(() => window.__hostFocusTrapEvents)).toEqual([]);
   });
 
   test('feedback button is an edge label with a drag handle', async ({ page }) => {

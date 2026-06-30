@@ -763,6 +763,43 @@ function createPullTab(root: HTMLElement, config: WidgetConfig): HTMLElement {
   return tab;
 }
 
+function installRadixDialogCompatibility(host: HTMLElement) {
+  const preventBugDropDismissal = (event: Event) => {
+    if (isBugDropInteraction(host, event)) {
+      event.preventDefault();
+    }
+  };
+  const keepBugDropFocus = (event: Event) => {
+    if (isBugDropInteraction(host, event)) {
+      event.stopPropagation();
+    }
+  };
+
+  for (const eventType of [
+    'dismissableLayer.pointerDownOutside',
+    'dismissableLayer.interactOutside',
+  ] as const) {
+    document.addEventListener(eventType, preventBugDropDismissal, true);
+  }
+  window.addEventListener('focusin', keepBugDropFocus, true);
+}
+
+function isBugDropInteraction(host: HTMLElement, event: Event) {
+  const originalEvent = (event as CustomEvent<{ originalEvent?: Event }>).detail?.originalEvent;
+  const path =
+    typeof originalEvent?.composedPath === 'function'
+      ? originalEvent.composedPath()
+      : typeof event.composedPath === 'function'
+        ? event.composedPath()
+        : [];
+
+  if (path.includes(host)) {
+    return true;
+  }
+
+  return (originalEvent?.target ?? event.target) === host;
+}
+
 function initWidget(config: WidgetConfig) {
   // Store config for API access
   _widgetConfig = config;
@@ -780,7 +817,9 @@ function initWidget(config: WidgetConfig) {
   // Create Shadow DOM for style isolation
   const host = document.createElement('div');
   host.id = 'bugdrop-host';
+  host.style.pointerEvents = 'auto';
   document.body.appendChild(host);
+  installRadixDialogCompatibility(host);
 
   const shadow = host.attachShadow({ mode: 'open' });
 
