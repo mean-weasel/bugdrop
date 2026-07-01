@@ -108,7 +108,7 @@ export async function capturePromiseWithLoading(
 
       retryBtn?.addEventListener('click', async () => {
         errorModal.remove();
-        const result = await capturePromiseWithLoading(root, retryCapture(), retryCapture, opts);
+        const result = await capturePromiseWithLoading(root, retryCapture, retryCapture, opts);
         resolve(result);
       });
     });
