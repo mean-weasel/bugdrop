@@ -196,15 +196,19 @@ export function getRedactionCount(element?: Element, rect?: DOMRect): number {
 function shouldIncludeCaptureNode(node: HTMLElement): boolean {
   if (node.id === 'bugdrop-host') return false;
 
-  if (node instanceof HTMLImageElement && isInvisibleOrZeroSize(node)) {
+  if (isHtmlImage(node) && isInvisibleOrZeroSize(node)) {
     return false;
   }
 
   return true;
 }
 
+function isHtmlImage(element: HTMLElement): boolean {
+  return element.tagName?.toUpperCase() === 'IMG';
+}
+
 function isInvisibleOrZeroSize(element: HTMLElement): boolean {
-  const style = getComputedStyle(element);
+  const style = (element.ownerDocument.defaultView ?? window).getComputedStyle(element);
   if (style.display === 'none' || style.visibility === 'hidden') return true;
 
   const rect = element.getBoundingClientRect();
