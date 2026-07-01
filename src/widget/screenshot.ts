@@ -104,7 +104,7 @@ export async function captureScreenshot(
     cacheBust: false,
     imagePlaceholder: TRANSPARENT_IMAGE_PLACEHOLDER,
     pixelRatio,
-    filter: (node: HTMLElement) => node.id !== 'bugdrop-host',
+    filter: shouldIncludeCaptureNode,
   };
 
   const redactionSnapshot = createRedactionSnapshot(target);
@@ -158,7 +158,7 @@ export async function captureAreaScreenshot(
       width: `${document.documentElement.scrollWidth}px`,
       height: `${document.documentElement.scrollHeight}px`,
     },
-    filter: (node: HTMLElement) => node.id !== 'bugdrop-host',
+    filter: shouldIncludeCaptureNode,
   };
 
   const redactionSnapshot = createRedactionSnapshot(document.body);
@@ -191,6 +191,28 @@ export async function captureAreaScreenshot(
 
 export function getRedactionCount(element?: Element, rect?: DOMRect): number {
   return countMaskRects(element ?? document.body, rect);
+}
+
+function shouldIncludeCaptureNode(node: HTMLElement): boolean {
+  if (node.id === 'bugdrop-host') return false;
+
+  if (isHtmlImage(node) && isInvisibleOrZeroSize(node)) {
+    return false;
+  }
+
+  return true;
+}
+
+function isHtmlImage(element: HTMLElement): boolean {
+  return element.tagName?.toUpperCase() === 'IMG';
+}
+
+function isInvisibleOrZeroSize(element: HTMLElement): boolean {
+  const style = (element.ownerDocument.defaultView ?? window).getComputedStyle(element);
+  if (style.display === 'none' || style.visibility === 'hidden') return true;
+
+  const rect = element.getBoundingClientRect();
+  return rect.width <= 0 || rect.height <= 0;
 }
 
 function getToPng(): typeof htmlToImage.toPng {

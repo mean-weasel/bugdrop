@@ -1,8 +1,9 @@
 name: Deploy
 
 # Fires only on actual pushes to main. Merge-queue rulesets gate which commits
-# reach main, so the SHA here has already passed ci.yml in the merge_group
-# context — no need to re-run tests.
+# reach main, so the SHA here has already passed ci.yml in the merge_group context.
+# After the release tag is created and production deploys, run live E2E against
+# production so the post-release widget/version path is covered too.
 
 on:
   push:
@@ -64,3 +65,11 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  live-production-tests:
+    name: Live Production Tests
+    needs: [deploy]
+    uses: ./.github/workflows/live-tests.yml
+    with:
+      target: production
+    secrets: inherit
