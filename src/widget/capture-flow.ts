@@ -61,13 +61,9 @@ export async function runScreenshotCaptureFlow(
   includeScreenshot: boolean,
   onComplexScreenshotSkipped: () => void
 ): Promise<CaptureFlowResult> {
-  if (config.screenshotMode === 'auto') {
-    return captureAutomaticScreenshot(root, config);
-  }
+  if (config.screenshotMode === 'auto') return captureAutomaticScreenshot(root, config);
 
-  if (!includeScreenshot) {
-    return emptyCaptureResult();
-  }
+  if (!includeScreenshot) return emptyCaptureResult();
 
   const screenshotRequired = config.screenshotMode === 'required';
   while (true) {
@@ -123,7 +119,9 @@ async function captureAutomaticScreenshot(
     return emptyCaptureResult();
   }
 
-  const result = await captureWithLoading(root, undefined, config.screenshotScale);
+  const result = await captureWithLoading(root, undefined, config.screenshotScale, {
+    allowChooseAgain: false,
+  });
   if (result.kind === 'cancelled') {
     return { ...emptyCaptureResult(), returnToForm: true };
   }

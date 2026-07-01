@@ -14,12 +14,18 @@ export type CaptureWithLoadingResult =
   | { kind: 'cancelled' };
 
 type CapturePayload = string | CapturedScreenshot;
+type CaptureLoadingOptions = {
+  allowSkip?: boolean;
+  allowChooseAgain?: boolean;
+  showLoading?: boolean;
+  captureOptions?: CaptureScreenshotOptions;
+};
 
 export async function captureWithLoading(
   root: HTMLElement,
   element?: Element,
   screenshotScale?: number,
-  opts?: { allowSkip?: boolean; captureOptions?: CaptureScreenshotOptions }
+  opts?: CaptureLoadingOptions
 ): Promise<CaptureWithLoadingResult> {
   return capturePromiseWithLoading(
     root,
@@ -32,7 +38,7 @@ export async function captureAreaWithLoading(
   root: HTMLElement,
   rect: DOMRect,
   screenshotScale?: number,
-  opts?: { allowSkip?: boolean; captureOptions?: CaptureScreenshotOptions }
+  opts?: CaptureLoadingOptions
 ): Promise<CaptureWithLoadingResult> {
   return capturePromiseWithLoading(
     root,
@@ -44,7 +50,7 @@ export async function captureAreaWithLoading(
 export async function capturePromiseWithLoading(
   root: HTMLElement,
   capturePromise: Promise<CapturePayload>,
-  opts?: { allowSkip?: boolean; showLoading?: boolean }
+  opts?: CaptureLoadingOptions
 ): Promise<CaptureWithLoadingResult> {
   const loadingModal =
     opts?.showLoading === false
@@ -68,6 +74,7 @@ export async function capturePromiseWithLoading(
     console.warn('[BugDrop] Screenshot capture failed:', error);
     loadingModal?.remove();
     const allowSkip = opts?.allowSkip !== false;
+    const allowChooseAgain = opts?.allowChooseAgain !== false;
 
     if (error instanceof MaskApplicationError) {
       return showMaskFailureModal(root);
@@ -86,7 +93,7 @@ export async function capturePromiseWithLoading(
           </div>
           <div class="bd-actions">
             ${allowSkip ? '<button class="bd-btn bd-btn-secondary" data-action="skip">Skip Screenshot</button>' : ''}
-            <button class="bd-btn bd-btn-primary" data-action="choose-again">Choose Another Method</button>
+            ${allowChooseAgain ? '<button class="bd-btn bd-btn-primary" data-action="choose-again">Choose Another Method</button>' : ''}
           </div>
         `,
         true

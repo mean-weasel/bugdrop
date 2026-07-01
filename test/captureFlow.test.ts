@@ -592,6 +592,32 @@ describe('capture flow state decisions', () => {
     expect(onComplexScreenshotSkipped).not.toHaveBeenCalled();
   });
 
+  it('does not offer choose-again recovery for automatic screenshots without a picker', async () => {
+    const { runScreenshotCaptureFlow, captureWithLoadingMock, screenshotOptionsMock } =
+      await loadCaptureFlowWithMocks({
+        captureResult: { kind: 'skipped' },
+      });
+    const root = document.createElement('div');
+
+    const result = await runScreenshotCaptureFlow(
+      root,
+      { ...baseConfig, screenshotMode: 'auto' },
+      true,
+      vi.fn()
+    );
+
+    expect(result).toEqual({
+      screenshot: null,
+      elementSelector: null,
+      fullElementSelector: null,
+      returnToForm: false,
+    });
+    expect(screenshotOptionsMock).not.toHaveBeenCalled();
+    expect(captureWithLoadingMock).toHaveBeenCalledWith(root, undefined, undefined, {
+      allowChooseAgain: false,
+    });
+  });
+
   it('returns to form when the annotation step is cancelled', async () => {
     const { runScreenshotCaptureFlow } = await loadCaptureFlowWithMocks({
       screenshotChoice: { kind: 'capture' },

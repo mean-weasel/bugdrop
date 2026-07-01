@@ -5508,6 +5508,30 @@ test.describe('Screenshot Mode Configuration', () => {
     ).toBe(1);
   });
 
+  test('auto mode capture failure can skip without offering the manual picker', async ({
+    page,
+  }) => {
+    await setupInstalledApp(page);
+    await page.addInitScript(`window.__bugdropMockToPng = function() {
+      return Promise.reject(new Error('auto capture failed'));
+    };`);
+    const getPayload = await setupSuccessfulSubmit(page);
+
+    await page.goto('/test/?screenshot=auto');
+    const host = await openForm(page);
+    await host.locator('css=#submit-btn').click();
+
+    await expect(host.locator('css=.bd-error-message__text')).toContainText(
+      'Failed to capture screenshot',
+      { timeout: 5000 }
+    );
+    await expect(host.locator('css=[data-action="choose-again"]')).not.toBeAttached();
+    await host.locator('css=[data-action="skip"]').click();
+
+    await expect(host.locator('css=.bd-success-icon')).toBeVisible({ timeout: 10000 });
+    expect(getPayload()?.screenshot).toBeNull();
+  });
+
   test('auto mode warns users about automatic full-page screenshots', async ({ page }) => {
     await setupInstalledApp(page);
     await mockSuccessfulCapture(page);
