@@ -291,6 +291,130 @@ describe('captureScreenshot integrates with mask pipeline', () => {
     });
   });
 
+  it('excludes invisible and zero-size images from DOM capture', async () => {
+    const visibleImage = document.createElement('img');
+    visibleImage.id = 'visible-image';
+    visibleImage.getBoundingClientRect = () =>
+      ({
+        x: 10,
+        y: 10,
+        width: 120,
+        height: 80,
+        top: 10,
+        left: 10,
+        bottom: 90,
+        right: 130,
+        toJSON() {
+          return {};
+        },
+      }) as DOMRect;
+
+    const hiddenBeacon = document.createElement('img');
+    hiddenBeacon.id = 'batBeacon-test';
+    hiddenBeacon.style.display = 'none';
+    hiddenBeacon.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        top: 0,
+        left: 0,
+        bottom: 0,
+        right: 0,
+        toJSON() {
+          return {};
+        },
+      }) as DOMRect;
+
+    const zeroSizeImage = document.createElement('img');
+    zeroSizeImage.id = 'zero-size-image';
+    zeroSizeImage.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        top: 0,
+        left: 0,
+        bottom: 0,
+        right: 0,
+        toJSON() {
+          return {};
+        },
+      }) as DOMRect;
+
+    document.body.append(visibleImage, hiddenBeacon, zeroSizeImage);
+
+    const STUB =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+    const toPng = vi.fn(() => Promise.resolve(STUB));
+    (window as unknown as { __bugdropMockToPng: typeof toPng }).__bugdropMockToPng = toPng;
+
+    await captureScreenshot();
+
+    const captureOptions = toPng.mock.calls[0][1];
+    const filter = captureOptions.filter as (node: HTMLElement) => boolean;
+    expect(filter(visibleImage)).toBe(true);
+    expect(filter(hiddenBeacon)).toBe(false);
+    expect(filter(zeroSizeImage)).toBe(false);
+  });
+
+  it('allows non-element child nodes through the DOM capture filter', async () => {
+    document.body.appendChild(document.createTextNode('plain page text'));
+
+    const STUB =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+    const toPng = vi.fn(() => Promise.resolve(STUB));
+    (window as unknown as { __bugdropMockToPng: typeof toPng }).__bugdropMockToPng = toPng;
+
+    await captureScreenshot();
+
+    const captureOptions = toPng.mock.calls[0][1];
+    const filter = captureOptions.filter as (node: HTMLElement) => boolean;
+    expect(filter(document.createTextNode('hello') as unknown as HTMLElement)).toBe(true);
+  });
+
+  it('excludes hidden images from same-origin iframe captures', async () => {
+    const iframe = document.createElement('iframe');
+    document.body.appendChild(iframe);
+
+    const iframeDocument = iframe.contentDocument;
+    expect(iframeDocument).not.toBeNull();
+
+    const iframeHiddenBeacon = iframeDocument!.createElement('img');
+    iframeHiddenBeacon.id = 'iframe-batBeacon-test';
+    iframeHiddenBeacon.style.display = 'none';
+    iframeHiddenBeacon.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        top: 0,
+        left: 0,
+        bottom: 0,
+        right: 0,
+        toJSON() {
+          return {};
+        },
+      }) as DOMRect;
+    iframeDocument!.body.appendChild(iframeHiddenBeacon);
+
+    expect(iframeHiddenBeacon).not.toBeInstanceOf(HTMLImageElement);
+
+    const STUB =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+    const toPng = vi.fn(() => Promise.resolve(STUB));
+    (window as unknown as { __bugdropMockToPng: typeof toPng }).__bugdropMockToPng = toPng;
+
+    await captureScreenshot();
+
+    const captureOptions = toPng.mock.calls[0][1];
+    const filter = captureOptions.filter as (node: HTMLElement) => boolean;
+    expect(filter(iframeHiddenBeacon as unknown as HTMLElement)).toBe(false);
+  });
+
   it('completes element-scoped capture when the picked element has a masked descendant', async () => {
     const target = document.createElement('section');
     target.getBoundingClientRect = () =>
