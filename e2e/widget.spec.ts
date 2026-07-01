@@ -4543,11 +4543,11 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
     await expect(errorText).toBeVisible({ timeout: 20000 });
     await expect(errorText).toContainText('Failed to capture screenshot');
 
-    // Verify retry and skip buttons are available
+    // Verify the user can skip or return to the method picker.
     const skipBtn = host.locator('css=[data-action="skip"]');
-    const retryBtn = host.locator('css=[data-action="retry"]');
+    const chooseAgainBtn = host.locator('css=[data-action="choose-again"]');
     await expect(skipBtn).toBeVisible();
-    await expect(retryBtn).toBeVisible();
+    await expect(chooseAgainBtn).toBeVisible();
   });
 
   test('closing screenshot options returns to the form without submitting', async ({ page }) => {
@@ -4645,8 +4645,10 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
     expect(payloads[0].screenshot).toBeNull();
   });
 
-  test('retry button on error modal re-attempts capture', async ({ page }) => {
-    // First call fails, second call succeeds
+  test('capture failure can return to screenshot options and select another method', async ({
+    page,
+  }) => {
+    // First call fails, second call succeeds after the user chooses a method again.
     await mockHtmlToImage(
       page,
       `function(el, opts) {
@@ -4666,11 +4668,10 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
     const errorText = host.locator('css=.bd-error-message__text');
     await expect(errorText).toBeVisible({ timeout: 5000 });
 
-    // Click "Try Again"
-    const retryBtn = host.locator('css=[data-action="retry"]');
-    await retryBtn.click();
+    await host.locator('css=[data-action="choose-again"]').click();
+    await expect(host.locator('css=[data-action="capture"]')).toBeVisible({ timeout: 5000 });
+    await host.locator('css=[data-action="capture"]').click();
 
-    // Second attempt succeeds — annotation canvas should appear
     const annotationCanvas = host.locator('css=#annotation-canvas');
     await expect(annotationCanvas).toBeVisible({ timeout: 10000 });
   });
@@ -4848,7 +4849,7 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
     expect(payloads[0].screenshot).toEqual(expect.stringMatching(/^data:image\/png;base64,/));
   });
 
-  test('retries native viewport capture from the capture error modal', async ({ page }) => {
+  test('returns to screenshot options after native viewport capture fails', async ({ page }) => {
     await mockGetDisplayMedia(
       page,
       `function() {
@@ -4880,7 +4881,9 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
       )
       .toBe(1);
 
-    await host.locator('css=[data-action="retry"]').click();
+    await host.locator('css=[data-action="choose-again"]').click();
+    await expect(host.locator('css=[data-action="viewport"]')).toBeVisible({ timeout: 5000 });
+    await host.locator('css=[data-action="viewport"]').click();
 
     await expect(host.locator('css=.bd-modal--annotator')).toBeVisible({ timeout: 10000 });
     await expect
@@ -5778,6 +5781,30 @@ test.describe('Screenshot Mode Configuration', () => {
         () => (window as Window & { __autoCaptureCount?: number }).__autoCaptureCount
       )
     ).toBe(1);
+  });
+
+  test('auto mode capture failure can skip without offering the manual picker', async ({
+    page,
+  }) => {
+    await setupInstalledApp(page);
+    await page.addInitScript(`window.__bugdropMockToPng = function() {
+      return Promise.reject(new Error('auto capture failed'));
+    };`);
+    const getPayload = await setupSuccessfulSubmit(page);
+
+    await page.goto('/test/?screenshot=auto');
+    const host = await openForm(page);
+    await host.locator('css=#submit-btn').click();
+
+    await expect(host.locator('css=.bd-error-message__text')).toContainText(
+      'Failed to capture screenshot',
+      { timeout: 5000 }
+    );
+    await expect(host.locator('css=[data-action="choose-again"]')).not.toBeAttached();
+    await host.locator('css=[data-action="skip"]').click();
+
+    await expect(host.locator('css=.bd-success-icon')).toBeVisible({ timeout: 10000 });
+    expect(getPayload()?.screenshot).toBeNull();
   });
 
   test('auto mode warns users about automatic full-page screenshots', async ({ page }) => {

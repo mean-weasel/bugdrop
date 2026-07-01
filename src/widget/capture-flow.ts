@@ -8,7 +8,7 @@ import {
 import { getElementContextCaptureTarget } from './element-context';
 import { createElementPicker } from './picker';
 import { getElementSelector, getFullElementSelector } from './selector-metadata';
-import { beginViewportCapture, getRedactionCount, isFullPageDisabled } from './screenshot';
+import { getRedactionCount, isFullPageDisabled } from './screenshot';
 import { showScreenshotOptions, type ScreenshotChoice } from './screenshot-options';
 import { DEFAULT_SELECTED_ELEMENT_SCREENSHOT_PIXEL_RATIO } from '../defaults';
 
@@ -49,6 +49,7 @@ type ChosenCaptureResult =
       redactionLimitations: boolean;
     } & ElementMetadata)
   | { kind: 'returnToForm' }
+  | { kind: 'chooseAgain' }
   | ({
       kind: 'empty';
       reason: EmptyCaptureReason;
@@ -60,13 +61,9 @@ export async function runScreenshotCaptureFlow(
   includeScreenshot: boolean,
   onComplexScreenshotSkipped: () => void
 ): Promise<CaptureFlowResult> {
-  if (config.screenshotMode === 'auto') {
-    return captureAutomaticScreenshot(root, config);
-  }
+  if (config.screenshotMode === 'auto') return captureAutomaticScreenshot(root, config);
 
-  if (!includeScreenshot) {
-    return emptyCaptureResult();
-  }
+  if (!includeScreenshot) return emptyCaptureResult();
 
   const screenshotRequired = config.screenshotMode === 'required';
   while (true) {
@@ -74,6 +71,7 @@ export async function runScreenshotCaptureFlow(
     if (result.kind === 'returnToForm') {
       return { ...emptyCaptureResult(), returnToForm: true };
     }
+    if (result.kind === 'chooseAgain') continue;
 
     if (result.kind === 'empty') {
       if (!screenshotRequired && shouldRememberComplexScreenshotSkip(result.reason)) {
@@ -121,7 +119,9 @@ async function captureAutomaticScreenshot(
     return emptyCaptureResult();
   }
 
-  const result = await captureWithLoading(root, undefined, config.screenshotScale);
+  const result = await captureWithLoading(root, undefined, config.screenshotScale, {
+    allowChooseAgain: false,
+  });
   if (result.kind === 'cancelled') {
     return { ...emptyCaptureResult(), returnToForm: true };
   }
@@ -170,16 +170,12 @@ async function captureFromViewportChoice(
   choice: Extract<ScreenshotChoice, { kind: 'viewport' }>,
   screenshotRequired: boolean
 ): Promise<ChosenCaptureResult> {
-  const result = await capturePromiseWithLoading(
-    root,
-    choice.capture,
-    () => beginViewportCapture(),
-    {
-      allowSkip: !screenshotRequired,
-      showLoading: false,
-    }
-  );
+  const result = await capturePromiseWithLoading(root, choice.capture, {
+    allowSkip: !screenshotRequired,
+    showLoading: false,
+  });
   if (result.kind === 'cancelled') return { kind: 'returnToForm' };
+  if (result.kind === 'choose-again') return { kind: 'chooseAgain' };
   if (result.kind === 'skipped') {
     return emptyChosenCaptureResult('capture-failure-skip');
   }
@@ -203,6 +199,7 @@ async function captureFromFullPageChoice(
     allowSkip: !screenshotRequired,
   });
   if (result.kind === 'cancelled') return { kind: 'returnToForm' };
+  if (result.kind === 'choose-again') return { kind: 'chooseAgain' };
   if (result.kind === 'skipped') {
     return emptyChosenCaptureResult('capture-failure-skip');
   }
@@ -247,6 +244,7 @@ async function captureFromElementChoice(
     },
   });
   if (result.kind === 'cancelled') return { kind: 'returnToForm' };
+  if (result.kind === 'choose-again') return { kind: 'chooseAgain' };
   if (result.kind === 'skipped') {
     return emptyChosenCaptureResult('capture-failure-skip', elementMetadata);
   }
@@ -276,6 +274,7 @@ async function captureFromAreaChoice(
     allowSkip: !screenshotRequired,
   });
   if (result.kind === 'cancelled') return { kind: 'returnToForm' };
+  if (result.kind === 'choose-again') return { kind: 'chooseAgain' };
   if (result.kind === 'skipped') {
     return emptyChosenCaptureResult('capture-failure-skip');
   }

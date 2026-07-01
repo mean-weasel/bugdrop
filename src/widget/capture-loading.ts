@@ -9,37 +9,43 @@ import { createModal } from './ui';
 
 export type CaptureWithLoadingResult =
   | { kind: 'ok'; dataUrl: string; redaction?: CapturedScreenshot['redaction'] }
+  | { kind: 'choose-again' }
   | { kind: 'skipped' }
   | { kind: 'cancelled' };
 
 type CapturePayload = string | CapturedScreenshot;
+type CaptureLoadingOptions = {
+  allowSkip?: boolean;
+  allowChooseAgain?: boolean;
+  showLoading?: boolean;
+  captureOptions?: CaptureScreenshotOptions;
+};
 type CaptureOperation = Promise<CapturePayload> | (() => Promise<CapturePayload>);
 
 export async function captureWithLoading(
   root: HTMLElement,
   element?: Element,
   screenshotScale?: number,
-  opts?: { allowSkip?: boolean; captureOptions?: CaptureScreenshotOptions }
+  opts?: CaptureLoadingOptions
 ): Promise<CaptureWithLoadingResult> {
   const startCapture = () => captureScreenshot(element, screenshotScale, opts?.captureOptions);
-  return capturePromiseWithLoading(root, startCapture, startCapture, opts);
+  return capturePromiseWithLoading(root, startCapture, opts);
 }
 
 export async function captureAreaWithLoading(
   root: HTMLElement,
   rect: DOMRect,
   screenshotScale?: number,
-  opts?: { allowSkip?: boolean; captureOptions?: CaptureScreenshotOptions }
+  opts?: CaptureLoadingOptions
 ): Promise<CaptureWithLoadingResult> {
   const startCapture = () => captureAreaScreenshot(rect, screenshotScale, opts?.captureOptions);
-  return capturePromiseWithLoading(root, startCapture, startCapture, opts);
+  return capturePromiseWithLoading(root, startCapture, opts);
 }
 
 export async function capturePromiseWithLoading(
   root: HTMLElement,
   captureOperation: CaptureOperation,
-  retryCapture: () => Promise<CapturePayload>,
-  opts?: { allowSkip?: boolean; showLoading?: boolean }
+  opts?: CaptureLoadingOptions
 ): Promise<CaptureWithLoadingResult> {
   const loadingModal =
     opts?.showLoading === false
@@ -68,6 +74,7 @@ export async function capturePromiseWithLoading(
     console.warn('[BugDrop] Screenshot capture failed:', error);
     loadingModal?.remove();
     const allowSkip = opts?.allowSkip !== false;
+    const allowChooseAgain = opts?.allowChooseAgain !== false;
 
     if (error instanceof MaskApplicationError) {
       return showMaskFailureModal(root);
@@ -85,8 +92,8 @@ export async function capturePromiseWithLoading(
             <span class="bd-error-message__text">Failed to capture screenshot. The page may be too complex or browser restrictions may apply.</span>
           </div>
           <div class="bd-actions">
-            <button class="bd-btn bd-btn-secondary" data-action="skip">${allowSkip ? 'Skip Screenshot' : 'Choose Another Method'}</button>
-            <button class="bd-btn bd-btn-primary" data-action="retry">Try Again</button>
+            ${allowSkip ? '<button class="bd-btn bd-btn-secondary" data-action="skip">Skip Screenshot</button>' : ''}
+            ${allowChooseAgain ? '<button class="bd-btn bd-btn-primary" data-action="choose-again">Choose Another Method</button>' : ''}
           </div>
         `,
         true
@@ -94,7 +101,9 @@ export async function capturePromiseWithLoading(
 
       const closeBtn = errorModal.querySelector('.bd-close') as HTMLElement;
       const skipBtn = errorModal.querySelector('[data-action="skip"]') as HTMLElement;
-      const retryBtn = errorModal.querySelector('[data-action="retry"]') as HTMLElement;
+      const chooseAgainBtn = errorModal.querySelector(
+        '[data-action="choose-again"]'
+      ) as HTMLElement;
 
       closeBtn?.addEventListener('click', () => {
         errorModal.remove();
@@ -106,10 +115,9 @@ export async function capturePromiseWithLoading(
         resolve({ kind: 'skipped' });
       });
 
-      retryBtn?.addEventListener('click', async () => {
+      chooseAgainBtn?.addEventListener('click', () => {
         errorModal.remove();
-        const result = await capturePromiseWithLoading(root, retryCapture, retryCapture, opts);
-        resolve(result);
+        resolve({ kind: 'choose-again' });
       });
     });
   }

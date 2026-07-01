@@ -21,13 +21,13 @@ function trackLoadingAppend(root: HTMLElement, events: string[]) {
   }) as typeof root.appendChild;
 }
 
-async function findRetryButton(root: HTMLElement): Promise<HTMLButtonElement> {
+async function findChooseAgainButton(root: HTMLElement): Promise<HTMLButtonElement> {
   for (let attempt = 0; attempt < 50; attempt++) {
-    const button = root.querySelector<HTMLButtonElement>('[data-action="retry"]');
+    const button = root.querySelector<HTMLButtonElement>('[data-action="choose-again"]');
     if (button) return button;
     await new Promise(resolve => setTimeout(resolve, 10));
   }
-  throw new Error('Retry button was not shown');
+  throw new Error('Choose-again button was not shown');
 }
 
 afterEach(() => {
@@ -78,29 +78,22 @@ describe('capture loading timing', () => {
     expect(events).toEqual(['loading:append', 'capture:start']);
   });
 
-  it('shows the loading modal before retry capture starts', async () => {
+  it('returns to the picker from capture failures instead of retrying internally', async () => {
     const events: string[] = [];
     const root = document.createElement('div');
     trackLoadingAppend(root, events);
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const { capturePromiseWithLoading } = await import('../src/widget/capture-loading');
 
-    const resultPromise = capturePromiseWithLoading(
-      root,
-      async () => {
-        throw new Error('first attempt failed');
-      },
-      async () => {
-        events.push('retry:capture:start');
-        return successfulCapture;
-      }
-    );
+    const resultPromise = capturePromiseWithLoading(root, async () => {
+      throw new Error('first attempt failed');
+    });
 
-    const retryButton = await findRetryButton(root);
+    const chooseAgainButton = await findChooseAgainButton(root);
     events.length = 0;
-    retryButton.click();
+    chooseAgainButton.click();
 
-    await expect(resultPromise).resolves.toMatchObject({ kind: 'ok' });
-    expect(events).toEqual(['loading:append', 'retry:capture:start']);
+    await expect(resultPromise).resolves.toEqual({ kind: 'choose-again' });
+    expect(events).toEqual([]);
   });
 });
