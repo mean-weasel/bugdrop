@@ -763,15 +763,26 @@ function createPullTab(root: HTMLElement, config: WidgetConfig): HTMLElement {
   return tab;
 }
 
-function installRadixDialogCompatibility(host: HTMLElement) {
+function installRadixDialogCompatibility(host: HTMLElement): void {
   const preventBugDropDismissal = (event: Event) => {
     if (isBugDropInteraction(host, event)) {
       event.preventDefault();
     }
   };
   const keepBugDropFocus = (event: Event) => {
-    if (isBugDropInteraction(host, event)) {
-      event.stopPropagation();
+    if (isBugDropFocusEvent(host, event)) {
+      if (event.type === 'focusin') {
+        event.stopImmediatePropagation();
+        return;
+      }
+
+      if (event.type === 'focusout') {
+        replayHostFocusOut(event);
+        event.stopImmediatePropagation();
+        return;
+      }
+
+      event.stopImmediatePropagation();
     }
   };
 
@@ -782,9 +793,10 @@ function installRadixDialogCompatibility(host: HTMLElement) {
     document.addEventListener(eventType, preventBugDropDismissal, true);
   }
   window.addEventListener('focusin', keepBugDropFocus, true);
+  window.addEventListener('focusout', keepBugDropFocus, true);
 }
 
-function isBugDropInteraction(host: HTMLElement, event: Event) {
+function isBugDropInteraction(host: HTMLElement, event: Event): boolean {
   const originalEvent = (event as CustomEvent<{ originalEvent?: Event }>).detail?.originalEvent;
   const path =
     typeof originalEvent?.composedPath === 'function'
@@ -798,6 +810,47 @@ function isBugDropInteraction(host: HTMLElement, event: Event) {
   }
 
   return (originalEvent?.target ?? event.target) === host;
+}
+
+function isBugDropFocusEvent(host: HTMLElement, event: Event): boolean {
+  if (!(event instanceof FocusEvent)) {
+    return isBugDropInteraction(host, event);
+  }
+
+  if (event.type === 'focusin') {
+    return isBugDropInteraction(host, event);
+  }
+
+  if (event.type !== 'focusout') {
+    return false;
+  }
+
+  const nextFocusedNode = event.relatedTarget;
+  const nextFocusIsBugDrop =
+    nextFocusedNode === host ||
+    (nextFocusedNode instanceof Node && (host.shadowRoot?.contains(nextFocusedNode) ?? false));
+  return nextFocusIsBugDrop && !isBugDropInteraction(host, event);
+}
+
+function replayHostFocusOut(event: Event): void {
+  const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+  for (const node of path) {
+    if (!(node instanceof HTMLElement)) {
+      continue;
+    }
+
+    node.dispatchEvent(
+      new FocusEvent('focusout', {
+        bubbles: false,
+        composed: false,
+        relatedTarget: event instanceof FocusEvent ? event.relatedTarget : null,
+      })
+    );
+
+    if (node === document.body) {
+      break;
+    }
+  }
 }
 
 function initWidget(config: WidgetConfig) {
@@ -819,9 +872,9 @@ function initWidget(config: WidgetConfig) {
   host.id = 'bugdrop-host';
   host.style.pointerEvents = 'auto';
   document.body.appendChild(host);
-  installRadixDialogCompatibility(host);
 
   const shadow = host.attachShadow({ mode: 'open' });
+  installRadixDialogCompatibility(host);
 
   // Prevent keyboard events from leaking to host page (e.g., ERPNext console shortcuts)
   for (const eventType of ['keydown', 'keypress', 'keyup'] as const) {

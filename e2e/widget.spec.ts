@@ -17,6 +17,7 @@ declare global {
     __hostModalOpen?: boolean;
     __hostDismissEvents?: string[];
     __hostFocusTrapEvents?: string[];
+    __hostFocusOutTrapEvents?: string[];
     __captureOpts?: CaptureOptions;
     __captureTargetInfo?: {
       tagName: string;
@@ -129,6 +130,7 @@ test.describe('Widget Loading', () => {
     await page.evaluate(() => {
       window.__hostModalOpen = true;
       window.__hostDismissEvents = [];
+      document.body.style.pointerEvents = 'none';
 
       document.addEventListener(
         'pointerdown',
@@ -162,6 +164,7 @@ test.describe('Widget Loading', () => {
     });
 
     const host = page.locator('#bugdrop-host');
+    await expect(host).toHaveCSS('pointer-events', 'auto');
     await host.locator('css=.bd-trigger').click();
     await expect(host.locator('css=#title')).toBeVisible({ timeout: 5000 });
 
@@ -236,6 +239,153 @@ test.describe('Widget Loading', () => {
     await expect(descriptionInput).toHaveValue('Radix description');
 
     await expect.poll(() => page.evaluate(() => window.__hostFocusTrapEvents)).toEqual([]);
+  });
+
+  test('widget text fields remain editable inside Radix-style focusout traps', async ({ page }) => {
+    await page.route('**/api/check**', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/welcome-disabled.html');
+    await page.evaluate(() => {
+      window.__hostFocusOutTrapEvents = [];
+
+      const hostDialog = document.createElement('div');
+      hostDialog.id = 'host-dialog-content';
+      hostDialog.tabIndex = -1;
+      hostDialog.textContent = 'Host dialog';
+      document.body.appendChild(hostDialog);
+      hostDialog.focus();
+
+      document.addEventListener('focusout', event => {
+        const relatedTarget = event.relatedTarget as Node | null;
+        if (!relatedTarget || hostDialog.contains(relatedTarget)) {
+          return;
+        }
+
+        window.__hostFocusOutTrapEvents?.push((relatedTarget as Element).id || 'bugdrop-host');
+        hostDialog.focus();
+      });
+    });
+
+    const host = page.locator('#bugdrop-host');
+    await host.locator('css=.bd-trigger').click();
+    await expect(host.locator('css=#title')).toBeVisible({ timeout: 5000 });
+
+    const titleInput = host.locator('css=#title');
+    await titleInput.click();
+    await page.keyboard.type('Radix title');
+    await expect(titleInput).toHaveValue('Radix title');
+
+    const descriptionInput = host.locator('css=#description');
+    await descriptionInput.click();
+    await page.keyboard.type('Radix description');
+    await expect(descriptionInput).toHaveValue('Radix description');
+
+    await expect.poll(() => page.evaluate(() => window.__hostFocusOutTrapEvents)).toEqual([]);
+  });
+
+  test('host dialog can receive focus again after editing BugDrop fields', async ({ page }) => {
+    await page.route('**/api/check**', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/welcome-disabled.html');
+    await page.evaluate(() => {
+      const hostDialog = document.createElement('div');
+      hostDialog.id = 'host-dialog-content';
+      hostDialog.innerHTML = `
+        <input id="host-first" aria-label="Host first input" />
+        <input id="host-second" aria-label="Host second input" />
+      `;
+      document.body.appendChild(hostDialog);
+
+      window.__hostFocusTrapEvents = [];
+
+      document.addEventListener('focusin', event => {
+        const target = event.target as Element | null;
+        if (target && hostDialog.contains(target)) {
+          window.__hostFocusTrapEvents?.push(target.id);
+        }
+      });
+
+      const firstInput = document.getElementById('host-first') as HTMLInputElement;
+      firstInput.focus();
+      window.__hostFocusTrapEvents = [];
+    });
+
+    const host = page.locator('#bugdrop-host');
+    await host.locator('css=.bd-trigger').click();
+    await expect(host.locator('css=#title')).toBeVisible({ timeout: 5000 });
+
+    const titleInput = host.locator('css=#title');
+    await titleInput.click();
+    await page.keyboard.type('Radix title');
+    await expect(titleInput).toHaveValue('Radix title');
+
+    await page.locator('#host-second').focus();
+    await expect(page.locator('#host-second')).toBeFocused();
+    await expect
+      .poll(() => page.evaluate(() => window.__hostFocusTrapEvents))
+      .toEqual(['host-second']);
+  });
+
+  test('keyboard focus into BugDrop fields stays editable inside focusout traps', async ({
+    page,
+  }) => {
+    await page.route('**/api/check**', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
+    await page.goto('/test/welcome-disabled.html');
+    await page.evaluate(() => {
+      const hostDialog = document.createElement('div');
+      hostDialog.id = 'host-dialog-content';
+      hostDialog.innerHTML = '<input id="host-title" aria-label="Host title" />';
+      document.body.appendChild(hostDialog);
+
+      const hostTitle = document.getElementById('host-title') as HTMLInputElement;
+      document.addEventListener('focusout', event => {
+        const relatedTarget = event.relatedTarget as Node | null;
+        if (!relatedTarget || hostDialog.contains(relatedTarget)) {
+          return;
+        }
+
+        hostTitle.focus();
+      });
+
+      hostTitle.focus();
+    });
+
+    const host = page.locator('#bugdrop-host');
+    await host.locator('css=.bd-trigger').click();
+    await expect(host.locator('css=#title')).toBeVisible({ timeout: 5000 });
+
+    await page.locator('#host-title').focus();
+    const titleInput = host.locator('css=#title');
+    await titleInput.focus();
+    await expect(titleInput).toBeFocused();
+    await page.keyboard.type('Keyboard title');
+    await expect(titleInput).toHaveValue('Keyboard title');
+
+    await page.locator('#host-title').focus();
+    const descriptionInput = host.locator('css=#description');
+    await descriptionInput.focus();
+    await expect(descriptionInput).toBeFocused();
+    await page.keyboard.type('Keyboard description');
+    await expect(descriptionInput).toHaveValue('Keyboard description');
   });
 
   test('feedback button is an edge label with a drag handle', async ({ page }) => {
