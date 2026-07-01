@@ -73,28 +73,28 @@ jobs:
       - name: Record expected widget asset
         run: |
           if [ "$LIVE_TARGET" = "preview" ]; then
-            VERSION=$(git describe --tags --abbrev=0) npm run build:widget
-            echo "EXPECTED_WIDGET_ORIGIN=https://bugdrop-preview.neonwatty.workers.dev" >> "$GITHUB_ENV"
-            echo "EXPECTED_WIDGET_SHA256=$(shasum -a 256 public/widget.js | awk '{print $1}')" >> "$GITHUB_ENV"
+            WIDGET_ORIGIN="https://bugdrop-preview.neonwatty.workers.dev"
           else
-            echo "EXPECTED_WIDGET_ORIGIN=https://bugdrop.neonwatty.workers.dev" >> "$GITHUB_ENV"
+            WIDGET_ORIGIN="https://bugdrop.neonwatty.workers.dev"
           fi
+          VERSION=$(git describe --tags --abbrev=0) npm run build:widget
+          echo "EXPECTED_WIDGET_ORIGIN=$WIDGET_ORIGIN" >> "$GITHUB_ENV"
+          echo "EXPECTED_WIDGET_SHA256=$(shasum -a 256 public/widget.js | awk '{print $1}')" >> "$GITHUB_ENV"
 
-      - name: Wait for expected preview widget asset
-        if: env.LIVE_TARGET == 'preview'
+      - name: Wait for expected widget asset
         run: |
-          WIDGET_URL="https://bugdrop-preview.neonwatty.workers.dev/widget.js"
+          WIDGET_URL="$EXPECTED_WIDGET_ORIGIN/widget.js"
           echo "Waiting for $WIDGET_URL to serve $EXPECTED_WIDGET_SHA256..."
           for i in $(seq 1 30); do
             ACTUAL_SHA="$(curl -sSf "$WIDGET_URL" | shasum -a 256 | awk '{print $1}')"
             if [ "$ACTUAL_SHA" = "$EXPECTED_WIDGET_SHA256" ]; then
-              echo "Preview widget asset matched after $((i * 5))s"
+              echo "$LIVE_TARGET widget asset matched after $((i * 5))s"
               exit 0
             fi
             echo "Attempt $i/30 served $ACTUAL_SHA; waiting 5s..."
             sleep 5
           done
-          echo "Preview widget did not serve expected asset $EXPECTED_WIDGET_SHA256"
+          echo "$LIVE_TARGET widget did not serve expected asset $EXPECTED_WIDGET_SHA256"
           exit 1
 
       - name: Run live E2E tests
