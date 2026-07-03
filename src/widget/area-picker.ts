@@ -1,11 +1,8 @@
 import type { PickerStyle } from './picker';
 import { resolvePickerStyle } from './picker';
+import { t } from './i18n';
 
 const MIN_SELECTION_SIZE = 10;
-const AREA_PICKER_INSTRUCTION = 'Draw a selection around the area to capture';
-const AREA_PICKER_REDACTION_INSTRUCTION =
-  'Draw a selection around the area to capture. Marked private fields may be masked if included.';
-const AREA_PICKER_DESKTOP_CANCEL_INSTRUCTION = 'ESC to cancel';
 type ResolvedAreaPickerStyle = ReturnType<typeof resolvePickerStyle>;
 
 export function createAreaPicker(
@@ -34,8 +31,8 @@ function startAreaPicker(
   document.body.appendChild(selectionBorder);
 
   const instruction = opts?.redactionsAvailable
-    ? AREA_PICKER_REDACTION_INSTRUCTION
-    : AREA_PICKER_INSTRUCTION;
+    ? t().areaPickerRedactionInstruction
+    : t().areaPickerInstruction;
   const showInlineCancel = usesCoarsePointer();
   const tooltip = createTooltip(
     { accent, fontFamily, radius, bw, tooltipBg, tooltipText, tooltipBorder },
@@ -222,7 +219,7 @@ function createTooltip(
     const cancelButton = document.createElement('button');
     cancelButton.id = 'bugdrop-area-picker-cancel';
     cancelButton.type = 'button';
-    cancelButton.textContent = 'Cancel';
+    cancelButton.textContent = t().cancel;
     cancelButton.style.cssText = `
       align-items: center;
       appearance: none;
@@ -247,7 +244,7 @@ function createTooltip(
     `;
     tooltip.append(text, ' (', cancelButton, ')');
   } else {
-    tooltip.textContent = `${text} (${AREA_PICKER_DESKTOP_CANCEL_INSTRUCTION})`;
+    tooltip.textContent = `${text} (${t().escToCancel})`;
   }
   return tooltip;
 }

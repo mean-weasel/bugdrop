@@ -1,6 +1,7 @@
 /* eslint-disable max-lines, max-lines-per-function */
 import { resolvePickerStyle, type PickerStyle, type ResolvedPickerStyle } from './picker-style';
 import { getSelectionTarget } from './picker-target';
+import { t } from './i18n';
 
 export { resolvePickerStyle, type PickerStyle };
 
@@ -79,12 +80,12 @@ function createTooltip(
   `;
 
   if (!showInlineCancel) {
-    tooltip.textContent = 'Click any element to capture it (ESC to cancel)';
+    tooltip.textContent = `${t().elementPickerInstruction} (${t().escToCancel})`;
     return { tooltip, cancelButton: null };
   }
 
   const cancelButton = createCancelButton(style.accent);
-  tooltip.append('Tap any element to capture it (', cancelButton, ')');
+  tooltip.append(`${t().elementPickerTouchInstruction} (`, cancelButton, ')');
   return { tooltip, cancelButton };
 }
 
@@ -340,7 +341,7 @@ function createCancelButton(accent: string): HTMLButtonElement {
   const cancelButton = document.createElement('button');
   cancelButton.id = 'bugdrop-element-picker-cancel';
   cancelButton.type = 'button';
-  cancelButton.textContent = 'Cancel';
+  cancelButton.textContent = t().cancel;
   cancelButton.style.cssText = `
     align-items: center;
     appearance: none;

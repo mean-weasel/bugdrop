@@ -6,6 +6,7 @@ import {
   type CaptureScreenshotOptions,
 } from './screenshot';
 import { createModal } from './ui';
+import { t } from './i18n';
 
 export type CaptureWithLoadingResult =
   | { kind: 'ok'; dataUrl: string; redaction?: CapturedScreenshot['redaction'] }
@@ -52,11 +53,11 @@ export async function capturePromiseWithLoading(
       ? null
       : createModal(
           root,
-          'Capturing...',
+          t().capturingTitle,
           `
             <div style="display: flex; flex-direction: column; align-items: center; padding: 20px;">
               <div class="bd-spinner bd-spinner--lg"></div>
-              <p class="bd-loading-text" style="margin-top: 12px;">Capturing screenshot...</p>
+              <p class="bd-loading-text" style="margin-top: 12px;">${t().capturingScreenshot}</p>
             </div>
           `
         );
@@ -83,17 +84,17 @@ export async function capturePromiseWithLoading(
     return new Promise(resolve => {
       const errorModal = createModal(
         root,
-        'Capture Failed',
+        t().captureFailedTitle,
         `
           <div class="bd-error-message">
             <svg class="bd-error-message__icon" viewBox="0 0 16 16" fill="currentColor">
               <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0-9.5a.75.75 0 0 0-.75.75v2.5a.75.75 0 0 0 1.5 0v-2.5A.75.75 0 0 0 8 5.5zm0 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/>
             </svg>
-            <span class="bd-error-message__text">Failed to capture screenshot. The page may be too complex or browser restrictions may apply.</span>
+            <span class="bd-error-message__text">${t().captureFailedMessage}</span>
           </div>
           <div class="bd-actions">
-            ${allowSkip ? '<button class="bd-btn bd-btn-secondary" data-action="skip">Skip Screenshot</button>' : ''}
-            ${allowChooseAgain ? '<button class="bd-btn bd-btn-primary" data-action="choose-again">Choose Another Method</button>' : ''}
+            ${allowSkip ? `<button class="bd-btn bd-btn-secondary" data-action="skip">${t().skipScreenshot}</button>` : ''}
+            ${allowChooseAgain ? `<button class="bd-btn bd-btn-primary" data-action="choose-again">${t().chooseAnotherMethod}</button>` : ''}
           </div>
         `,
         true
@@ -139,16 +140,16 @@ function showMaskFailureModal(root: HTMLElement): Promise<CaptureWithLoadingResu
   return new Promise(resolve => {
     const modal = createModal(
       root,
-      'Privacy masking failed',
+      t().maskFailureTitle,
       `
         <div class="bd-error-message">
           <svg class="bd-error-message__icon" viewBox="0 0 16 16" fill="currentColor">
             <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0-9.5a.75.75 0 0 0-.75.75v2.5a.75.75 0 0 0 1.5 0v-2.5A.75.75 0 0 0 8 5.5zm0 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/>
           </svg>
-          <span class="bd-error-message__text">Automatic redaction of private fields could not be applied. To protect your data, this screenshot was discarded. You can still submit feedback without one.</span>
+          <span class="bd-error-message__text">${t().maskFailureMessage}</span>
         </div>
         <div class="bd-actions">
-          <button class="bd-btn bd-btn-primary" data-action="skip">Continue without screenshot</button>
+          <button class="bd-btn bd-btn-primary" data-action="skip">${t().continueWithoutScreenshot}</button>
         </div>
       `,
       true
