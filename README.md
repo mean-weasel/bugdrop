@@ -60,6 +60,7 @@ See [full documentation](https://bugdrop.dev/docs/configuration) for all options
 ## Documentation
 
 - [Full Documentation](https://bugdrop.dev/docs)
+- [Built with BugDrop Showcase](https://bugdrop.dev/showcase)
 - [GitHub Marketplace](https://github.com/marketplace/bugdrop-in-app-feedback-to-github-issues)
 - [Configuration](https://bugdrop.dev/docs/configuration)
 - [Styling](https://bugdrop.dev/docs/styling)
