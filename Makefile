@@ -1,4 +1,4 @@
-.PHONY: dev build build-widget build-all deploy test test-watch test-e2e test-e2e-ui test-e2e-shard test-radix-e2e test-live-cross-browser lint lint-fix format format-check typecheck knip audit check-actions-node24 check ci clean install install-playwright help
+.PHONY: dev build build-widget build-all deploy test test-watch test-e2e test-e2e-ui test-e2e-shard test-radix-e2e test-live-radix test-live-cross-browser lint lint-fix format format-check typecheck knip audit check-actions-node24 check ci clean install install-playwright help
 
 # Development
 dev:
@@ -42,6 +42,15 @@ test-radix-e2e:
 		exit 1; \
 	fi
 	npx playwright test e2e/widget.radix.spec.ts --project=$(BROWSER)-radix --workers=1
+
+test-live-radix:
+	@if [ -z "$(LIVE_TARGET)" ] || [ -z "$(PLAYWRIGHT_BASE_URL)" ]; then \
+		echo "Usage: LIVE_TARGET=preview PLAYWRIGHT_BASE_URL=https://example.com make test-live-radix"; \
+		echo "Required: LIVE_TARGET, PLAYWRIGHT_BASE_URL"; \
+		echo "Set VERCEL_AUTOMATION_BYPASS_SECRET when the Vercel venue is protected."; \
+		exit 1; \
+	fi
+	npx playwright test e2e/widget.live-radix.spec.ts --project=chromium-live-radix --workers=1
 
 test-live-cross-browser:
 	@if [ -z "$(BROWSER)" ] || [ -z "$(LIVE_TARGET)" ] || [ -z "$(PLAYWRIGHT_BASE_URL)" ]; then \
@@ -113,6 +122,9 @@ help:
 	@echo "    make test-e2e-shard SHARD=1/2  - Run E2E test shard"
 	@echo "    make test-radix-e2e BROWSER=chromium|firefox|webkit"
 	@echo "                          - Run focused Radix compatibility E2E tests"
+	@echo "    LIVE_TARGET=preview PLAYWRIGHT_BASE_URL=<url> make test-live-radix"
+	@echo "                          - Run live Radix compatibility E2E tests"
+	@echo "                          - Set VERCEL_AUTOMATION_BYPASS_SECRET for protected Vercel venues"
 	@echo "    LIVE_TARGET=preview PLAYWRIGHT_BASE_URL=<url> make test-live-cross-browser BROWSER=chromium|firefox|webkit"
 	@echo "                          - Run live cross-browser E2E tests"
 	@echo "                          - Set VERCEL_AUTOMATION_BYPASS_SECRET for protected Vercel venues"
