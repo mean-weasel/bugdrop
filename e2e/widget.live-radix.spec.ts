@@ -177,7 +177,7 @@ test.describe('Radix dialog compatibility (Live)', () => {
     const titleInput = host.locator('css=#title');
     await titleInput.focus();
     await expect(titleInput).toBeFocused();
-    await page.keyboard.type('Live Radix title');
+    await titleInput.fill('Live Radix title');
     await expect(titleInput).toHaveValue('Live Radix title');
     await expectPageResponsive(page);
 
@@ -185,7 +185,7 @@ test.describe('Radix dialog compatibility (Live)', () => {
     const descriptionInput = host.locator('css=#description');
     await descriptionInput.focus();
     await expect(descriptionInput).toBeFocused();
-    await page.keyboard.type('Live Radix description');
+    await descriptionInput.fill('Live Radix description');
     await expect(descriptionInput).toHaveValue('Live Radix description');
     await expectPageResponsive(page);
 
