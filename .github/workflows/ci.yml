@@ -105,6 +105,63 @@ jobs:
           path: playwright-report/
           retention-days: 7
 
+  # Focused browser matrix for Radix-style host dialog compatibility
+  radix-e2e:
+    name: Radix Cross-Browser E2E (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: make install
+
+      - name: Build widget
+        run: make build-widget
+
+      - name: Get Playwright version
+        id: pw-version
+        run: echo "version=$(npx playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browser
+        id: pw-cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-${{ runner.os }}-${{ matrix.browser }}-${{ steps.pw-version.outputs.version }}
+
+      - name: Install Playwright browser
+        timeout-minutes: 5
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Install Playwright system deps
+        timeout-minutes: 5
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps ${{ matrix.browser }}
+
+      - name: Run Radix E2E Tests (${{ matrix.browser }})
+        run: make test-radix-e2e BROWSER=${{ matrix.browser }}
+        env:
+          CI: true
+
+      - name: Upload Radix E2E Report
+        uses: actions/upload-artifact@v5
+        if: failure()
+        with:
+          name: playwright-radix-report-${{ matrix.browser }}
+          path: playwright-report/
+          retention-days: 7
+
   # Deploy to preview CF Worker (merge queue only)
   deploy-preview:
     name: Deploy Preview

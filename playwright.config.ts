@@ -17,7 +17,22 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: /.*\.(?:live|cross-browser-live)\.spec\.ts$/,
+      testIgnore: /.*\.(?:live|cross-browser-live|radix)\.spec\.ts$/,
+    },
+    {
+      name: 'chromium-radix',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: /.*\.radix\.spec\.ts/,
+    },
+    {
+      name: 'firefox-radix',
+      use: { ...devices['Desktop Firefox'] },
+      testMatch: /.*\.radix\.spec\.ts/,
+    },
+    {
+      name: 'webkit-radix',
+      use: { ...devices['Desktop Safari'] },
+      testMatch: /.*\.radix\.spec\.ts/,
     },
     {
       name: 'chromium-live',

@@ -1,4 +1,4 @@
-.PHONY: dev build build-widget build-all deploy test test-watch test-e2e test-e2e-ui test-e2e-shard test-live-cross-browser lint lint-fix format format-check typecheck knip audit check-actions-node24 check ci clean install install-playwright help
+.PHONY: dev build build-widget build-all deploy test test-watch test-e2e test-e2e-ui test-e2e-shard test-radix-e2e test-live-cross-browser lint lint-fix format format-check typecheck knip audit check-actions-node24 check ci clean install install-playwright help
 
 # Development
 dev:
@@ -35,6 +35,13 @@ test-e2e-shard:
 		exit 1; \
 	fi
 	npx playwright test --project=chromium --shard=$(SHARD)
+
+test-radix-e2e:
+	@if [ -z "$(BROWSER)" ]; then \
+		echo "Usage: make test-radix-e2e BROWSER=chromium|firefox|webkit"; \
+		exit 1; \
+	fi
+	npx playwright test e2e/widget.radix.spec.ts --project=$(BROWSER)-radix --workers=1
 
 test-live-cross-browser:
 	@if [ -z "$(BROWSER)" ] || [ -z "$(LIVE_TARGET)" ] || [ -z "$(PLAYWRIGHT_BASE_URL)" ]; then \
@@ -104,6 +111,8 @@ help:
 	@echo "    make test-e2e         - Run E2E tests"
 	@echo "    make test-e2e-ui      - Run E2E tests with UI"
 	@echo "    make test-e2e-shard SHARD=1/2  - Run E2E test shard"
+	@echo "    make test-radix-e2e BROWSER=chromium|firefox|webkit"
+	@echo "                          - Run focused Radix compatibility E2E tests"
 	@echo "    LIVE_TARGET=preview PLAYWRIGHT_BASE_URL=<url> make test-live-cross-browser BROWSER=chromium|firefox|webkit"
 	@echo "                          - Run live cross-browser E2E tests"
 	@echo "                          - Set VERCEL_AUTOMATION_BYPASS_SECRET for protected Vercel venues"
