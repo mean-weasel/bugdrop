@@ -17,7 +17,7 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: /.*\.(?:live|cross-browser-live|radix)\.spec\.ts$/,
+      testIgnore: /.*\.(?:live|live-radix|cross-browser-live|radix)\.spec\.ts$/,
     },
     {
       name: 'chromium-radix',
@@ -41,6 +41,15 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
       },
       testMatch: /.*\.live\.spec\.ts/,
+      timeout: 60_000,
+    },
+    {
+      name: 'chromium-live-radix',
+      fullyParallel: false,
+      use: {
+        ...devices['Desktop Chrome'],
+      },
+      testMatch: /.*\.live-radix\.spec\.ts/,
       timeout: 60_000,
     },
     {
