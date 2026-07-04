@@ -5,7 +5,7 @@ import {
   isFullPageDisabled,
 } from './screenshot';
 import { createModal, redactionNoteHtml } from './ui';
-import { t } from './i18n';
+import { escapeWidgetText, t } from './i18n';
 
 export type ScreenshotChoice =
   | { kind: 'skip' }
@@ -32,28 +32,28 @@ export function showScreenshotOptions(
 
   return new Promise(resolve => {
     const complexNote = fullPageDisabled
-      ? `<p style="margin: 0 0 12px; padding: 8px 12px; background: var(--bd-bg-secondary, #f5f5f5); border-radius: 6px; font-size: 13px; color: var(--bd-text-secondary);">${nativeViewportAvailable ? t().pageTooComplexViewportNote : t().pageTooComplexElementNote}</p>`
+      ? `<p style="margin: 0 0 12px; padding: 8px 12px; background: var(--bd-bg-secondary, #f5f5f5); border-radius: 6px; font-size: 13px; color: var(--bd-text-secondary);">${nativeViewportAvailable ? escapeWidgetText(t().pageTooComplexViewportNote) : escapeWidgetText(t().pageTooComplexElementNote)}</p>`
       : '';
 
     let primaryCaptureButton = '';
     if (!fullPageDisabled) {
-      primaryCaptureButton = `<button class="bd-btn bd-btn-primary" data-action="capture">${t().fullPage}</button>`;
+      primaryCaptureButton = `<button class="bd-btn bd-btn-primary" data-action="capture">${escapeWidgetText(t().fullPage)}</button>`;
     } else if (nativeViewportAvailable) {
-      primaryCaptureButton = `<button class="bd-btn bd-btn-primary" data-action="viewport">${t().captureViewport}</button>`;
+      primaryCaptureButton = `<button class="bd-btn bd-btn-primary" data-action="viewport">${escapeWidgetText(t().captureViewport)}</button>`;
     }
 
     const modal = createModal(
       root,
       t().captureScreenshotTitle,
       `
-        <p style="margin: 0 0 16px; color: var(--bd-text-secondary);">${t().chooseWhatToCapture}</p>
+        <p style="margin: 0 0 16px; color: var(--bd-text-secondary);">${escapeWidgetText(t().chooseWhatToCapture)}</p>
         ${complexNote}
         ${redactionNote}
         <div class="bd-actions bd-screenshot-actions">
           ${primaryCaptureButton}
-          ${fullPageDisabled ? '' : `<button class="bd-btn bd-btn-secondary" data-action="area">${t().selectArea}</button>`}
-          <button class="bd-btn bd-btn-secondary" data-action="element">${t().selectElement}</button>
-          ${allowSkip ? `<button class="bd-btn bd-btn-quiet" data-action="skip">${t().skipScreenshot}</button>` : ''}
+          ${fullPageDisabled ? '' : `<button class="bd-btn bd-btn-secondary" data-action="area">${escapeWidgetText(t().selectArea)}</button>`}
+          <button class="bd-btn bd-btn-secondary" data-action="element">${escapeWidgetText(t().selectElement)}</button>
+          ${allowSkip ? `<button class="bd-btn bd-btn-quiet" data-action="skip">${escapeWidgetText(t().skipScreenshot)}</button>` : ''}
         </div>
       `
     );
