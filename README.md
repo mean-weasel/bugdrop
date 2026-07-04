@@ -50,7 +50,7 @@ That's it! Users can now click the bug button to submit feedback as GitHub Issue
 | `data-locale`                   | `en`, `nl`, `pl` (region subtags accepted)           | `<html lang>` or `en` |
 | `data-position`                 | `bottom-right`, `bottom-left`                        | `bottom-right`        |
 | `data-color`                    | Accent color for buttons/highlights (e.g. `#FF6B35`) | `#14b8a6` (teal)      |
-| `data-label`                    | Any string                                           | `Feedback`            |
+| `data-label`                    | Any string                                           | localized label       |
 | `data-category-labels`          | JSON mapping for self-hosted category labels         | built-in labels       |
 | `data-button`                   | `true`, `false`                                      | `true`                |
 | `data-send-console-logs`        | `true`, `false`                                      | `false`               |

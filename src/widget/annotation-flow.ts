@@ -1,6 +1,6 @@
 import { createAnnotator, type Tool } from './annotator';
 import { createModal, redactionNoteHtml } from './ui';
-import { t } from './i18n';
+import { escapeWidgetText, t } from './i18n';
 
 export function showAnnotationStep(
   root: HTMLElement,
@@ -42,20 +42,20 @@ export function showAnnotationStep(
       `
         ${redactionNote}
         <p style="margin: 0 0 12px; color: var(--bd-text-secondary); font-size: 13px;">
-          ${t().annotationInstruction}
+          ${escapeWidgetText(t().annotationInstruction)}
         </p>
         ${selectedElementNote}
         <div class="bd-tools">
-          <button class="bd-tool active" data-tool="draw">✏️ ${t().toolDraw}</button>
-          <button class="bd-tool" data-tool="arrow">➡️ ${t().toolArrow}</button>
-          <button class="bd-tool" data-tool="rect">▢ ${t().toolRectangle}</button>
-          <button class="bd-tool" data-tool="redact">${t().toolRedact}</button>
-          <button class="bd-tool" data-action="undo">↶ ${t().undo}</button>
+          <button class="bd-tool active" data-tool="draw">✏️ ${escapeWidgetText(t().toolDraw)}</button>
+          <button class="bd-tool" data-tool="arrow">➡️ ${escapeWidgetText(t().toolArrow)}</button>
+          <button class="bd-tool" data-tool="rect">▢ ${escapeWidgetText(t().toolRectangle)}</button>
+          <button class="bd-tool" data-tool="redact">${escapeWidgetText(t().toolRedact)}</button>
+          <button class="bd-tool" data-action="undo">↶ ${escapeWidgetText(t().undo)}</button>
         </div>
         <div id="annotation-canvas" class="bd-annotation-stage"></div>
         <div class="bd-actions">
-          <button class="bd-btn bd-btn-secondary" data-action="retake">${t().retake}</button>
-          <button class="bd-btn bd-btn-primary" data-action="done">${t().submitFeedback}</button>
+          <button class="bd-btn bd-btn-secondary" data-action="retake">${escapeWidgetText(t().retake)}</button>
+          <button class="bd-btn bd-btn-primary" data-action="done">${escapeWidgetText(t().submitFeedback)}</button>
         </div>
       `,
       false,

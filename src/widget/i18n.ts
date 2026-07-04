@@ -1,8 +1,7 @@
 import { en } from './locales/en';
 import { nl } from './locales/nl';
 import { pl } from './locales/pl';
-
-export type SupportedLocale = 'en' | 'nl' | 'pl';
+import { escapeHtml } from './sanitize';
 
 export interface WidgetStrings {
   // Trigger button & pull tab
@@ -65,6 +64,7 @@ export interface WidgetStrings {
   tryAgain: string;
   // Success modal
   successTitle: string;
+  // Callers pass a trusted issue-number HTML fragment; dictionaries own surrounding text only.
   issueCreated: (issueNumberHtml: string) => string;
   feedbackSubmittedMessage: string;
   viewOnGitHub: string;
@@ -102,6 +102,7 @@ export interface WidgetStrings {
   redactionCountNote: (count: number) => string;
   redactionLimitationsNote: string;
   annotationInstruction: string;
+  // Callers pass a trusted configuration-link HTML fragment; dictionaries own surrounding text only.
   selectedElementNote: (linkHtml: string) => string;
   toolDraw: string;
   toolArrow: string;
@@ -114,13 +115,20 @@ export interface WidgetStrings {
   captureTimeout: string;
 }
 
-const DICTIONARIES: Record<SupportedLocale, WidgetStrings> = { en, nl, pl };
+const DICTIONARIES = { en, nl, pl } satisfies Record<string, WidgetStrings>;
+
+export type SupportedLocale = keyof typeof DICTIONARIES;
+
+// Use this for dictionary strings inserted into raw HTML templates.
+export function escapeWidgetText(value: string): string {
+  return escapeHtml(value);
+}
 
 export function resolveLocale(raw: string | undefined | null): SupportedLocale {
   if (!raw) return 'en';
   // Accept both BCP 47 ("nl-NL") and POSIX/Symfony ("nl_NL") region formats.
   const base = raw.toLowerCase().split(/[-_]/)[0];
-  if (base === 'en' || base === 'nl' || base === 'pl') return base;
+  if (Object.prototype.hasOwnProperty.call(DICTIONARIES, base)) return base as SupportedLocale;
   console.warn(`[BugDrop] Unsupported data-locale "${raw}"; falling back to English.`);
   return 'en';
 }

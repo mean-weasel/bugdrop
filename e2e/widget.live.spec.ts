@@ -50,6 +50,40 @@ async function mockInstalledRepo(page: Page) {
   });
 }
 
+async function loadDeployedWidgetFixture(page: Page, dataset: Record<string, string>) {
+  const widgetOrigin = expectedWidgetOrigin || 'https://bugdrop-preview.neonwatty.workers.dev';
+  const fixturePath = '/bugdrop-live-locale-fixture';
+  const dataAttributes = Object.entries(dataset)
+    .map(([key, value]) => `data-${key}="${value}"`)
+    .join('\n          ');
+
+  await page.route(`**${fixturePath}`, async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: `
+        <!doctype html>
+        <html lang="en-US">
+          <head><title>BugDrop live fixture</title></head>
+          <body>
+            <main>
+              <h1>BugDrop live fixture</h1>
+              <p>Fixture page for deployed widget smoke tests.</p>
+            </main>
+            <script
+              src="${widgetOrigin}/widget.js"
+              data-repo="mean-weasel/bugdrop-widget-test"
+              ${dataAttributes}
+            ></script>
+          </body>
+        </html>
+      `,
+    });
+  });
+
+  await page.goto(fixturePath);
+}
+
 async function addCorsBlockedImage(page: Page) {
   await page.route('https://third-party.test/no-cors-badge.svg', async route => {
     await route.fulfill({
@@ -333,6 +367,23 @@ test.describe('Widget Loading (Live)', () => {
       const body = await response.body();
       expect(sha256(body)).toBe(expectedWidgetSha256);
     }
+  });
+});
+
+test.describe('Localization (Live)', () => {
+  test('deployed widget asset honors data-locale from the script tag', async ({ page }) => {
+    await mockInstalledRepo(page);
+    await loadDeployedWidgetFixture(page, { locale: 'pl' });
+
+    const host = page.locator('#bugdrop-host');
+    const trigger = host.locator('css=.bd-trigger');
+    await expect(trigger).toBeVisible({ timeout: 10_000 });
+    await expect(trigger.locator('css=.bd-trigger-label')).toHaveText('Opinia');
+    await expect(trigger).toHaveAttribute('aria-label', 'Zgłoś błąd lub wyślij opinię');
+
+    await trigger.click();
+    await expect(host.locator('css=.bd-title')).toHaveText('Podziel się opinią');
+    await expect(host.locator('css=[data-action="continue"]')).toHaveText('Rozpocznij');
   });
 });
 
