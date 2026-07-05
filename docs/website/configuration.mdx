@@ -10,10 +10,11 @@ These attributes control the fundamental behavior of the widget.
 |-----------|---------|-------------|
 | `data-repo` | **(required)** | GitHub repository in `owner/repo` format |
 | `data-theme` | `"auto"` | Widget theme: `"light"`, `"dark"`, or `"auto"` |
+| `data-locale` | `<html lang>` or `"en"` | UI language: `"en"`, `"nl"`, or `"pl"` |
 | `data-position` | `"bottom-right"` | Button position: `"bottom-right"` or `"bottom-left"` |
 | `data-color` | `"#14b8a6"` | Primary accent color (any CSS color value) |
 | `data-icon` | *(default bug icon)* | Custom icon: URL to an image, `"none"` to hide, or omit for default |
-| `data-label` | `"Feedback"` | Text label displayed next to the button icon |
+| `data-label` | localized label | Text label displayed next to the button icon |
 | `data-category-labels` | built-in labels | Self-hosted JSON mapping from built-in categories to GitHub labels |
 | `data-button` | `"true"` | Show the floating button: `"true"` or `"false"` |
 | `data-auth-token-provider` | none | Name of a global function that returns a self-hosted auth token |
@@ -55,6 +56,33 @@ The `data-theme` attribute controls the overall color scheme of the widget:
 <script src="https://bugdrop.neonwatty.workers.dev/widget.js"
   data-repo="owner/repo" data-theme="dark"></script>
 ```
+
+### Language Options
+
+The `data-locale` attribute controls BugDrop's built-in widget UI text -- the
+feedback form, screenshot flow, annotation tools, and most success/error messages.
+Brand attribution, custom labels, and server-provided error text may remain as
+provided. Supported locales: **`en`** (English), **`nl`** (Dutch), **`pl`** (Polish).
+
+Resolution order:
+
+1. `data-locale` on the script tag
+2. The page's `<html lang="...">` attribute
+3. English
+
+Matching is case-insensitive and region subtags are accepted in both BCP 47 and
+underscore formats (`nl-NL`, `nl_NL`, and `NL` all resolve to Dutch). An unsupported
+value falls back to English and logs a console warning.
+
+```html
+<!-- Dutch UI -->
+<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  data-repo="owner/repo" data-locale="nl"></script>
+```
+
+To contribute a new language, add `src/widget/locales/<code>.ts` implementing the
+`WidgetStrings` interface and register it in `src/widget/i18n.ts` -- a unit test
+enforces that every dictionary exposes exactly the same keys as English.
 
 ### Position Options
 

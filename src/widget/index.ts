@@ -29,6 +29,7 @@ import {
   startConsoleLogCapture,
   type ConsoleLogEntry,
 } from './console-logs';
+import { escapeWidgetText, resolveLocale, setLocale, t, type SupportedLocale } from './i18n';
 import { installRadixDialogCompatibility } from './radix-compat';
 import { resolveAccentColor } from '../defaults';
 
@@ -62,7 +63,7 @@ interface WidgetConfig {
   accentColor?: string;
   // Custom icon URL (replaces default bug emoji), or 'none' to hide the icon
   iconUrl?: string;
-  // Custom trigger button label text (default: 'Feedback')
+  // Custom trigger button label text; defaults to the active locale's triggerLabel
   label?: string;
   // Optional mapping from built-in feedback categories to GitHub labels
   categoryLabels?: CategoryLabelConfig;
@@ -83,6 +84,8 @@ interface WidgetConfig {
   elementContextMaxArea?: number; // Max ancestor capture area as a viewport multiplier
   issueLinkVisibility: IssueLinkVisibility;
   sendConsoleLogs: boolean;
+  // UI language for widget texts
+  locale: SupportedLocale;
 }
 
 // BugDrop JavaScript API interface
@@ -374,6 +377,7 @@ const rawTheme = script?.dataset.theme;
 if (rawTheme && !isValidTheme(rawTheme)) {
   console.warn(`[BugDrop] Invalid data-theme "${rawTheme}". Expected "light", "dark", or "auto".`);
 }
+const locale = resolveLocale(script?.dataset.locale || document.documentElement.lang);
 const requireName = script?.dataset.requireName === 'true';
 const requireEmail = script?.dataset.requireEmail === 'true';
 const rawPosition = script?.dataset.position;
@@ -468,7 +472,10 @@ const config: WidgetConfig = {
   elementContextMaxArea,
   issueLinkVisibility,
   sendConsoleLogs: script?.dataset.sendConsoleLogs === 'true',
+  locale,
 };
+
+setLocale(config.locale);
 
 startConsoleLogCapture();
 
@@ -485,7 +492,7 @@ if (!config.repo) {
 
 // Build the trigger button label text
 function getTriggerLabel(config: WidgetConfig): string {
-  return config.label !== undefined ? config.label : 'Feedback';
+  return config.label !== undefined ? config.label : t().triggerLabel;
 }
 
 function appendTriggerContent(trigger: HTMLElement, config: WidgetConfig): void {
@@ -530,7 +537,7 @@ function createTriggerDragHandle(): HTMLElement {
   const handle = document.createElement('span');
   handle.className = 'bd-trigger-drag-handle';
   handle.setAttribute('aria-hidden', 'true');
-  handle.title = 'Drag feedback button';
+  handle.title = t().dragHandleTitle;
   handle.innerHTML = `
     <svg viewBox="0 0 12 24" aria-hidden="true" focusable="false">
       <circle cx="4" cy="5" r="1.5" fill="currentColor"></circle>
@@ -733,7 +740,7 @@ function createPullTab(root: HTMLElement, config: WidgetConfig): HTMLElement {
   tab.innerHTML = '<span class="bd-pull-tab-chevron">‹</span>';
   tab.setAttribute('role', 'button');
   tab.setAttribute('tabindex', '0');
-  tab.setAttribute('aria-label', 'Show feedback button');
+  tab.setAttribute('aria-label', t().pullTabAriaLabel);
 
   const handleRestore = () => {
     // Clear dismissed state
@@ -809,14 +816,14 @@ function initWidget(config: WidgetConfig) {
     const trigger = document.createElement('button');
     trigger.className = getTriggerClassName(config);
     appendTriggerContent(trigger, config);
-    trigger.setAttribute('aria-label', 'Report a bug or send feedback');
+    trigger.setAttribute('aria-label', t().triggerAriaLabel);
 
     // Add close button if dismissible
     if (config.buttonDismissible) {
       const closeBtn = document.createElement('button');
       closeBtn.className = 'bd-trigger-close';
       closeBtn.textContent = '×';
-      closeBtn.setAttribute('aria-label', 'Dismiss feedback button');
+      closeBtn.setAttribute('aria-label', t().dismissButtonAriaLabel);
       trigger.appendChild(closeBtn);
 
       // Handle close button click
@@ -983,13 +990,13 @@ function createTriggerButton(root: HTMLElement, config: WidgetConfig, isRestorin
   const trigger = document.createElement('button');
   trigger.className = getTriggerClassName(config, isRestoring);
   appendTriggerContent(trigger, config);
-  trigger.setAttribute('aria-label', 'Report a bug or send feedback');
+  trigger.setAttribute('aria-label', t().triggerAriaLabel);
 
   if (config.buttonDismissible) {
     const closeBtn = document.createElement('button');
     closeBtn.className = 'bd-trigger-close';
     closeBtn.textContent = '×';
-    closeBtn.setAttribute('aria-label', 'Dismiss feedback button');
+    closeBtn.setAttribute('aria-label', t().dismissButtonAriaLabel);
     trigger.appendChild(closeBtn);
 
     closeBtn.addEventListener('click', e => {
@@ -1054,12 +1061,7 @@ async function openFeedbackFlow(
     return;
   }
   if (installStatus === 'unreachable') {
-    showInstallPrompt(
-      root,
-      config,
-      'Unable to reach BugDrop API. Check your network connection or script tag URL.',
-      appName
-    );
+    showInstallPrompt(root, config, t().apiUnreachableMessage, appName);
     return;
   }
 
@@ -1153,16 +1155,16 @@ function showInstallPrompt(
       ? 'neonwatty-bugdrop'
       : config.apiUrl.replace(/https?:\/\//, '').replace(/\..*/, ''));
   const installUrl = `https://github.com/apps/${appName}/installations/new`;
-  const message = errorMessage || 'BugDrop requires GitHub App installation to create issues.';
-  const title = errorMessage ? 'Connection Error' : 'Install Required';
+  const message = errorMessage || t().installRequiredMessage;
+  const title = errorMessage ? t().connectionErrorTitle : t().installRequiredTitle;
   const modal = createModal(
     root,
     title,
     `
-      <p style="margin: 0 0 16px; color: var(--bd-text-secondary);">${message}</p>
+      <p style="margin: 0 0 16px; color: var(--bd-text-secondary);">${escapeHtml(message)}</p>
       <div class="bd-actions">
-        <button class="bd-btn bd-btn-secondary" data-action="cancel">Cancel</button>
-        ${!errorMessage ? `<a href="${installUrl}" target="_blank" class="bd-btn bd-btn-primary" style="text-decoration: none;">Install App</a>` : ''}
+        <button class="bd-btn bd-btn-secondary" data-action="cancel">${escapeWidgetText(t().cancel)}</button>
+        ${!errorMessage ? `<a href="${installUrl}" target="_blank" class="bd-btn bd-btn-primary" style="text-decoration: none;">${escapeWidgetText(t().installApp)}</a>` : ''}
       </div>
     `,
     true
@@ -1185,20 +1187,20 @@ function showWelcomeScreen(root: HTMLElement): Promise<boolean> {
   return new Promise(resolve => {
     const modal = createModal(
       root,
-      'Share Your Feedback',
+      t().welcomeTitle,
       `
         <div style="text-align: center; padding: 8px 0 16px;">
           <div style="font-size: 3rem; margin-bottom: 12px;">💬</div>
           <p style="margin: 0 0 12px; color: var(--bd-text-primary); font-size: 1.05rem; font-weight: 500;">
-            Help us improve by sharing your thoughts
+            ${escapeWidgetText(t().welcomeHeadline)}
           </p>
           <p style="margin: 0 0 8px; color: var(--bd-text-secondary); font-size: 0.95rem; line-height: 1.6;">
-            Report bugs, suggest features, or leave feedback.<br/>
-            You can optionally include annotated screenshots.
+            ${escapeWidgetText(t().welcomeBodyLine1)}<br/>
+            ${escapeWidgetText(t().welcomeBodyLine2)}
           </p>
         </div>
         <div class="bd-actions" style="justify-content: center;">
-          <button class="bd-btn bd-btn-primary" data-action="continue">Get Started</button>
+          <button class="bd-btn bd-btn-primary" data-action="continue">${escapeWidgetText(t().getStarted)}</button>
         </div>
       `,
       true
@@ -1240,8 +1242,8 @@ function showFeedbackFormWithScreenshotOption(
     const nameFieldHtml = config.showName
       ? `
           <div class="bd-form-group">
-            <label class="bd-label" for="name">Name${config.requireName ? ' *' : ''}</label>
-            <input type="text" id="name" class="bd-input" ${config.requireName ? 'required' : ''} placeholder="Your name" value="${escapeHtml(initialValues?.name || '')}" />
+            <label class="bd-label" for="name">${escapeWidgetText(t().nameLabel)}${config.requireName ? ' *' : ''}</label>
+            <input type="text" id="name" class="bd-input" ${config.requireName ? 'required' : ''} placeholder="${escapeWidgetText(t().namePlaceholder)}" value="${escapeHtml(initialValues?.name || '')}" />
           </div>
         `
       : '';
@@ -1250,41 +1252,41 @@ function showFeedbackFormWithScreenshotOption(
     const emailFieldHtml = config.showEmail
       ? `
           <div class="bd-form-group">
-            <label class="bd-label" for="email">Email${config.requireEmail ? ' *' : ''}</label>
-            <input type="email" id="email" class="bd-input" ${config.requireEmail ? 'required' : ''} placeholder="your@email.com" value="${escapeHtml(initialValues?.email || '')}" />
+            <label class="bd-label" for="email">${escapeWidgetText(t().emailLabel)}${config.requireEmail ? ' *' : ''}</label>
+            <input type="email" id="email" class="bd-input" ${config.requireEmail ? 'required' : ''} placeholder="${escapeWidgetText(t().emailPlaceholder)}" value="${escapeHtml(initialValues?.email || '')}" />
           </div>
         `
       : '';
 
     const modal = createModal(
       root,
-      'Send Feedback',
+      t().feedbackFormTitle,
       `
         <form id="feedback-form">
           <div class="bd-form-group">
-            <label class="bd-label">Category</label>
+            <label class="bd-label">${escapeWidgetText(t().categoryLabel)}</label>
             <div class="bd-category-selector" style="display: flex; gap: 8px; margin-top: 6px;">
               <label class="bd-category-option" style="flex: 1; display: flex; align-items: center; gap: 6px; padding: 8px 12px; border: var(--bd-border-style); border-radius: var(--bd-radius-sm); cursor: pointer; transition: all 0.15s ease;">
                 <input type="radio" name="category" value="bug" ${getCategoryChecked(initialValues, 'bug')} style="accent-color: var(--bd-primary);" />
-                <span style="font-size: 0.9rem;">🐛 Bug</span>
+                <span style="font-size: 0.9rem;">🐛 ${escapeWidgetText(t().categoryBug)}</span>
               </label>
               <label class="bd-category-option" style="flex: 1; display: flex; align-items: center; gap: 6px; padding: 8px 12px; border: var(--bd-border-style); border-radius: var(--bd-radius-sm); cursor: pointer; transition: all 0.15s ease;">
                 <input type="radio" name="category" value="feature" ${getCategoryChecked(initialValues, 'feature')} style="accent-color: var(--bd-primary);" />
-                <span style="font-size: 0.9rem;">✨ Feature</span>
+                <span style="font-size: 0.9rem;">✨ ${escapeWidgetText(t().categoryFeature)}</span>
               </label>
               <label class="bd-category-option" style="flex: 1; display: flex; align-items: center; gap: 6px; padding: 8px 12px; border: var(--bd-border-style); border-radius: var(--bd-radius-sm); cursor: pointer; transition: all 0.15s ease;">
                 <input type="radio" name="category" value="question" ${getCategoryChecked(initialValues, 'question')} style="accent-color: var(--bd-primary);" />
-                <span style="font-size: 0.9rem;">❓ Question</span>
+                <span style="font-size: 0.9rem;">❓ ${escapeWidgetText(t().categoryQuestion)}</span>
               </label>
             </div>
           </div>
           <div class="bd-form-group">
-            <label class="bd-label" for="title">Title *</label>
-            <input type="text" id="title" class="bd-input" required placeholder="Brief description of the issue or suggestion" value="${escapeHtml(initialValues?.title || '')}" />
+            <label class="bd-label" for="title">${escapeWidgetText(t().titleLabel)} *</label>
+            <input type="text" id="title" class="bd-input" required placeholder="${escapeWidgetText(t().titlePlaceholder)}" value="${escapeHtml(initialValues?.title || '')}" />
           </div>
           <div class="bd-form-group">
-            <label class="bd-label" for="description">Description</label>
-            <textarea id="description" class="bd-textarea" placeholder="Provide additional details, steps to reproduce, or context...">${escapeHtml(initialValues?.description || '')}</textarea>
+            <label class="bd-label" for="description">${escapeWidgetText(t().descriptionLabel)}</label>
+            <textarea id="description" class="bd-textarea" placeholder="${escapeWidgetText(t().descriptionPlaceholder)}">${escapeHtml(initialValues?.description || '')}</textarea>
           </div>
           ${nameFieldHtml}
           ${emailFieldHtml}
@@ -1301,8 +1303,8 @@ function showFeedbackFormWithScreenshotOption(
             ${getConsoleLogsFormControl(config, initialValues)}
           </div>
           <div class="bd-actions">
-            <button type="button" class="bd-btn bd-btn-secondary" data-action="cancel">Cancel</button>
-            <button type="submit" class="bd-btn bd-btn-primary" id="submit-btn">${config.screenshotMode === 'auto' ? 'Submit' : 'Continue'}</button>
+            <button type="button" class="bd-btn bd-btn-secondary" data-action="cancel">${escapeWidgetText(t().cancel)}</button>
+            <button type="submit" class="bd-btn bd-btn-primary" id="submit-btn">${config.screenshotMode === 'auto' ? escapeWidgetText(t().submit) : escapeWidgetText(t().continueButton)}</button>
           </div>
         </form>
       `
@@ -1402,10 +1404,7 @@ function showFeedbackFormWithScreenshotOption(
 
       const remainingSlots = MAX_UPLOAD_FILES - attachments.length;
       if (files.length > remainingSlots) {
-        showUploadError(
-          uploadError,
-          `Upload up to ${MAX_UPLOAD_FILES} files. Remove a file before adding another.`
-        );
+        showUploadError(uploadError, t().uploadTooMany(MAX_UPLOAD_FILES));
         return;
       }
 
@@ -1422,7 +1421,7 @@ function showFeedbackFormWithScreenshotOption(
         attachments = [...attachments, ...nextAttachments];
         rerenderUploads();
       } catch {
-        showUploadError(uploadError, 'Could not read that file. Try another one.');
+        showUploadError(uploadError, t().uploadReadError);
       }
     });
 
@@ -1433,14 +1432,14 @@ function showFeedbackFormWithScreenshotOption(
 function getUploadFormControl(): string {
   return `
     <div class="bd-upload-group">
-      <div class="bd-upload-row" aria-label="Uploads">
-        <button type="button" class="bd-btn bd-btn-secondary bd-upload-button" data-action="choose-uploads" aria-label="Upload files">
+      <div class="bd-upload-row" aria-label="${escapeWidgetText(t().uploadsAriaLabel)}">
+        <button type="button" class="bd-btn bd-btn-secondary bd-upload-button" data-action="choose-uploads" aria-label="${escapeWidgetText(t().uploadFilesAriaLabel)}">
           <svg class="bd-upload-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
             <path d="M8 11V3" />
             <path d="M4.5 6.5 8 3l3.5 3.5" />
             <path d="M3 12.5h10" />
           </svg>
-          Upload
+          ${escapeWidgetText(t().uploadButton)}
         </button>
       </div>
     </div>
@@ -1449,10 +1448,10 @@ function getUploadFormControl(): string {
 
 function validateUploadFile(file: File): string | null {
   if (!ACCEPTED_UPLOAD_TYPES.includes(file.type)) {
-    return 'That file type is not supported. Upload an image, PDF, or short video.';
+    return t().uploadUnsupportedType;
   }
   if (file.size > MAX_UPLOAD_SIZE_BYTES) {
-    return `File is too large. Upload files up to ${formatFileSize(MAX_UPLOAD_SIZE_BYTES)}.`;
+    return t().uploadTooLarge(formatFileSize(MAX_UPLOAD_SIZE_BYTES));
   }
   return null;
 }
@@ -1473,7 +1472,7 @@ function renderUploadList(
         <div class="bd-upload-item">
           <span class="bd-upload-item__name">${escapeHtml(attachment.name)}</span>
           <span class="bd-upload-item__meta">${formatFileSize(attachment.size)}</span>
-          <button type="button" class="bd-upload-remove" data-index="${index}" aria-label="Remove ${escapeHtml(attachment.name)}">&times;</button>
+          <button type="button" class="bd-upload-remove" data-index="${index}" aria-label="${escapeWidgetText(t().removeAttachmentAriaLabel(attachment.name))}">&times;</button>
         </div>
       `
     )
@@ -1519,12 +1518,10 @@ function getScreenshotFormControl(
 ): string {
   if (config.screenshotMode === 'auto') {
     const redactionNote =
-      getRedactionCount() > 0
-        ? ' Some fields this site marked private may be visually masked on supported pages, but unmarked sensitive information can still be included.'
-        : '';
+      getRedactionCount() > 0 ? ` ${escapeWidgetText(t().screenshotAutoRedactionNote)}` : '';
     return `
       <p style="margin: 8px 0 0; color: var(--bd-text-secondary); font-size: 0.95rem;">
-        This site will attach a full-page screenshot when you submit without showing a preview. Review your page for sensitive information before sending.${redactionNote}
+        ${escapeWidgetText(t().screenshotAutoNote)}${redactionNote}
       </p>
     `;
   }
@@ -1532,7 +1529,7 @@ function getScreenshotFormControl(
   if (config.screenshotMode === 'required') {
     return `
       <p style="margin: 8px 0 0; color: var(--bd-text-secondary); font-size: 0.95rem;">
-        📸 A screenshot is required before submitting.
+        ${escapeWidgetText(t().screenshotRequiredNote)}
       </p>
     `;
   }
@@ -1545,7 +1542,7 @@ function getScreenshotFormControl(
     <div class="bd-screenshot-control">
       <input type="checkbox" id="include-screenshot" ${includeScreenshot ? 'checked' : ''} class="bd-checkbox" />
       <label for="include-screenshot" class="bd-checkbox-label">
-        📸 Include a screenshot
+        ${escapeWidgetText(t().includeScreenshotLabel)}
       </label>
     </div>
   `;
@@ -1561,7 +1558,7 @@ function getConsoleLogsFormControl(
     <div class="bd-form-group" style="display: flex; align-items: center; gap: 10px; margin-top: 8px;">
       <input type="checkbox" id="send-console-logs" ${sendConsoleLogs ? 'checked' : ''} style="width: 18px; height: 18px; accent-color: var(--bd-primary); cursor: pointer;" />
       <label for="send-console-logs" style="font-size: 0.95rem; color: var(--bd-text-secondary); cursor: pointer; user-select: none;">
-        Send Console Logs
+        ${escapeWidgetText(t().sendConsoleLogsLabel)}
       </label>
     </div>
   `;
@@ -1578,11 +1575,11 @@ async function submitFeedback(root: HTMLElement, config: WidgetConfig, data: Fee
   // Show submitting modal with loading state
   const modal = createModal(
     root,
-    'Submitting...',
+    t().submittingTitle,
     `
       <div style="display: flex; flex-direction: column; align-items: center; padding: 20px;">
         <div class="bd-spinner bd-spinner--lg"></div>
-        <p class="bd-loading-text" style="margin-top: 12px;">Creating issue...</p>
+        <p class="bd-loading-text" style="margin-top: 12px;">${escapeWidgetText(t().creatingIssue)}</p>
       </div>
     `
   );
@@ -1641,12 +1638,7 @@ async function submitFeedback(root: HTMLElement, config: WidgetConfig, data: Fee
     if (response.status === 429) {
       const retryAfter = response.headers.get('Retry-After');
       const minutes = retryAfter ? Math.ceil(parseInt(retryAfter, 10) / 60) : 15;
-      showSubmitError(
-        root,
-        config,
-        data,
-        `Too many submissions. Please try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`
-      );
+      showSubmitError(root, config, data, t().rateLimited(minutes));
       return;
     }
 
@@ -1661,11 +1653,11 @@ async function submitFeedback(root: HTMLElement, config: WidgetConfig, data: Fee
         config.issueLinkVisibility
       );
     } else {
-      showSubmitError(root, config, data, result.error || 'Failed to submit');
+      showSubmitError(root, config, data, result.error || t().submitFailedFallback);
     }
   } catch (_error) {
     modal.remove();
-    showSubmitError(root, config, data, 'Network error. Please check your connection.');
+    showSubmitError(root, config, data, t().networkError);
   }
 }
 
@@ -1677,17 +1669,17 @@ function showSubmitError(
 ) {
   const modal = createModal(
     root,
-    'Submission Failed',
+    t().submissionFailedTitle,
     `
       <div class="bd-error-message">
         <svg class="bd-error-message__icon" viewBox="0 0 16 16" fill="currentColor">
           <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0-9.5a.75.75 0 0 0-.75.75v2.5a.75.75 0 0 0 1.5 0v-2.5A.75.75 0 0 0 8 5.5zm0 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/>
         </svg>
-        <span class="bd-error-message__text">${errorMessage}</span>
+        <span class="bd-error-message__text">${escapeHtml(errorMessage)}</span>
       </div>
       <div class="bd-actions">
-        <button class="bd-btn bd-btn-secondary" data-action="cancel">Cancel</button>
-        <button class="bd-btn bd-btn-primary" data-action="retry">Try Again</button>
+        <button class="bd-btn bd-btn-secondary" data-action="cancel">${escapeWidgetText(t().cancel)}</button>
+        <button class="bd-btn bd-btn-primary" data-action="retry">${escapeWidgetText(t().tryAgain)}</button>
       </div>
     `,
     true

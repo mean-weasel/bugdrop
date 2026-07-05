@@ -593,6 +593,12 @@
   <!-- Load BugDrop (use ?theme=light to test light mode) -->
   <script src="/test/load-widget.js"></script>
   <script>
+    const bugdropTestParams = new URLSearchParams(window.location.search);
+    const bugdropTestHtmlLang = bugdropTestParams.get('htmlLang');
+    if (bugdropTestHtmlLang) {
+      document.documentElement.lang = bugdropTestHtmlLang;
+    }
+
     window.loadBugDropTestWidget({
       id: 'bugdrop-script',
       dataset: {
@@ -601,6 +607,8 @@
       },
       queryDataset: {
         theme: 'theme',
+        locale: 'locale',
+        label: 'label',
         bg: 'bg',
         screenshot: 'screenshot',
         showName: 'showName',

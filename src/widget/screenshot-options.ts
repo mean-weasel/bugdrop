@@ -5,6 +5,7 @@ import {
   isFullPageDisabled,
 } from './screenshot';
 import { createModal, redactionNoteHtml } from './ui';
+import { escapeWidgetText, t } from './i18n';
 
 export type ScreenshotChoice =
   | { kind: 'skip' }
@@ -24,41 +25,35 @@ export function showScreenshotOptions(
 
   let redactionNote = '';
   if (nativeViewportAvailable) {
-    redactionNote = redactionNoteHtml(
-      'Browser viewport capture cannot apply automatic private-field masks. Select Element to preserve automatic masking, or review and cover sensitive areas before sending.'
-    );
+    redactionNote = redactionNoteHtml(t().viewportRedactionWarning);
   } else if (getRedactionCount() > 0) {
-    redactionNote = redactionNoteHtml(
-      'This site marked some fields for redaction. Review the screenshot before sending.'
-    );
+    redactionNote = redactionNoteHtml(t().redactionReviewNote);
   }
 
   return new Promise(resolve => {
     const complexNote = fullPageDisabled
-      ? `<p style="margin: 0 0 12px; padding: 8px 12px; background: var(--bd-bg-secondary, #f5f5f5); border-radius: 6px; font-size: 13px; color: var(--bd-text-secondary);">${nativeViewportAvailable ? 'This page is too complex for full-page or area capture. Capture the visible viewport or select a specific element instead.' : 'This page is too complex for full-page or area capture. Select a specific element instead.'}</p>`
+      ? `<p style="margin: 0 0 12px; padding: 8px 12px; background: var(--bd-bg-secondary, #f5f5f5); border-radius: 6px; font-size: 13px; color: var(--bd-text-secondary);">${nativeViewportAvailable ? escapeWidgetText(t().pageTooComplexViewportNote) : escapeWidgetText(t().pageTooComplexElementNote)}</p>`
       : '';
 
     let primaryCaptureButton = '';
     if (!fullPageDisabled) {
-      primaryCaptureButton =
-        '<button class="bd-btn bd-btn-primary" data-action="capture">Full Page</button>';
+      primaryCaptureButton = `<button class="bd-btn bd-btn-primary" data-action="capture">${escapeWidgetText(t().fullPage)}</button>`;
     } else if (nativeViewportAvailable) {
-      primaryCaptureButton =
-        '<button class="bd-btn bd-btn-primary" data-action="viewport">Capture Viewport</button>';
+      primaryCaptureButton = `<button class="bd-btn bd-btn-primary" data-action="viewport">${escapeWidgetText(t().captureViewport)}</button>`;
     }
 
     const modal = createModal(
       root,
-      'Capture Screenshot',
+      t().captureScreenshotTitle,
       `
-        <p style="margin: 0 0 16px; color: var(--bd-text-secondary);">Choose what to capture:</p>
+        <p style="margin: 0 0 16px; color: var(--bd-text-secondary);">${escapeWidgetText(t().chooseWhatToCapture)}</p>
         ${complexNote}
         ${redactionNote}
         <div class="bd-actions bd-screenshot-actions">
           ${primaryCaptureButton}
-          ${fullPageDisabled ? '' : '<button class="bd-btn bd-btn-secondary" data-action="area">Select Area</button>'}
-          <button class="bd-btn bd-btn-secondary" data-action="element">Select Element</button>
-          ${allowSkip ? '<button class="bd-btn bd-btn-quiet" data-action="skip">Skip Screenshot</button>' : ''}
+          ${fullPageDisabled ? '' : `<button class="bd-btn bd-btn-secondary" data-action="area">${escapeWidgetText(t().selectArea)}</button>`}
+          <button class="bd-btn bd-btn-secondary" data-action="element">${escapeWidgetText(t().selectElement)}</button>
+          ${allowSkip ? `<button class="bd-btn bd-btn-quiet" data-action="skip">${escapeWidgetText(t().skipScreenshot)}</button>` : ''}
         </div>
       `
     );
