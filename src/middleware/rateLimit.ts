@@ -8,9 +8,13 @@ interface RateLimitConfig {
 }
 
 /**
- * Extract client IP from Cloudflare headers
+ * Extract client IP from Cloudflare headers. Exported so tenant-scoped rate limiting
+ * (src/routes/tenantApi.ts, contract docs/plans/multi-tenant-embed.md card M1-03) can
+ * reuse the same client-IP resolution without duplicating it. Generic over the Hono
+ * env so it accepts a Context typed with any Variables shape (e.g. tenantApi's), not
+ * just this file's own Bindings-only Context type.
  */
-function getClientIp(c: Context<{ Bindings: Env }>): string {
+export function getClientIp<E extends { Bindings: Env }>(c: Context<E>): string {
   return (
     c.req.header('cf-connecting-ip') ||
     c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ||

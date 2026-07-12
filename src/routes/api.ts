@@ -20,10 +20,10 @@ import { rateLimit, rateLimitByRepo } from '../middleware/rateLimit';
 import { resolveAccentColor } from '../defaults';
 import { verifyBugDropAuthToken } from '../lib/authToken';
 
-type ApiVariables = {
+export type ApiVariables = {
   feedbackPayload?: FeedbackPayload;
 };
-type ApiEnv = { Bindings: Env; Variables: ApiVariables };
+export type ApiEnv = { Bindings: Env; Variables: ApiVariables };
 
 const api = new Hono<ApiEnv>();
 
@@ -115,7 +115,14 @@ api.get('/health', c => {
 });
 
 // Check if app is installed on repo
-api.get('/check/:owner/:repo', async c => {
+api.get('/check/:owner/:repo', handleCheckRequest);
+
+/**
+ * Shared /check/:owner/:repo logic, reused verbatim by the tenant-scoped routes in
+ * src/routes/tenantApi.ts (contract docs/plans/multi-tenant-embed.md, card M1-03) so
+ * tenant traffic runs through the exact same installation-check behavior as legacy.
+ */
+export async function handleCheckRequest(c: Context<ApiEnv>): Promise<Response> {
   const { owner, repo } = c.req.param();
   const fullRepo = `${owner}/${repo}`;
 
@@ -131,10 +138,17 @@ api.get('/check/:owner/:repo', async c => {
     repo: fullRepo,
     appName: c.env.GITHUB_APP_NAME || undefined,
   });
-});
+}
 
 // Submit feedback
-api.post('/feedback', async c => {
+api.post('/feedback', handleFeedbackRequest);
+
+/**
+ * Shared /feedback logic, reused verbatim by the tenant-scoped routes in
+ * src/routes/tenantApi.ts (contract docs/plans/multi-tenant-embed.md, card M1-03) so
+ * tenant traffic runs through the exact same issue-creation behavior as legacy.
+ */
+export async function handleFeedbackRequest(c: Context<ApiEnv>): Promise<Response> {
   // Parse payload
   let payload: FeedbackPayload;
   try {
@@ -285,7 +299,7 @@ api.post('/feedback', async c => {
       500
     );
   }
-});
+}
 
 async function requireBugDropFeedbackAuthToken(
   c: Context<ApiEnv>,

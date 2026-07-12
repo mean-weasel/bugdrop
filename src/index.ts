@@ -4,6 +4,7 @@ import type { Env } from './types';
 import api from './routes/api';
 import admin from './routes/admin';
 import loader from './routes/loader';
+import tenantApi from './routes/tenantApi';
 import { createBoardDogfoodToken } from './lib/boardDogfood';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -45,7 +46,12 @@ app.use('*', async (c, next) => {
 // Request logging
 app.use('*', logger());
 
-// Mount API routes
+// Mount API routes. tenantApi is mounted BEFORE api on purpose: both prefixes
+// (/api/t/:key and /api) overlap textually, and api's own wildcard '*' CORS
+// middleware would otherwise also match tenant traffic if api were registered
+// first (verified against the installed Hono version — see the mount-order note
+// atop src/routes/tenantApi.ts).
+app.route('/api/t/:key', tenantApi);
 app.route('/api', api);
 app.route('/api/admin', admin);
 app.route('/t', loader);
