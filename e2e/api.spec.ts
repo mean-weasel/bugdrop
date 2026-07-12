@@ -134,4 +134,48 @@ test.describe('CORS', () => {
     expect(response.headers()['access-control-allow-origin']).toBe('*');
     expect(response.headers()['access-control-allow-methods']).toContain('POST');
   });
+
+  test('allows an unaliased Deckchecker candidate preflight', async ({ request }) => {
+    const origin = 'https://deckchecker-o04ghwyay-jermwatts-projects.vercel.app';
+    const response = await request.fetch('/api/feedback', {
+      method: 'OPTIONS',
+      headers: {
+        Origin: origin,
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'content-type, authorization',
+      },
+    });
+
+    expect(response.status()).toBe(204);
+    expect(response.headers()['access-control-allow-origin']).toBe(origin);
+    expect(response.headers()['access-control-allow-methods']).toContain('POST');
+    expect(response.headers()['access-control-allow-headers']).toContain('Content-Type');
+    expect(response.headers()['access-control-allow-headers']).toContain('Authorization');
+  });
+
+  test('rejects Deckchecker candidate lookalikes and unrelated Vercel projects', async ({
+    request,
+  }) => {
+    const rejectedOrigins = [
+      'https://deckchecker-o04ghwyay-jermwatts-projects.vercel.app.evil.test',
+      'http://deckchecker-o04ghwyay-jermwatts-projects.vercel.app',
+      'https://evil.test@deckchecker-o04ghwyay-jermwatts-projects.vercel.app',
+      'https://other-o04ghwyay-jermwatts-projects.vercel.app',
+      'https://arbitrary-project.vercel.app',
+    ];
+
+    for (const origin of rejectedOrigins) {
+      const response = await request.fetch('/api/feedback', {
+        method: 'OPTIONS',
+        headers: {
+          Origin: origin,
+          'Access-Control-Request-Method': 'POST',
+          'Access-Control-Request-Headers': 'content-type, authorization',
+        },
+      });
+
+      expect(response.status()).toBe(204);
+      expect(response.headers()['access-control-allow-origin']).toBeUndefined();
+    }
+  });
 });
