@@ -66,59 +66,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Deploy restricted hosted Worker
-        run: npx wrangler deploy --env personal
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: Verify Deckchecker candidate CORS policy
-        run: |
-          WORKER_URL="https://bugdrop-personal.neonwatty.workers.dev/api/feedback"
-          ALLOWED_ORIGIN="https://deckchecker-o04ghwyay-jermwatts-projects.vercel.app"
-          REJECTED_ORIGIN="https://deckchecker-o04ghwyay-jermwatts-projects.vercel.app.evil.test"
-
-          for attempt in $(seq 1 30); do
-            if ! allowed_headers="$(curl -sS --connect-timeout 5 --max-time 15 -D - -o /dev/null -X OPTIONS "$WORKER_URL" -H "Origin: $ALLOWED_ORIGIN" -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: content-type, authorization' | tr -d '\r')"; then
-              allowed_headers=""
-            fi
-            allowed_status="$(printf '%s\n' "$allowed_headers" | awk 'NR == 1 { print $2 }')"
-            allowed_header="$(printf '%s\n' "$allowed_headers" | awk -F ': ' 'tolower($1) == "access-control-allow-origin" { print $2 }')"
-            if [ "$allowed_status" = "204" ] && [ "$allowed_header" = "$ALLOWED_ORIGIN" ]; then
-              break
-            fi
-            echo "Attempt $attempt/30 did not serve the expected policy; retrying"
-            if [ "$attempt" = "30" ]; then
-              echo "Restricted hosted Worker did not serve the expected CORS policy"
-              exit 1
-            fi
-            sleep 5
-          done
-
-          test "$allowed_status" = "204"
-          test "$allowed_header" = "$ALLOWED_ORIGIN"
-          printf '%s\n' "$allowed_headers" | awk -F ': ' 'tolower($1) == "access-control-allow-methods" { print $2 }' | grep -q 'POST'
-          printf '%s\n' "$allowed_headers" | awk -F ': ' 'tolower($1) == "access-control-allow-headers" { print $2 }' | grep -q 'Content-Type'
-          printf '%s\n' "$allowed_headers" | awk -F ': ' 'tolower($1) == "access-control-allow-headers" { print $2 }' | grep -q 'Authorization'
-
-          for exact_origin in \
-            "https://bugdrop-personal.neonwatty.workers.dev" \
-            "https://bleepthat.sh" \
-            "https://preview.bleepthat.sh" \
-            "https://seatify.app" \
-            "https://preview.seatify.app" \
-            "https://deckchecker.app" \
-            "https://origin.deckchecker.app" \
-            "https://preview.deckchecker.app"; do
-            exact_headers="$(curl -sSf --connect-timeout 5 --max-time 15 -D - -o /dev/null -X OPTIONS "$WORKER_URL" -H "Origin: $exact_origin" -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: content-type, authorization' | tr -d '\r')"
-            test "$(printf '%s\n' "$exact_headers" | awk 'NR == 1 { print $2 }')" = "204"
-            test "$(printf '%s\n' "$exact_headers" | awk -F ': ' 'tolower($1) == "access-control-allow-origin" { print $2 }')" = "$exact_origin"
-          done
-
-          rejected_headers="$(curl -sSf --connect-timeout 5 --max-time 15 -D - -o /dev/null -X OPTIONS "$WORKER_URL" -H "Origin: $REJECTED_ORIGIN" -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: content-type, authorization' | tr -d '\r')"
-          test "$(printf '%s\n' "$rejected_headers" | awk 'NR == 1 { print $2 }')" = "204"
-          test -z "$(printf '%s\n' "$rejected_headers" | awk -F ': ' 'tolower($1) == "access-control-allow-origin" { print $2 }')"
-
   live-production-tests:
     name: Live Production Tests
     needs: [deploy]

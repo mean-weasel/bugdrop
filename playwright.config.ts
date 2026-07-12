@@ -83,8 +83,7 @@ export default defineConfig({
   webServer: process.env.LIVE_TARGET
     ? undefined
     : {
-        command:
-          'BUGDROP_TEST_HOOKS=1 npm run build:widget && npm run dev -- --var ALLOWED_ORIGINS:https://deckchecker.app,https://preview.deckchecker.app --var ALLOW_DECKCHECKER_VERCEL_CANDIDATES:true',
+        command: 'BUGDROP_TEST_HOOKS=1 npm run build:widget && npm run dev',
         url: 'http://localhost:8787',
         reuseExistingServer: !process.env.CI,
         timeout: 120 * 1000,
