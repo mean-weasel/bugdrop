@@ -51,3 +51,10 @@ YOUR_PRIVATE_KEY_CONTENT_HERE
 
 # RATE_LIMIT is intentionally not configured here.
 # Local development runs with ENVIRONMENT=development and can work without a KV namespace.
+
+# Optional: Bearer secret protecting the tenant admin API (/api/admin/tenants/*).
+# Missing this secret makes every admin route fail loud with 503 (never silently open).
+# Required locally to run the multi-tenant admin-seeded E2E coverage in
+# e2e/multi-tenant.spec.ts (contract docs/plans/multi-tenant-embed.md, card M1-04);
+# that suite skips itself when this is unset, so it is optional for a normal `npm run dev`.
+# ADMIN_TOKEN=replace-with-a-long-random-secret
