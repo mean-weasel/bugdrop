@@ -416,9 +416,17 @@ if (rawShowIssueLink && rawShowIssueLink !== 'public' && rawShowIssueLink !== is
     `[BugDrop] Invalid data-show-issue-link "${rawShowIssueLink}". Expected "public", "always", or "never".`
   );
 }
+const rawTenant = script?.dataset.tenant;
+const tenantKey = rawTenant && /^[a-z0-9-]{3,32}$/.test(rawTenant) ? rawTenant : undefined;
+if (rawTenant && !tenantKey) {
+  console.warn(
+    `[BugDrop] Invalid data-tenant "${rawTenant}". Expected 3-32 chars of lowercase letters, digits, or hyphens.`
+  );
+}
+const baseApiUrl = script?.src.replace(/\/widget(?:\.v[\d.]+)?\.js$/, '/api') || '';
 const config: WidgetConfig = {
   repo: script?.dataset.repo || '',
-  apiUrl: script?.src.replace(/\/widget(?:\.v[\d.]+)?\.js$/, '/api') || '',
+  apiUrl: baseApiUrl && tenantKey ? `${baseApiUrl}/t/${tenantKey}` : baseApiUrl,
   authTokenProvider: resolveAuthTokenProvider(script?.dataset.authTokenProvider),
   position: rawPosition === 'bottom-left' ? 'bottom-left' : 'bottom-right',
   theme: isValidTheme(rawTheme) ? rawTheme : 'auto', // Default to auto-detection
