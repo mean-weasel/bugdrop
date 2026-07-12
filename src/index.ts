@@ -3,6 +3,7 @@ import { logger } from 'hono/logger';
 import type { Env } from './types';
 import api from './routes/api';
 import admin from './routes/admin';
+import loader from './routes/loader';
 import { createBoardDogfoodToken } from './lib/boardDogfood';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -47,6 +48,7 @@ app.use('*', logger());
 // Mount API routes
 app.route('/api', api);
 app.route('/api/admin', admin);
+app.route('/t', loader);
 
 export function isWeakAuthTokenSecret(secret?: string): boolean {
   return typeof secret === 'string' && secret.length > 0 && secret.length < 32;
