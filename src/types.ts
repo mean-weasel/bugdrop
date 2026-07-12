@@ -26,6 +26,7 @@ export interface Env {
   // Bindings
   ASSETS: Fetcher;
   RATE_LIMIT?: KVNamespace; // Optional: for rate limiting (create with wrangler kv:namespace create RATE_LIMIT)
+  TENANTS: KVNamespace; // Tenant registry (create with: wrangler kv namespace create bugdrop-tenants)
 }
 
 export type FeedbackCategory = 'bug' | 'feature' | 'question';
