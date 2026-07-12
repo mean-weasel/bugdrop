@@ -103,6 +103,13 @@ describe('admin routes', () => {
       const res = await admin.fetch(req('/tenants'), env);
       expect(res.status).toBe(200);
     });
+
+    it('returns 503 when the TENANTS binding is not configured (FIX 4)', async () => {
+      const { TENANTS: _unused, ...envWithoutTenants } = env;
+      const res = await admin.fetch(req('/tenants'), envWithoutTenants as Env);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: 'Tenant storage is not configured' });
+    });
   });
 
   describe('CRUD round-trip', () => {

@@ -408,4 +408,72 @@ describe('tenant API routes', () => {
       expect(res.status).toBe(200);
     });
   });
+
+  describe('IP rate limit runs before auth (FIX 2)', () => {
+    const feedbackBody = JSON.stringify({
+      repo: 'acme/widget',
+      title: 'Test feedback',
+      metadata: {
+        url: 'http://localhost:3000',
+        userAgent: 'Mozilla/5.0',
+        viewport: { width: 1920, height: 1080 },
+        timestamp: '2025-01-15T12:00:00Z',
+      },
+    });
+
+    function invalidTokenRequest(): Request {
+      return new Request('http://localhost/api/t/acme/feedback', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'cf-connecting-ip': '203.0.113.20',
+          Authorization: 'Bearer not-a-real-token',
+        },
+        body: feedbackBody,
+      });
+    }
+
+    it('increments the t:{key}:ip: counter even when the request is rejected for an invalid token (401)', async () => {
+      await putTenant(storedTenant());
+      const res = await app.fetch(invalidTokenRequest(), {
+        ...env,
+        ENVIRONMENT: 'production',
+        AUTH_TOKEN_SECRET: 'tenant-parity-secret',
+      });
+
+      expect(res.status).toBe(401);
+      const ipKeys = [...rateLimitStore.keys()].filter(k =>
+        k.startsWith('t:acme:ip:203.0.113.20:')
+      );
+      expect(ipKeys.length).toBe(1);
+      expect(rateLimitStore.get(ipKeys[0]!)).toBe('1');
+    });
+
+    it('returns 429 (not 401) when the IP bucket is already at the limit, even with an invalid token', async () => {
+      await putTenant(storedTenant());
+      const windowStart = Math.floor(Date.now() / (15 * 60 * 1000));
+      rateLimitStore.set(`t:acme:ip:203.0.113.20:${windowStart}`, '20');
+
+      const res = await app.fetch(invalidTokenRequest(), {
+        ...env,
+        ENVIRONMENT: 'production',
+        AUTH_TOKEN_SECRET: 'tenant-parity-secret',
+      });
+
+      expect(res.status).toBe(429);
+      expect(mockCreateIssue).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('TENANTS binding absent (FIX 4)', () => {
+    it('returns 404 (unknown tenant) when the TENANTS binding is not configured', async () => {
+      const { TENANTS: _unused, ...envWithoutTenants } = env;
+      const req = new Request('http://localhost/api/t/acme/check/acme/widget');
+      const res = await app.fetch(req, envWithoutTenants as Env);
+      const data = await res.json();
+
+      expect(res.status).toBe(404);
+      expect(data).toEqual({ error: 'Unknown tenant' });
+    });
+  });
 });

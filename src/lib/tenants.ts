@@ -28,6 +28,9 @@ const REPO_PATTERN = /^[^/\s]+\/[^/\s]+$/;
 const ISO_8601_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 const STATUS_VALUES = new Set(['active', 'paused']);
 
+// authTokenSecretEnc is deliberately NOT in this set: it is rejected with an
+// explicit error below (M2, D5) rather than falling into the generic
+// "Unknown field" case, so operators get a clear "not yet supported" message.
 const TOP_LEVEL_FIELDS = new Set([
   'version',
   'key',
@@ -38,7 +41,6 @@ const TOP_LEVEL_FIELDS = new Set([
   'theme',
   'behavior',
   'rate',
-  'authTokenSecretEnc',
   'createdAt',
   'updatedAt',
 ]);
@@ -54,7 +56,14 @@ export function validateTenantConfig(input: unknown): ValidateTenantConfigResult
     return { ok: false, errors: ['TenantConfig must be an object'] };
   }
 
-  checkUnknownFields(input, TOP_LEVEL_FIELDS, '', errors);
+  // Reject authTokenSecretEnc explicitly (M2, D5) before the generic unknown-field
+  // scan, so it never gets folded into a plain "Unknown field" error and its
+  // presence doesn't also trigger that generic message.
+  const { authTokenSecretEnc, ...knownShapeInput } = input;
+  if (authTokenSecretEnc !== undefined) {
+    errors.push('authTokenSecretEnc is not supported yet (M2 envelope encryption)');
+  }
+  checkUnknownFields(knownShapeInput, TOP_LEVEL_FIELDS, '', errors);
 
   if (input.version !== 1) {
     errors.push('version must be 1');
@@ -96,10 +105,6 @@ export function validateTenantConfig(input: unknown): ValidateTenantConfigResult
   const behavior = validateBehavior(input.behavior, errors);
   const rate = validateRate(input.rate, errors);
 
-  if (input.authTokenSecretEnc !== undefined && typeof input.authTokenSecretEnc !== 'string') {
-    errors.push('authTokenSecretEnc must be a string');
-  }
-
   if (!isNonEmptyString(input.createdAt) || !ISO_8601_PATTERN.test(input.createdAt)) {
     errors.push('createdAt must be an ISO 8601 string');
   }
@@ -125,9 +130,6 @@ export function validateTenantConfig(input: unknown): ValidateTenantConfigResult
   if (theme && Object.keys(theme).length > 0) value.theme = theme;
   if (behavior && Object.keys(behavior).length > 0) value.behavior = behavior;
   if (rate && Object.keys(rate).length > 0) value.rate = rate;
-  if (typeof input.authTokenSecretEnc === 'string') {
-    value.authTokenSecretEnc = input.authTokenSecretEnc;
-  }
 
   return { ok: true, value };
 }

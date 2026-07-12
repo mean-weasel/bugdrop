@@ -22,6 +22,44 @@ export function getClientIp<E extends { Bindings: Env }>(c: Context<E>): string 
   );
 }
 
+export interface FixedWindowLimitParams {
+  key: string; // base bucket key, WITHOUT the window suffix (this appends it)
+  windowMs: number;
+  maxRequests: number;
+}
+
+export interface FixedWindowLimitResult {
+  limited: boolean;
+  retryAfter: number; // seconds; always populated, even when not limited
+  remaining: number; // 0 when limited
+}
+
+/**
+ * Fixed-window counter core shared by rateLimit()/rateLimitByRepo() below and
+ * by the tenant-scoped rate limiting in src/routes/tenantApi.ts (contract
+ * docs/plans/multi-tenant-embed.md, card M1-03 / review-pass-2 FIX 6): get the
+ * current count for the window, and if under the limit, increment with a TTL
+ * matching the window. Callers own KV-unconfigured/dev-environment skips and
+ * error handling — this function assumes `kv` is present and lets KV errors
+ * propagate.
+ */
+export async function applyFixedWindowLimit(
+  kv: KVNamespace,
+  { key, windowMs, maxRequests }: FixedWindowLimitParams
+): Promise<FixedWindowLimitResult> {
+  const windowStart = Math.floor(Date.now() / windowMs);
+  const windowKey = `${key}:${windowStart}`;
+  const retryAfter = Math.ceil(windowMs / 1000);
+
+  const currentCount = parseInt((await kv.get(windowKey)) || '0', 10);
+  if (currentCount >= maxRequests) {
+    return { limited: true, retryAfter, remaining: 0 };
+  }
+
+  await kv.put(windowKey, String(currentCount + 1), { expirationTtl: retryAfter });
+  return { limited: false, retryAfter, remaining: maxRequests - currentCount - 1 };
+}
+
 /**
  * Create a rate limiting middleware for IP-based limiting
  */
@@ -37,32 +75,28 @@ export function rateLimit(config: RateLimitConfig) {
     }
 
     const clientIp = getClientIp(c);
-    const windowStart = Math.floor(Date.now() / windowMs);
-    const key = `${keyPrefix}:${clientIp}:${windowStart}`;
 
     try {
-      // Get current count
-      const currentCount = parseInt((await kv.get(key)) || '0', 10);
+      const result = await applyFixedWindowLimit(kv, {
+        key: `${keyPrefix}:${clientIp}`,
+        windowMs,
+        maxRequests,
+      });
 
-      if (currentCount >= maxRequests) {
-        const retryAfter = Math.ceil(windowMs / 1000);
+      if (result.limited) {
         return c.json(
           {
             error: 'Too many requests. Please try again later.',
-            retryAfter,
+            retryAfter: result.retryAfter,
           },
           429,
-          { 'Retry-After': String(retryAfter) }
+          { 'Retry-After': String(result.retryAfter) }
         );
       }
 
-      // Increment count with TTL
-      const ttlSeconds = Math.ceil(windowMs / 1000);
-      await kv.put(key, String(currentCount + 1), { expirationTtl: ttlSeconds });
-
       // Add rate limit headers
       c.header('X-RateLimit-Limit', String(maxRequests));
-      c.header('X-RateLimit-Remaining', String(maxRequests - currentCount - 1));
+      c.header('X-RateLimit-Remaining', String(result.remaining));
 
       return next();
     } catch (error) {
@@ -101,14 +135,13 @@ export function rateLimitByRepo(config: Omit<RateLimitConfig, 'keyPrefix'>) {
         return next(); // Will fail validation in the route handler
       }
 
-      const windowMs = config.windowMs;
-      const maxRequests = config.maxRequests;
-      const windowStart = Math.floor(Date.now() / windowMs);
-      const key = `repo:${repo}:${windowStart}`;
+      const result = await applyFixedWindowLimit(kv, {
+        key: `repo:${repo}`,
+        windowMs: config.windowMs,
+        maxRequests: config.maxRequests,
+      });
 
-      const currentCount = parseInt((await kv.get(key)) || '0', 10);
-
-      if (currentCount >= maxRequests) {
+      if (result.limited) {
         return c.json(
           {
             error:
@@ -117,10 +150,6 @@ export function rateLimitByRepo(config: Omit<RateLimitConfig, 'keyPrefix'>) {
           429
         );
       }
-
-      await kv.put(key, String(currentCount + 1), {
-        expirationTtl: Math.ceil(windowMs / 1000),
-      });
 
       return next();
     } catch {

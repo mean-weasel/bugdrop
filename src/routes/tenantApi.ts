@@ -18,10 +18,10 @@
 
 import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
-import type { Env } from '../types';
+import type { Env, FeedbackPayload } from '../types';
 import { getTenant } from '../lib/tenantStore';
 import type { TenantConfig } from '../lib/tenants';
-import { getClientIp } from '../middleware/rateLimit';
+import { applyFixedWindowLimit, getClientIp } from '../middleware/rateLimit';
 import {
   handleCheckRequest,
   handleFeedbackRequest,
@@ -29,7 +29,7 @@ import {
   type ApiEnv,
 } from './api';
 
-type TenantApiVariables = { tenant: TenantConfig };
+type TenantApiVariables = { tenant: TenantConfig; feedbackPayload?: FeedbackPayload };
 type TenantApiEnv = { Bindings: Env; Variables: TenantApiVariables };
 
 const DEFAULT_IP_WINDOW_MS = 15 * 60 * 1000; // matches legacy /api/feedback IP window
@@ -92,22 +92,30 @@ tenantApi.get('/check/:owner/:repo', async c => {
   return handleCheckRequest(asApiContext(c));
 });
 
-// Parity with legacy /api/feedback: when the operator configures global widget-auth
-// secrets (AUTH_TOKEN_SECRET*), tenant traffic must present the same bd1. token —
-// otherwise this route would silently bypass a protection the legacy route enforces.
-// Per-tenant secrets arrive with D5/M2.
+// Middleware order mirrors the legacy /api/feedback chain exactly (src/routes/api.ts):
+// IP rate limit -> auth -> repo rate limit. The IP limit runs FIRST, before auth, so a
+// flood of requests carrying invalid/missing bd1. tokens still consumes IP quota
+// instead of bypassing rate limiting entirely (an attacker retrying bad tokens would
+// otherwise never hit a bucket). requireTenantRepoMatch runs right after auth because
+// it needs the parsed body, which auth already parsed and cached when secrets are
+// configured (see requireTenantRepoMatch's own comment, FIX 3). The repo rate limit
+// runs last, same relative position as legacy's rateLimitByRepo.
+tenantApi.use('/feedback', tenantIpRateLimit);
 tenantApi.use('/feedback', (c, next) => requireBugDropFeedbackAuthToken(asApiContext(c), next));
 tenantApi.use('/feedback', requireTenantRepoMatch);
-tenantApi.use('/feedback', tenantIpRateLimit);
 tenantApi.use('/feedback', tenantRepoRateLimit);
 tenantApi.post('/feedback', async c => handleFeedbackRequest(asApiContext(c)));
 
 /**
  * Rejects a /feedback submission whose body repo does not match tenant.repo (D4).
- * Mirrors the clone-then-parse pattern used by the legacy
- * requireBugDropFeedbackAuthToken middleware so the body can still be read once more
- * downstream: on invalid JSON here, this simply lets handleFeedbackRequest return its
- * own "Invalid JSON" response instead of failing early with an unrelated error.
+ * Reuses the body already parsed and cached by requireBugDropFeedbackAuthToken
+ * (c.get('feedbackPayload')) when present — that middleware only sets it when
+ * widget-auth secrets are configured, in which case it already consumed the one
+ * read of a non-cloned body via c.req.raw.clone().json(). Falls back to its own
+ * clone-then-parse (mirroring the same pattern) only when that cache is absent,
+ * so the body is never parsed from the same non-cloned stream twice. On invalid
+ * JSON this simply lets handleFeedbackRequest return its own "Invalid JSON"
+ * response instead of failing early with an unrelated error.
  */
 async function requireTenantRepoMatch(
   c: Context<TenantApiEnv>,
@@ -115,7 +123,8 @@ async function requireTenantRepoMatch(
 ): Promise<Response | void> {
   const tenant = c.get('tenant');
   try {
-    const payload = (await c.req.raw.clone().json()) as { repo?: unknown };
+    const payload: { repo?: unknown } =
+      c.get('feedbackPayload') ?? ((await c.req.raw.clone().json()) as { repo?: unknown });
     if (typeof payload.repo === 'string' && payload.repo !== tenant.repo) {
       return c.json({ error: 'Repository does not match tenant configuration' }, 400);
     }
@@ -125,57 +134,69 @@ async function requireTenantRepoMatch(
   return next();
 }
 
-async function tenantIpRateLimit(c: Context<TenantApiEnv>, next: Next): Promise<Response | void> {
-  const tenant = c.get('tenant');
-  return enforceTenantRateLimit(c, next, {
-    windowMs: DEFAULT_IP_WINDOW_MS,
-    maxRequests: tenant.rate?.perIp ?? DEFAULT_IP_MAX_REQUESTS,
-    bucketKey: `t:${tenant.key}:ip:${getClientIp(c)}`,
-  });
-}
-
-async function tenantRepoRateLimit(c: Context<TenantApiEnv>, next: Next): Promise<Response | void> {
-  const tenant = c.get('tenant');
-  return enforceTenantRateLimit(c, next, {
-    windowMs: DEFAULT_REPO_WINDOW_MS,
-    maxRequests: tenant.rate?.perRepo ?? DEFAULT_REPO_MAX_REQUESTS,
-    bucketKey: `t:${tenant.key}:repo:${tenant.repo}`,
-  });
-}
-
-interface RateLimitBucket {
-  windowMs: number;
-  maxRequests: number;
-  bucketKey: string;
-}
-
 /**
- * Fixed-window counter identical in shape to src/middleware/rateLimit.ts, but keyed
- * under the tenant-scoped bucket built by the callers above (`t:{key}:...`) so tenant
- * traffic never shares a bucket with another tenant or with the legacy global routes.
- * Skips (allows through) when KV is unconfigured or in development, matching legacy.
+ * Parity with legacy /api/feedback's IP limiter (rateLimit() in
+ * src/middleware/rateLimit.ts): same window/default, same X-RateLimit-* headers on
+ * success, keyed under `t:{key}:ip:...` (review pass 2, FIX 6) so tenant traffic
+ * never shares a bucket with another tenant or the legacy global routes.
  */
-async function enforceTenantRateLimit(
-  c: Context<TenantApiEnv>,
-  next: Next,
-  { windowMs, maxRequests, bucketKey }: RateLimitBucket
-): Promise<Response | void> {
+async function tenantIpRateLimit(c: Context<TenantApiEnv>, next: Next): Promise<Response | void> {
   const kv = c.env.RATE_LIMIT;
   if (!kv || c.env.ENVIRONMENT === 'development') return next();
 
-  const windowStart = Math.floor(Date.now() / windowMs);
-  const key = `${bucketKey}:${windowStart}`;
+  const tenant = c.get('tenant');
+  const maxRequests = tenant.rate?.perIp ?? DEFAULT_IP_MAX_REQUESTS;
 
   try {
-    const currentCount = parseInt((await kv.get(key)) || '0', 10);
-    if (currentCount >= maxRequests) {
-      const retryAfter = Math.ceil(windowMs / 1000);
-      return c.json({ error: 'Too many requests. Please try again later.', retryAfter }, 429, {
-        'Retry-After': String(retryAfter),
-      });
+    const result = await applyFixedWindowLimit(kv, {
+      key: `t:${tenant.key}:ip:${getClientIp(c)}`,
+      windowMs: DEFAULT_IP_WINDOW_MS,
+      maxRequests,
+    });
+
+    if (result.limited) {
+      return c.json(
+        { error: 'Too many requests. Please try again later.', retryAfter: result.retryAfter },
+        429,
+        { 'Retry-After': String(result.retryAfter) }
+      );
     }
 
-    await kv.put(key, String(currentCount + 1), { expirationTtl: Math.ceil(windowMs / 1000) });
+    c.header('X-RateLimit-Limit', String(maxRequests));
+    c.header('X-RateLimit-Remaining', String(result.remaining));
+    return next();
+  } catch (error) {
+    console.error('[tenantApi] rate limit KV error:', error);
+    return next();
+  }
+}
+
+/**
+ * Parity with legacy /api/feedback's repo limiter (rateLimitByRepo()), keyed under
+ * `t:{key}:repo:...` (review pass 2, FIX 6) so tenant traffic never shares a bucket
+ * with another tenant or the legacy global routes.
+ */
+async function tenantRepoRateLimit(c: Context<TenantApiEnv>, next: Next): Promise<Response | void> {
+  const kv = c.env.RATE_LIMIT;
+  if (!kv || c.env.ENVIRONMENT === 'development') return next();
+
+  const tenant = c.get('tenant');
+
+  try {
+    const result = await applyFixedWindowLimit(kv, {
+      key: `t:${tenant.key}:repo:${tenant.repo}`,
+      windowMs: DEFAULT_REPO_WINDOW_MS,
+      maxRequests: tenant.rate?.perRepo ?? DEFAULT_REPO_MAX_REQUESTS,
+    });
+
+    if (result.limited) {
+      return c.json(
+        { error: 'Too many requests. Please try again later.', retryAfter: result.retryAfter },
+        429,
+        { 'Retry-After': String(result.retryAfter) }
+      );
+    }
+
     return next();
   } catch (error) {
     console.error('[tenantApi] rate limit KV error:', error);
@@ -185,11 +206,11 @@ async function enforceTenantRateLimit(
 
 /**
  * The shared handlers are typed against api.ts's ApiEnv (Variables: { feedbackPayload
- * }). This router's own Context carries a different Variables shape (Variables:
- * { tenant }), and it never sets feedbackPayload — handleFeedbackRequest already
- * falls back to re-parsing the body itself (`c.get('feedbackPayload') ??
- * await c.req.json()`) when it is absent, so this cast changes no behavior; it only
- * satisfies TypeScript across the two Hono apps' distinct Variables types.
+ * }). This router's own Context carries a superset Variables shape (Variables:
+ * { tenant, feedbackPayload }), and setting/getting feedbackPayload through either
+ * typed view reads/writes the same underlying Hono context object, so this cast
+ * changes no runtime behavior; it only satisfies TypeScript across the two Hono
+ * apps' distinct Variables types.
  */
 function asApiContext(c: Context<TenantApiEnv>): Context<ApiEnv> {
   return c as unknown as Context<ApiEnv>;

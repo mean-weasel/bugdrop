@@ -27,7 +27,12 @@ export interface Env {
   // Bindings
   ASSETS: Fetcher;
   RATE_LIMIT?: KVNamespace; // Optional: for rate limiting (create with wrangler kv:namespace create RATE_LIMIT)
-  TENANTS: KVNamespace; // Tenant registry (create with: wrangler kv namespace create bugdrop-tenants)
+  // Optional: tenant registry (create with: wrangler kv namespace create bugdrop-tenants).
+  // Multitenant embed is opt-in for the operator — when this binding is absent,
+  // the multitenant feature (admin CRUD, /t/:key loader, /api/t/:key routes) is
+  // dormant: admin routes 503, the loader warn-only no-ops, tenant lookups
+  // return null/empty. Legacy /widget.js + /api are unaffected either way.
+  TENANTS?: KVNamespace;
 }
 
 export type FeedbackCategory = 'bug' | 'feature' | 'question';

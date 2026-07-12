@@ -15,9 +15,13 @@ function storageKey(key: string): string {
 /**
  * Reads and validates a tenant config from KV. Returns null when the key is
  * missing, or when the stored JSON is not valid JSON or fails TenantConfig v1
- * validation (logging the failure so a corrupted record is debuggable).
+ * validation (logging the failure so a corrupted record is debuggable). Also
+ * returns null when the TENANTS binding itself is absent (multitenant is an
+ * opt-in operator feature; see src/types.ts).
  */
 export async function getTenant(env: Env, key: string): Promise<TenantConfig | null> {
+  if (!env.TENANTS) return null;
+
   const raw = await env.TENANTS.get(storageKey(key), { cacheTtl: 60 });
   if (raw === null) {
     return null;
@@ -46,16 +50,21 @@ export async function getTenant(env: Env, key: string): Promise<TenantConfig | n
 /**
  * Writes a validated tenant config to KV. Callers are responsible for
  * validating with `validateTenantConfig` before calling this (e.g. the admin
- * routes), so this function trusts its input's shape.
+ * routes), so this function trusts its input's shape. Throws when the
+ * TENANTS binding is absent — writes must fail loud, never silently no-op.
  */
 export async function putTenant(env: Env, tenant: TenantConfig): Promise<void> {
+  if (!env.TENANTS) throw new Error('TENANTS KV binding is not configured');
   await env.TENANTS.put(storageKey(tenant.key), JSON.stringify(tenant));
 }
 
 /**
- * Deletes a tenant config from KV. No-op if the key does not exist.
+ * Deletes a tenant config from KV. No-op if the key does not exist. Throws
+ * when the TENANTS binding is absent — deletes must fail loud, never
+ * silently no-op.
  */
 export async function deleteTenant(env: Env, key: string): Promise<void> {
+  if (!env.TENANTS) throw new Error('TENANTS KV binding is not configured');
   await env.TENANTS.delete(storageKey(key));
 }
 
@@ -68,18 +77,18 @@ export interface TenantListEntry {
  * Lists tenants by the `tenant:` key prefix, returning only key + name (not
  * full config) per D6's admin list surface. Skips entries that fail to parse
  * or validate, logging each so a corrupted record doesn't break the listing.
+ * Returns an empty list when the TENANTS binding is absent. Fetches entries
+ * in parallel rather than sequentially awaiting each in a loop.
  */
 export async function listTenants(env: Env): Promise<TenantListEntry[]> {
+  if (!env.TENANTS) return [];
+
   const listed = await env.TENANTS.list({ prefix: TENANT_KEY_PREFIX });
-  const entries: TenantListEntry[] = [];
+  const tenants = await Promise.all(
+    listed.keys.map(item => getTenant(env, item.name.slice(TENANT_KEY_PREFIX.length)))
+  );
 
-  for (const item of listed.keys) {
-    const key = item.name.slice(TENANT_KEY_PREFIX.length);
-    const tenant = await getTenant(env, key);
-    if (tenant) {
-      entries.push({ key: tenant.key, name: tenant.name });
-    }
-  }
-
-  return entries;
+  return tenants
+    .filter((tenant): tenant is TenantConfig => tenant !== null)
+    .map(tenant => ({ key: tenant.key, name: tenant.name }));
 }

@@ -116,4 +116,16 @@ describe('loader route', () => {
     expect(res.headers.get('Content-Type')).toBe('application/javascript; charset=utf-8');
     expect(res.headers.get('Cache-Control')).toBe('public, max-age=300');
   });
+
+  it('returns a 200 warn-only body when the TENANTS binding is not configured (FIX 4)', async () => {
+    await putTenant(storedTenant());
+    const { TENANTS: _unused, ...envWithoutTenants } = env;
+    const res = await loader.fetch(req('/acme.js'), envWithoutTenants as Env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Type')).toBe('application/javascript; charset=utf-8');
+    const body = await res.text();
+    expect(body).toContain('console.warn(');
+    expect(body).toContain('tenant storage is not configured');
+    expect(body).not.toContain('widget.v1.js');
+  });
 });

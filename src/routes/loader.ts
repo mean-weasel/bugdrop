@@ -20,6 +20,11 @@ const LOADER_HEADERS = {
 
 loader.get('/:file{[a-z0-9-]+\\.js}', async c => {
   const key = c.req.param('file').replace(/\.js$/, '');
+
+  if (!c.env.TENANTS) {
+    return c.body(warnOnlyScript('tenant storage is not configured'), 200, LOADER_HEADERS);
+  }
+
   const tenant = await getTenant(c.env, key);
 
   if (!tenant) {

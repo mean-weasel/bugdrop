@@ -7,6 +7,7 @@ import { Hono } from 'hono';
 import type { Env } from '../types';
 import { deleteTenant, getTenant, listTenants, putTenant } from '../lib/tenantStore';
 import { validateTenantConfig } from '../lib/tenants';
+import { isPlainObject } from '../lib/tenantFieldValidators';
 import { timingSafeEqual } from '../lib/timingSafeEqual';
 
 const admin = new Hono<{ Bindings: Env }>();
@@ -15,6 +16,9 @@ admin.use('*', async (c, next) => {
   const adminToken = c.env.ADMIN_TOKEN;
   if (!adminToken) {
     return c.json({ error: 'Admin API is not configured' }, 503);
+  }
+  if (!c.env.TENANTS) {
+    return c.json({ error: 'Tenant storage is not configured' }, 503);
   }
 
   const authHeader = c.req.header('Authorization') ?? '';
@@ -104,10 +108,6 @@ admin.delete('/tenants/:key', async c => {
   await deleteTenant(c.env, key);
   return c.body(null, 204);
 });
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return isPlainObject(value) ? value : {};

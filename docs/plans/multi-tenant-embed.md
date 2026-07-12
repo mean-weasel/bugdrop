@@ -276,3 +276,27 @@ tests incl. new ones). No file over ESLint limits.
   secrets remain M2 (D5).
 - 2026-07-12: D10 clarified in code: paused tenants also get the 200 warn-only
   loader body (the D4 403 applies to API traffic, not the loader).
+- 2026-07-12 (review pass 2): `/api/admin` is now mounted BEFORE `/api` in
+  src/index.ts (tenantApi stays first). Same textual-overlap leak as the
+  tenantApi/api mount-order note: api's global wildcard `'*'` CORS middleware
+  would otherwise also apply to admin traffic, contradicting D6 (admin has no
+  CORS allowance at all).
+- 2026-07-12 (review pass 2): tenant `/feedback` middleware order now mirrors
+  legacy exactly — IP rate limit runs BEFORE auth, so a flood of requests
+  carrying invalid/missing bd1. tokens still consumes IP quota instead of
+  bypassing rate limiting; repo-match and repo rate limit run after auth, same
+  as before.
+- 2026-07-12 (review pass 2): `TENANTS` is now an OPTIONAL Env binding
+  (src/types.ts). Multitenant is an opt-in operator feature: absent, admin
+  routes 503, the loader is warn-only, and tenant lookups return null/empty.
+  The preview environment in wrangler.toml no longer declares a TENANTS
+  binding at all (a real `wrangler deploy` rejects the placeholder id).
+- 2026-07-12 (review pass 2): `authTokenSecretEnc` removed from TenantConfig
+  v1 and its validator until M2 envelope encryption (D5) actually lands;
+  presence of the field is rejected with an explicit
+  "not supported yet (M2 envelope encryption)" error rather than a generic
+  unknown-field message.
+- 2026-07-12 (review pass 2): rate limiting's fixed-window counter is now a
+  single shared core, `applyFixedWindowLimit` (src/middleware/rateLimit.ts),
+  used by both the legacy `rateLimit()`/`rateLimitByRepo()` and the tenant-scoped
+  limiters in src/routes/tenantApi.ts, with no observable change to either.

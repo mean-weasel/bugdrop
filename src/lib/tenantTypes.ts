@@ -48,7 +48,8 @@ export interface TenantConfig {
   theme?: TenantThemeConfig;
   behavior?: TenantBehaviorConfig;
   rate?: TenantRateConfig;
-  authTokenSecretEnc?: string; // M2. AES-256-GCM envelope, base64url; see D5
+  // authTokenSecretEnc intentionally omitted: not supported until M2 envelope
+  // encryption lands (D5). validateTenantConfig rejects the field explicitly.
   createdAt: string; // ISO 8601
   updatedAt: string; // ISO 8601
 }

@@ -46,14 +46,18 @@ app.use('*', async (c, next) => {
 // Request logging
 app.use('*', logger());
 
-// Mount API routes. tenantApi is mounted BEFORE api on purpose: both prefixes
-// (/api/t/:key and /api) overlap textually, and api's own wildcard '*' CORS
-// middleware would otherwise also match tenant traffic if api were registered
-// first (verified against the installed Hono version — see the mount-order note
-// atop src/routes/tenantApi.ts).
+// Mount API routes. tenantApi AND admin are both mounted BEFORE api on
+// purpose: all three prefixes (/api/t/:key, /api/admin, /api) overlap
+// textually, and api's own wildcard '*' CORS middleware would otherwise also
+// match tenant AND admin traffic if api were registered first (verified
+// against the installed Hono version — see the mount-order note atop
+// src/routes/tenantApi.ts). Admin must never receive CORS headers at all
+// (contract docs/plans/multi-tenant-embed.md, decision D6: same-origin/curl
+// only, no CORS allowance) — mounting it after api would leak api's global
+// ALLOWED_ORIGINS wildcard onto the admin surface.
 app.route('/api/t/:key', tenantApi);
-app.route('/api', api);
 app.route('/api/admin', admin);
+app.route('/api', api);
 app.route('/t', loader);
 
 export function isWeakAuthTokenSecret(secret?: string): boolean {

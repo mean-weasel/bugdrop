@@ -34,8 +34,12 @@ binding = "RATE_LIMIT"
 id = "e6454ed79f514ed3a9e24eea99dd6cd3"
 preview_id = "ff8f3809037d4403befd09369a9f7e36"
 
-# Tenant registry KV namespace (multi-tenant embed, contract docs/plans/multi-tenant-embed.md)
-# create: wrangler kv namespace create bugdrop-tenants
+# Tenant registry KV namespace (multi-tenant embed, contract docs/plans/multi-tenant-embed.md).
+# Optional/opt-in: TENANTS is an optional Env binding (src/types.ts) — absent,
+# the multitenant feature (admin CRUD, /t/:key loader, /api/t/:key routes) stays
+# dormant and legacy /widget.js + /api are unaffected. The placeholder id below
+# only satisfies `wrangler dev` locally; the operator must replace it with a
+# real namespace id before deploying (wrangler kv namespace create bugdrop-tenants).
 [[kv_namespaces]]
 binding = "TENANTS"
 id = "REPLACE_WITH_BUGDROP_TENANTS_NAMESPACE_ID"
@@ -62,8 +66,6 @@ MAX_SCREENSHOT_SIZE_MB = "5"
 binding = "RATE_LIMIT"
 id = "cdb88fa95d6348d6ab84037751853d5d"
 
-# Tenant registry KV namespace (multi-tenant embed, contract docs/plans/multi-tenant-embed.md)
-# create: wrangler kv namespace create bugdrop-tenants --env preview
-[[env.preview.kv_namespaces]]
-binding = "TENANTS"
-id = "REPLACE_WITH_BUGDROP_TENANTS_PREVIEW_NAMESPACE_ID"
+# No TENANTS binding in preview: a real `wrangler deploy` rejects a placeholder
+# KV namespace id, and TENANTS is optional (src/types.ts) — its absence just
+# leaves the multitenant feature dormant for preview deploys/E2E.

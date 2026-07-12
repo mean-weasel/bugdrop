@@ -63,7 +63,6 @@ describe('validateTenantConfig', () => {
           categoryLabels: { bug: 'Bug', idea: ['Idea', 'Feature Request'] },
         },
         rate: { perIp: 10, perRepo: 100 },
-        authTokenSecretEnc: 'v1.abcdef',
       })
     );
     expect(result.ok).toBe(true);
@@ -74,7 +73,6 @@ describe('validateTenantConfig', () => {
         idea: ['Idea', 'Feature Request'],
       });
       expect(result.value.rate).toEqual({ perIp: 10, perRepo: 100 });
-      expect(result.value.authTokenSecretEnc).toBe('v1.abcdef');
     }
   });
 
@@ -209,8 +207,15 @@ describe('validateTenantConfig', () => {
     expect(validateTenantConfig(baseTenant({ rate: { perRepo: -5 } as never })).ok).toBe(false);
   });
 
-  it('rejects a non-string authTokenSecretEnc', () => {
-    expect(validateTenantConfig(baseTenant({ authTokenSecretEnc: 123 as never })).ok).toBe(false);
+  it('rejects the presence of authTokenSecretEnc with an explicit not-yet-supported message', () => {
+    const result = validateTenantConfig(baseTenant({ authTokenSecretEnc: 'v1.abcdef' } as never));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors).toContain(
+        'authTokenSecretEnc is not supported yet (M2 envelope encryption)'
+      );
+      expect(result.errors.some(e => e.includes('Unknown field'))).toBe(false);
+    }
   });
 });
 
