@@ -22,6 +22,7 @@ export interface Env {
   BUGDROP_BOARD_APP_ID?: string; // Optional hosted beta app claim for the demo board token
   BUGDROP_BOARD_TOKEN_AUDIENCE?: string; // Optional override for board token audience
   BUGDROP_BOARD_TOKEN_ISSUER?: string; // Optional override for board token issuer
+  ADMIN_TOKEN?: string; // Optional Bearer secret protecting /api/admin/* tenant CRUD
 
   // Bindings
   ASSETS: Fetcher;

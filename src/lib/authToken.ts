@@ -1,3 +1,5 @@
+import { timingSafeEqual } from './timingSafeEqual';
+
 interface BugDropAuthTokenPayload {
   iss?: string;
   aud?: string;
@@ -108,17 +110,6 @@ function isPayload(value: unknown): value is BugDropAuthTokenPayload {
     (payload.origin === undefined || typeof payload.origin === 'string') &&
     (payload.nbf === undefined || typeof payload.nbf === 'number')
   );
-}
-
-function timingSafeEqual(left: string, right: string): boolean {
-  const leftBytes = new TextEncoder().encode(left);
-  const rightBytes = new TextEncoder().encode(right);
-  let diff = leftBytes.length ^ rightBytes.length;
-  const max = Math.max(leftBytes.length, rightBytes.length);
-  for (let index = 0; index < max; index++) {
-    diff |= (leftBytes[index] ?? 0) ^ (rightBytes[index] ?? 0);
-  }
-  return diff === 0;
 }
 
 function base64UrlEncodeString(value: string): string {
