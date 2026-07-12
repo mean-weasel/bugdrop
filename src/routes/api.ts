@@ -49,8 +49,6 @@ const ALLOWED_ATTACHMENT_TYPES = new Set([
 const MAX_CONSOLE_LOG_ENTRIES = 50;
 const MAX_CONSOLE_LOG_BODY_CHARS = 12_000;
 const MAX_CONSOLE_LOG_MESSAGE_CHARS = 1_000;
-const DECKCHECKER_VERCEL_CANDIDATE_ORIGIN =
-  /^https:\/\/deckchecker-[a-z0-9]{9}-jermwatts-projects\.vercel\.app$/;
 // GitHub enforces a 50-char limit on label names; keep validation in lockstep
 // so over-long configured labels surface as a clear local warning rather than
 // going out, getting rejected, and triggering the GitHub-error fallback path.
@@ -76,14 +74,7 @@ api.use('*', async (c, next) => {
       // Wildcard allows all
       if (originList.includes('*')) return origin;
       // Check if origin is in whitelist
-      if (originList.includes(origin)) return origin;
-      if (
-        c.env.ALLOW_DECKCHECKER_VERCEL_CANDIDATES === 'true' &&
-        DECKCHECKER_VERCEL_CANDIDATE_ORIGIN.test(origin)
-      ) {
-        return origin;
-      }
-      return null;
+      return originList.includes(origin) ? origin : null;
     },
     allowMethods: ['GET', 'POST', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
