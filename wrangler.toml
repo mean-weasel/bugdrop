@@ -40,6 +40,20 @@ preview_id = "ff8f3809037d4403befd09369a9f7e36"
 # AUTH_TOKEN_SECRET  # Optional: set to require signed host-app auth tokens for /feedback
 # BUGDROP_BOARD_TOKEN_SECRET  # Optional: enables /board embedded demo token signing
 
+# Restricted hosted Worker for exact-origin clients; this reviewed config is the source of truth.
+# Deckchecker additionally needs its project-specific unaliased Vercel candidates below.
+[env.personal]
+name = "bugdrop-personal"
+workers_dev = true
+routes = []
+
+[env.personal.vars]
+ENVIRONMENT = "production"
+ALLOWED_ORIGINS = "https://bugdrop-personal.neonwatty.workers.dev,https://bleepthat.sh,https://preview.bleepthat.sh,https://seatify.app,https://preview.seatify.app,https://deckchecker.app,https://origin.deckchecker.app,https://preview.deckchecker.app"
+ALLOW_DECKCHECKER_VERCEL_CANDIDATES = "true"
+GITHUB_APP_NAME = "mean-weasel-bugdrop-personal"
+MAX_SCREENSHOT_SIZE_MB = "5"
+
 # Preview environment for live E2E tests (deployed in merge queue)
 [env.preview]
 name = "bugdrop-preview"
