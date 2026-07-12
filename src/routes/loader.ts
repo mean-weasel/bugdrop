@@ -31,7 +31,10 @@ loader.get('/:file{[a-z0-9-]+\\.js}', async c => {
   }
 
   const attrs = tenantToDataAttributes(tenant);
-  return c.body(loaderScript(key, attrs), 200, LOADER_HEADERS);
+  // Absolute URL: the loader executes on the customer's origin, so a relative
+  // src would resolve against their site instead of this Worker.
+  const widgetUrl = `${new URL(c.req.url).origin}/widget.v1.js`;
+  return c.body(loaderScript(key, attrs, widgetUrl), 200, LOADER_HEADERS);
 });
 
 /**
@@ -49,7 +52,7 @@ function warnOnlyScript(message: string): string {
  * config as data-* attributes plus data-tenant. Every dynamic value is
  * embedded via JSON.stringify so it is XSS-safe by construction.
  */
-function loaderScript(key: string, attrs: Record<string, string>): string {
+function loaderScript(key: string, attrs: Record<string, string>, widgetUrl: string): string {
   const guardKey = `__bugdropLoaded_${key}`;
   return [
     '(function () {',
@@ -59,7 +62,7 @@ function loaderScript(key: string, attrs: Record<string, string>): string {
     `  var TENANT_KEY = ${JSON.stringify(key)};`,
     `  var ATTRS = ${JSON.stringify(attrs)};`,
     '  var s = document.createElement("script");',
-    '  s.src = "/widget.v1.js";',
+    `  s.src = ${JSON.stringify(widgetUrl)};`,
     '  s.async = true;',
     '  s.setAttribute("data-tenant", TENANT_KEY);',
     '  for (var k in ATTRS) {',

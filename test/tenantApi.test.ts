@@ -279,6 +279,53 @@ describe('tenant API routes', () => {
     });
   });
 
+  describe('widget-auth parity with legacy /api/feedback', () => {
+    const feedbackBody = JSON.stringify({
+      repo: 'acme/widget',
+      title: 'Test feedback',
+      description: 'via tenant route',
+      metadata: {
+        url: 'http://localhost:3000',
+        userAgent: 'Mozilla/5.0',
+        viewport: { width: 1920, height: 1080 },
+        timestamp: '2025-01-15T12:00:00Z',
+      },
+    });
+
+    it('rejects /feedback without a bd1. token when AUTH_TOKEN_SECRET is configured', async () => {
+      await putTenant(storedTenant());
+      const req = new Request('http://localhost/api/t/acme/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: feedbackBody,
+      });
+      const res = await app.fetch(req, { ...env, AUTH_TOKEN_SECRET: 'tenant-parity-secret' });
+
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: 'BugDrop auth token required' });
+      expect(mockCreateIssue).not.toHaveBeenCalled();
+    });
+
+    it('accepts /feedback with a valid bd1. token when AUTH_TOKEN_SECRET is configured', async () => {
+      await putTenant(storedTenant());
+      const { createBugDropAuthTokenForTest } = await import('../src/lib/authToken');
+      const now = Math.floor(Date.now() / 1000);
+      const token = await createBugDropAuthTokenForTest(
+        { sub: 'user-1', repo: 'acme/widget', iat: now, exp: now + 300, jti: 'jti-1' },
+        'tenant-parity-secret'
+      );
+      const req = new Request('http://localhost/api/t/acme/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: feedbackBody,
+      });
+      const res = await app.fetch(req, { ...env, AUTH_TOKEN_SECRET: 'tenant-parity-secret' });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ success: true, issueNumber: 42 });
+    });
+  });
+
   describe('rate limiting (t:{key}: prefix, tenant.rate override)', () => {
     const validPayload = {
       repo: 'acme/widget',

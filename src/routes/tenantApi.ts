@@ -22,7 +22,12 @@ import type { Env } from '../types';
 import { getTenant } from '../lib/tenantStore';
 import type { TenantConfig } from '../lib/tenants';
 import { getClientIp } from '../middleware/rateLimit';
-import { handleCheckRequest, handleFeedbackRequest, type ApiEnv } from './api';
+import {
+  handleCheckRequest,
+  handleFeedbackRequest,
+  requireBugDropFeedbackAuthToken,
+  type ApiEnv,
+} from './api';
 
 type TenantApiVariables = { tenant: TenantConfig };
 type TenantApiEnv = { Bindings: Env; Variables: TenantApiVariables };
@@ -87,6 +92,11 @@ tenantApi.get('/check/:owner/:repo', async c => {
   return handleCheckRequest(asApiContext(c));
 });
 
+// Parity with legacy /api/feedback: when the operator configures global widget-auth
+// secrets (AUTH_TOKEN_SECRET*), tenant traffic must present the same bd1. token —
+// otherwise this route would silently bypass a protection the legacy route enforces.
+// Per-tenant secrets arrive with D5/M2.
+tenantApi.use('/feedback', (c, next) => requireBugDropFeedbackAuthToken(asApiContext(c), next));
 tenantApi.use('/feedback', requireTenantRepoMatch);
 tenantApi.use('/feedback', tenantIpRateLimit);
 tenantApi.use('/feedback', tenantRepoRateLimit);

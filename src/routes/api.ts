@@ -301,7 +301,12 @@ export async function handleFeedbackRequest(c: Context<ApiEnv>): Promise<Respons
   }
 }
 
-async function requireBugDropFeedbackAuthToken(
+/**
+ * Also reused by src/routes/tenantApi.ts so tenant-scoped feedback enforces the
+ * same globally-configured widget-auth secrets as this legacy route (contract
+ * docs/plans/multi-tenant-embed.md; per-tenant secrets arrive with D5/M2).
+ */
+export async function requireBugDropFeedbackAuthToken(
   c: Context<ApiEnv>,
   next: Next
 ): Promise<Response | void> {

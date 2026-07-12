@@ -74,10 +74,12 @@ describe('loader route', () => {
     expect(body).toContain('window[GUARD] = true;');
   });
 
-  it('points the injected script at /widget.v1.js with data-tenant', async () => {
+  it('points the injected script at the absolute widget URL with data-tenant', async () => {
     await putTenant(storedTenant());
     const body = await (await loader.fetch(req('/acme.js'), env)).text();
-    expect(body).toContain('s.src = "/widget.v1.js";');
+    // Absolute, on the Worker's own origin: the loader runs on the customer's
+    // page, where a relative src would resolve against their domain.
+    expect(body).toContain('s.src = "http://localhost/widget.v1.js";');
     expect(body).toContain('s.setAttribute("data-tenant", TENANT_KEY);');
     expect(body).toContain('var TENANT_KEY = "acme";');
   });

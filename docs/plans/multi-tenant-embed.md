@@ -265,4 +265,14 @@ tests incl. new ones). No file over ESLint limits.
 
 ## Amendments
 
-- (none yet)
+- 2026-07-12 (review pass): the loader emits the widget script src as an ABSOLUTE
+  URL on the Worker's own origin (derived from the request URL). A relative
+  `/widget.v1.js` would resolve against the customer's domain, since the loader
+  executes on their page; local E2E masked this because the test page is served
+  from the same origin as the Worker.
+- 2026-07-12 (review pass): tenant `/feedback` also runs the legacy
+  `requireBugDropFeedbackAuthToken` middleware (global `AUTH_TOKEN_SECRET*`), so
+  configuring widget-auth on an instance protects tenant routes too. Per-tenant
+  secrets remain M2 (D5).
+- 2026-07-12: D10 clarified in code: paused tenants also get the 200 warn-only
+  loader body (the D4 403 applies to API traffic, not the loader).
