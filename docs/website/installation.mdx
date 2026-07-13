@@ -177,6 +177,25 @@ If you see any errors, check that:
 
 You can also test by clicking the bug button and submitting a test report. Check your GitHub repository's Issues tab to confirm it was created successfully.
 
+## Multi-tenant hosted embed (self-hosted operators)
+
+If you run your own BugDrop Worker for multiple customers or sites, you can skip
+hand-written `data-*` attributes entirely and give each customer a single script
+tag with a tenant key in the path:
+
+```html
+<script src="https://<your-worker-host>/t/{tenantKey}.js" async></script>
+```
+
+Configuration (target repo, allowed origins, theme, behavior, rate limits) is
+managed server-side per tenant through an admin API, so each customer only ever
+pastes one line. This is an operator feature for self-hosted deployments; it does
+not apply to the public BugDrop service used above, and the standard install in
+Step 2 keeps working unchanged either way.
+
+See the [Multi-tenant hosted embed section of the README](https://github.com/mean-weasel/bugdrop#multi-tenant-hosted-embed)
+for the full TenantConfig reference, admin API examples, and setup steps.
+
 ## Next Steps
 
 - [Configure the widget](/docs/configuration) with custom attributes
