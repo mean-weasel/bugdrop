@@ -23,11 +23,14 @@ import { getTenant } from '../lib/tenantStore';
 import type { TenantConfig } from '../lib/tenants';
 import { applyFixedWindowLimit, getClientIp } from '../middleware/rateLimit';
 import {
+  getBearerToken,
   handleCheckRequest,
   handleFeedbackRequest,
   requireBugDropFeedbackAuthToken,
   type ApiEnv,
 } from './api';
+import { verifyBugDropAuthToken } from '../lib/authToken';
+import { unwrapSecret } from '../lib/envelope';
 
 type TenantApiVariables = { tenant: TenantConfig; feedbackPayload?: FeedbackPayload };
 type TenantApiEnv = { Bindings: Env; Variables: TenantApiVariables };
@@ -101,10 +104,55 @@ tenantApi.get('/check/:owner/:repo', async c => {
 // configured (see requireTenantRepoMatch's own comment, FIX 3). The repo rate limit
 // runs last, same relative position as legacy's rateLimitByRepo.
 tenantApi.use('/feedback', tenantIpRateLimit);
-tenantApi.use('/feedback', (c, next) => requireBugDropFeedbackAuthToken(asApiContext(c), next));
+tenantApi.use('/feedback', requireTenantWidgetAuth);
 tenantApi.use('/feedback', requireTenantRepoMatch);
 tenantApi.use('/feedback', tenantRepoRateLimit);
 tenantApi.post('/feedback', async c => handleFeedbackRequest(asApiContext(c)));
+
+/**
+ * Widget-auth for tenant feedback (D5/M2-01). A tenant WITH its own secret
+ * (authTokenSecretEnc) must present a bd1. token signed with THAT secret and
+ * pinned to tenant.repo — global AUTH_TOKEN_SECRET* tokens do not apply to it.
+ * A tenant WITHOUT its own secret keeps parity with the legacy route: the
+ * globally-configured secrets are enforced when present (M1 amendment).
+ * Fail-loud per D5: an envelope that cannot be unwrapped (missing/invalid
+ * BUGDROP_KEK, corrupt envelope) is a 500, never a silent skip.
+ */
+async function requireTenantWidgetAuth(
+  c: Context<TenantApiEnv>,
+  next: Next
+): Promise<Response | void> {
+  const tenant = c.get('tenant');
+  if (!tenant.authTokenSecretEnc) {
+    return requireBugDropFeedbackAuthToken(asApiContext(c), next);
+  }
+
+  let secret: string;
+  try {
+    secret = await unwrapSecret(tenant.authTokenSecretEnc, c.env.BUGDROP_KEK);
+  } catch (error) {
+    console.error(
+      '[tenantApi] cannot unwrap tenant auth secret:',
+      error instanceof Error ? error.message : String(error)
+    );
+    return c.json({ error: 'Tenant widget auth is misconfigured' }, 500);
+  }
+
+  try {
+    await verifyBugDropAuthToken(getBearerToken(c.req.header('Authorization')), {
+      secret,
+      repo: tenant.repo,
+    });
+  } catch (error) {
+    console.warn('[tenantApi] rejected tenant auth token', {
+      tenant: tenant.key,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    return c.json({ error: 'BugDrop auth token required' }, 401);
+  }
+
+  return next();
+}
 
 /**
  * Rejects a /feedback submission whose body repo does not match tenant.repo (D4).

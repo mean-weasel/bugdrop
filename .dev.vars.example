@@ -58,3 +58,7 @@ YOUR_PRIVATE_KEY_CONTENT_HERE
 # e2e/multi-tenant.spec.ts (contract docs/plans/multi-tenant-embed.md, card M1-04);
 # that suite skips itself when this is unset, so it is optional for a normal `npm run dev`.
 # ADMIN_TOKEN=replace-with-a-long-random-secret
+
+# Key-encryption key for per-tenant widget-auth secrets (contract D5/M2-01).
+# 32 random bytes, base64: `openssl rand -base64 32`
+# BUGDROP_KEK=replace-with-32-bytes-base64

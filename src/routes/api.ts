@@ -326,7 +326,8 @@ export async function requireBugDropFeedbackAuthToken(
   return next();
 }
 
-function getBearerToken(value: string | undefined): string | undefined {
+/** Also reused by src/routes/tenantApi.ts for per-tenant token verification (D5). */
+export function getBearerToken(value: string | undefined): string | undefined {
   return value?.match(/^Bearer\s+(.+)$/i)?.[1];
 }
 

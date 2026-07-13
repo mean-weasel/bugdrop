@@ -326,6 +326,76 @@ describe('tenant API routes', () => {
     });
   });
 
+  describe('per-tenant widget-auth secret (D5/M2-01)', () => {
+    const KEK = Buffer.alloc(32, 5).toString('base64');
+    const feedbackBody = JSON.stringify({
+      repo: 'acme/widget',
+      title: 'Test feedback',
+      description: 'via tenant route',
+      metadata: {
+        url: 'http://localhost:3000',
+        userAgent: 'Mozilla/5.0',
+        viewport: { width: 1920, height: 1080 },
+        timestamp: '2025-01-15T12:00:00Z',
+      },
+    });
+
+    async function seedTenantWithSecret(secret: string): Promise<void> {
+      const { wrapSecret } = await import('../src/lib/envelope');
+      await putTenant(
+        storedTenant({ authTokenSecretEnc: await wrapSecret(secret, KEK) } as Partial<TenantConfig>)
+      );
+    }
+
+    async function mintToken(secret: string, repo = 'acme/widget'): Promise<string> {
+      const { createBugDropAuthTokenForTest } = await import('../src/lib/authToken');
+      const now = Math.floor(Date.now() / 1000);
+      return createBugDropAuthTokenForTest(
+        { sub: 'user-1', repo, iat: now, exp: now + 300, jti: 'jti-t' },
+        secret
+      );
+    }
+
+    function post(token?: string): Request {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      return new Request('http://localhost/api/t/acme/feedback', {
+        method: 'POST',
+        headers,
+        body: feedbackBody,
+      });
+    }
+
+    it('requires a token signed with the tenant secret', async () => {
+      await seedTenantWithSecret('tenant-own-secret-value');
+      const kekEnv = { ...env, BUGDROP_KEK: KEK } as Env;
+
+      expect((await app.fetch(post(), kekEnv)).status).toBe(401);
+      const ok = await app.fetch(post(await mintToken('tenant-own-secret-value')), kekEnv);
+      expect(ok.status).toBe(200);
+    });
+
+    it('rejects a token signed with the GLOBAL secret when the tenant has its own', async () => {
+      await seedTenantWithSecret('tenant-own-secret-value');
+      const kekEnv = {
+        ...env,
+        BUGDROP_KEK: KEK,
+        AUTH_TOKEN_SECRET: 'global-secret-value-here',
+      } as Env;
+
+      const res = await app.fetch(post(await mintToken('global-secret-value-here')), kekEnv);
+      expect(res.status).toBe(401);
+      expect(mockCreateIssue).not.toHaveBeenCalled();
+    });
+
+    it('fails loud with 500 when the tenant has a secret but BUGDROP_KEK is missing', async () => {
+      await seedTenantWithSecret('tenant-own-secret-value');
+      const res = await app.fetch(post(await mintToken('tenant-own-secret-value')), env);
+      expect(res.status).toBe(500);
+      expect(mockCreateIssue).not.toHaveBeenCalled();
+    });
+  });
+
   describe('rate limiting (t:{key}: prefix, tenant.rate override)', () => {
     const validPayload = {
       repo: 'acme/widget',

@@ -207,14 +207,23 @@ describe('validateTenantConfig', () => {
     expect(validateTenantConfig(baseTenant({ rate: { perRepo: -5 } as never })).ok).toBe(false);
   });
 
-  it('rejects the presence of authTokenSecretEnc with an explicit not-yet-supported message', () => {
-    const result = validateTenantConfig(baseTenant({ authTokenSecretEnc: 'v1.abcdef' } as never));
+  it('accepts a v1 envelope in authTokenSecretEnc and carries it through', () => {
+    const result = validateTenantConfig(
+      baseTenant({ authTokenSecretEnc: 'v1.abc-123.def_456' } as never)
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.authTokenSecretEnc).toBe('v1.abc-123.def_456');
+    }
+  });
+
+  it('rejects a non-envelope authTokenSecretEnc (plaintext must never be storable)', () => {
+    const result = validateTenantConfig(
+      baseTenant({ authTokenSecretEnc: 'raw-plaintext-secret' } as never)
+    );
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.errors).toContain(
-        'authTokenSecretEnc is not supported yet (M2 envelope encryption)'
-      );
-      expect(result.errors.some(e => e.includes('Unknown field'))).toBe(false);
+      expect(result.errors.some(e => e.includes('v1 AES-GCM envelope'))).toBe(true);
     }
   });
 });

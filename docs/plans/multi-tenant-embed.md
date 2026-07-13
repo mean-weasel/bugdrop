@@ -1,6 +1,7 @@
 # Multi-Tenant Embed Contract (single-script loader, per-tenant config)
 
-Status: DRAFT under execution on branch `feat/multitenant-embed`.
+Status: M0, M1 and M2 executed on branch `feat/multitenant-embed` (PR #251).
+Remaining: operator instance provisioning (owner-only, post-merge).
 Amendments discovered during implementation are recorded inline under "Amendments".
 
 ## Nature of this document
@@ -276,6 +277,18 @@ tests incl. new ones). No file over ESLint limits.
   secrets remain M2 (D5).
 - 2026-07-12: D10 clarified in code: paused tenants also get the 200 warn-only
   loader body (the D4 403 applies to API traffic, not the loader).
+- 2026-07-12 (M2-01): per-tenant secrets land as a write-only admin field
+  `authTokenSecret` (16..256 chars; `null` clears; PUT without it inherits the
+  stored envelope) wrapped into `authTokenSecretEnc` (`v1.<iv>.<ciphertext>`
+  AES-256-GCM, KEK `BUGDROP_KEK`). Admin responses mask the envelope and expose
+  `hasAuthTokenSecret` instead. A tenant WITH its own secret requires a `bd1.`
+  token signed with THAT secret (global `AUTH_TOKEN_SECRET*` tokens are
+  rejected for it); a tenant WITHOUT one keeps global-secret parity. KEK
+  missing/invalid while a tenant has an envelope = 500, never a silent skip.
+- 2026-07-12 (M2-01, known limitation): `AUTH_TOKEN_REQUIRED_FOR_CHECK` still
+  validates `/api/t/{key}/check` against the GLOBAL secrets (the gate lives
+  inside the shared handler); tenants with their own secret are incompatible
+  with that flag until the check gate is generalized.
 - 2026-07-12 (review pass 2): `/api/admin` is now mounted BEFORE `/api` in
   src/index.ts (tenantApi stays first). Same textual-overlap leak as the
   tenantApi/api mount-order note: api's global wildcard `'*'` CORS middleware

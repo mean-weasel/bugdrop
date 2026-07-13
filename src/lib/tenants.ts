@@ -10,6 +10,7 @@ import {
   validateRate,
   validateTheme,
 } from './tenantFieldValidators';
+import { isEnvelope } from './envelope';
 import type { TenantConfig } from './tenantTypes';
 
 export type {
@@ -28,9 +29,6 @@ const REPO_PATTERN = /^[^/\s]+\/[^/\s]+$/;
 const ISO_8601_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 const STATUS_VALUES = new Set(['active', 'paused']);
 
-// authTokenSecretEnc is deliberately NOT in this set: it is rejected with an
-// explicit error below (M2, D5) rather than falling into the generic
-// "Unknown field" case, so operators get a clear "not yet supported" message.
 const TOP_LEVEL_FIELDS = new Set([
   'version',
   'key',
@@ -41,6 +39,7 @@ const TOP_LEVEL_FIELDS = new Set([
   'theme',
   'behavior',
   'rate',
+  'authTokenSecretEnc',
   'createdAt',
   'updatedAt',
 ]);
@@ -56,14 +55,17 @@ export function validateTenantConfig(input: unknown): ValidateTenantConfigResult
     return { ok: false, errors: ['TenantConfig must be an object'] };
   }
 
-  // Reject authTokenSecretEnc explicitly (M2, D5) before the generic unknown-field
-  // scan, so it never gets folded into a plain "Unknown field" error and its
-  // presence doesn't also trigger that generic message.
-  const { authTokenSecretEnc, ...knownShapeInput } = input;
-  if (authTokenSecretEnc !== undefined) {
-    errors.push('authTokenSecretEnc is not supported yet (M2 envelope encryption)');
+  checkUnknownFields(input, TOP_LEVEL_FIELDS, '', errors);
+
+  // D5/M2-01: only a versioned AES-GCM envelope shape is storable — a raw
+  // plaintext secret in this field would silently sit unencrypted in KV.
+  if (input.authTokenSecretEnc !== undefined) {
+    if (typeof input.authTokenSecretEnc !== 'string' || !isEnvelope(input.authTokenSecretEnc)) {
+      errors.push(
+        'authTokenSecretEnc must be a v1 AES-GCM envelope (use the write-only authTokenSecret admin field to set it)'
+      );
+    }
   }
-  checkUnknownFields(knownShapeInput, TOP_LEVEL_FIELDS, '', errors);
 
   if (input.version !== 1) {
     errors.push('version must be 1');
@@ -130,6 +132,9 @@ export function validateTenantConfig(input: unknown): ValidateTenantConfigResult
   if (theme && Object.keys(theme).length > 0) value.theme = theme;
   if (behavior && Object.keys(behavior).length > 0) value.behavior = behavior;
   if (rate && Object.keys(rate).length > 0) value.rate = rate;
+  if (input.authTokenSecretEnc !== undefined) {
+    value.authTokenSecretEnc = input.authTokenSecretEnc as string;
+  }
 
   return { ok: true, value };
 }

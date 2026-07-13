@@ -23,6 +23,7 @@ export interface Env {
   BUGDROP_BOARD_TOKEN_AUDIENCE?: string; // Optional override for board token audience
   BUGDROP_BOARD_TOKEN_ISSUER?: string; // Optional override for board token issuer
   ADMIN_TOKEN?: string; // Optional Bearer secret protecting /api/admin/* tenant CRUD
+  BUGDROP_KEK?: string; // Optional 32-byte base64 KEK wrapping per-tenant auth secrets (D5)
 
   // Bindings
   ASSETS: Fetcher;

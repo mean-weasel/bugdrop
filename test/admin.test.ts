@@ -221,4 +221,86 @@ describe('admin routes', () => {
       expect(res.status).toBe(400);
     });
   });
+
+  describe('write-only authTokenSecret (D5/M2-01)', () => {
+    const KEK = Buffer.alloc(32, 3).toString('base64');
+
+    it('wraps the plaintext into an envelope, stores it, and masks responses', async () => {
+      const kekEnv = { ...env, BUGDROP_KEK: KEK } as Env;
+      const res = await admin.fetch(
+        req('/tenants', {
+          method: 'POST',
+          body: JSON.stringify(validTenantInput({ authTokenSecret: 'my-plaintext-widget-secret' })),
+        }),
+        kekEnv
+      );
+      expect(res.status).toBe(201);
+      const created = (await res.json()) as Record<string, unknown>;
+      expect(created.hasAuthTokenSecret).toBe(true);
+      expect(created.authTokenSecretEnc).toBeUndefined();
+      expect(JSON.stringify(created)).not.toContain('my-plaintext-widget-secret');
+
+      const stored = JSON.parse(store.get('tenant:acme') ?? '{}') as Record<string, unknown>;
+      expect(String(stored.authTokenSecretEnc)).toMatch(/^v1\./);
+      expect(JSON.stringify(stored)).not.toContain('my-plaintext-widget-secret');
+    });
+
+    it('fails loud with 500 when BUGDROP_KEK is missing', async () => {
+      const res = await admin.fetch(
+        req('/tenants', {
+          method: 'POST',
+          body: JSON.stringify(validTenantInput({ authTokenSecret: 'my-plaintext-widget-secret' })),
+        }),
+        env
+      );
+      expect(res.status).toBe(500);
+      expect(store.has('tenant:acme')).toBe(false);
+    });
+
+    it('rejects a too-short secret with 400', async () => {
+      const kekEnv = { ...env, BUGDROP_KEK: KEK } as Env;
+      const res = await admin.fetch(
+        req('/tenants', {
+          method: 'POST',
+          body: JSON.stringify(validTenantInput({ authTokenSecret: 'short' })),
+        }),
+        kekEnv
+      );
+      expect(res.status).toBe(400);
+    });
+
+    it('PUT without the secret fields inherits the stored envelope; null clears it', async () => {
+      const kekEnv = { ...env, BUGDROP_KEK: KEK } as Env;
+      await admin.fetch(
+        req('/tenants', {
+          method: 'POST',
+          body: JSON.stringify(validTenantInput({ authTokenSecret: 'my-plaintext-widget-secret' })),
+        }),
+        kekEnv
+      );
+
+      const update = await admin.fetch(
+        req('/tenants/acme', {
+          method: 'PUT',
+          body: JSON.stringify(validTenantInput({ name: 'Renamed' })),
+        }),
+        kekEnv
+      );
+      expect(update.status).toBe(200);
+      let stored = JSON.parse(store.get('tenant:acme') ?? '{}') as Record<string, unknown>;
+      expect(String(stored.authTokenSecretEnc)).toMatch(/^v1\./);
+
+      const clear = await admin.fetch(
+        req('/tenants/acme', {
+          method: 'PUT',
+          body: JSON.stringify(validTenantInput({ authTokenSecret: null })),
+        }),
+        kekEnv
+      );
+      expect(clear.status).toBe(200);
+      stored = JSON.parse(store.get('tenant:acme') ?? '{}') as Record<string, unknown>;
+      expect(stored.authTokenSecretEnc).toBeUndefined();
+      expect((await clear.json()).hasAuthTokenSecret).toBe(false);
+    });
+  });
 });
