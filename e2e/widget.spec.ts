@@ -4060,6 +4060,118 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
     expect(targetInfo.className).toContain('dot');
     expect(targetInfo.width).toBeLessThanOrEqual(selectedBox!.width + 1);
     expect(targetInfo.height).toBeLessThanOrEqual(selectedBox!.height + 1);
+
+    const captureOpts = await page.evaluate(() => window.__captureOpts);
+    expect(captureOpts?.style).toBeUndefined();
+  });
+
+  test('real element capture keeps a centered target aligned to the full image width', async ({
+    page,
+  }) => {
+    await page.goto('/test/annotation-style.html?elementContextMaxArea=1.5');
+    await page.evaluate(() => {
+      const context = document.createElement('section');
+      context.id = 'centered-capture-context';
+      context.style.cssText =
+        'width: 400px; height: 200px; margin: 0 auto; background: rgb(239, 68, 68); display: grid; place-items: center;';
+
+      const target = document.createElement('button');
+      target.id = 'centered-capture-fixture';
+      target.textContent = 'Pick';
+      target.style.cssText = 'width: 40px; height: 40px;';
+      context.appendChild(target);
+      document.body.prepend(context);
+    });
+
+    const host = await navigateToScreenshotOptions(page);
+    await host.locator('css=[data-action="element"]').click();
+    await expect(page.locator('#bugdrop-element-picker-tooltip')).toBeVisible({ timeout: 5000 });
+    const selected = page.locator('#centered-capture-fixture');
+    const selectedBox = await selected.boundingBox();
+    expect(selectedBox).toBeTruthy();
+
+    const targetX = selectedBox!.x + selectedBox!.width / 2;
+    const targetY = selectedBox!.y + selectedBox!.height / 2;
+    await page.mouse.move(targetX, targetY);
+    await page.mouse.click(targetX, targetY);
+
+    const canvas = host.locator('css=#annotation-canvas canvas');
+    await expect(canvas).toBeVisible({ timeout: 30000 });
+    const bounds = await canvas.evaluate(node => {
+      const source = node as HTMLCanvasElement;
+      const context = source.getContext('2d');
+      if (!context) throw new Error('Missing canvas context');
+
+      const data = context.getImageData(0, 0, source.width, source.height).data;
+      const red = { minX: source.width, maxX: -1 };
+      const accent = { minX: source.width, maxX: -1, minY: source.height, maxY: -1 };
+
+      for (let y = 0; y < source.height; y++) {
+        for (let x = 0; x < source.width; x++) {
+          const offset = (y * source.width + x) * 4;
+          const r = data[offset];
+          const g = data[offset + 1];
+          const b = data[offset + 2];
+          const a = data[offset + 3];
+          if (a > 200 && r > 220 && g < 100 && b < 100) {
+            red.minX = Math.min(red.minX, x);
+            red.maxX = Math.max(red.maxX, x);
+          }
+          if (a > 200 && r > 240 && g > 130 && g < 190 && b > 70 && b < 130) {
+            accent.minX = Math.min(accent.minX, x);
+            accent.maxX = Math.max(accent.maxX, x);
+            accent.minY = Math.min(accent.minY, y);
+            accent.maxY = Math.max(accent.maxY, y);
+          }
+        }
+      }
+
+      return { width: source.width, height: source.height, red, accent };
+    });
+
+    expect(bounds.width).toBe(400);
+    expect(bounds.height).toBe(200);
+    expect(bounds.red.minX).toBeLessThanOrEqual(2);
+    expect(bounds.red.maxX).toBeGreaterThanOrEqual(bounds.width - 3);
+
+    const expectedHighlightX = (bounds.width - selectedBox!.width) / 2;
+    const expectedHighlightY = (bounds.height - selectedBox!.height) / 2;
+    expect(Math.abs(bounds.accent.minX - expectedHighlightX)).toBeLessThanOrEqual(8);
+    expect(
+      Math.abs(bounds.accent.maxX - (expectedHighlightX + selectedBox!.width))
+    ).toBeLessThanOrEqual(8);
+    expect(Math.abs(bounds.accent.minY - expectedHighlightY)).toBeLessThanOrEqual(8);
+    expect(
+      Math.abs(bounds.accent.maxY - (expectedHighlightY + selectedBox!.height))
+    ).toBeLessThanOrEqual(8);
+  });
+
+  test('element capture preserves vertical root margins while removing horizontal margins', async ({
+    page,
+  }) => {
+    await mockHtmlToImage(page, targetSpyToPng());
+    await page.goto('/test/?elementContextMaxArea=0');
+    await page.evaluate(() => {
+      const target = document.createElement('div');
+      target.id = 'vertical-margin-capture-fixture';
+      target.style.cssText = 'width: 400px; height: 200px; margin: 20px auto 30px;';
+      document.body.prepend(target);
+    });
+
+    const host = await navigateToScreenshotOptions(page);
+    await host.locator('css=[data-action="element"]').click();
+    await expect(page.locator('#bugdrop-element-picker-tooltip')).toBeVisible({ timeout: 5000 });
+    const selected = page.locator('#vertical-margin-capture-fixture');
+    const selectedBox = await selected.boundingBox();
+    expect(selectedBox).toBeTruthy();
+    await page.mouse.click(
+      selectedBox!.x + selectedBox!.width / 2,
+      selectedBox!.y + selectedBox!.height / 2
+    );
+
+    await expect(host.locator('css=#annotation-canvas')).toBeVisible({ timeout: 10000 });
+    const captureOpts = await page.evaluate(() => window.__captureOpts);
+    expect(captureOpts?.style).toEqual({ margin: '20px 0px 30px 0px' });
   });
 
   test('element picker selects nearest clickable ancestor from nested content', async ({

@@ -98,6 +98,7 @@ export async function captureScreenshot(
       : null;
 
   const pixelRatio = captureOptions.pixelRatio ?? getPixelRatio(isFullPage, screenshotScale);
+  const elementStyle = element ? window.getComputedStyle(element) : null;
 
   const toPng = getToPng();
   const opts: HtmlToImageOptions = {
@@ -105,6 +106,11 @@ export async function captureScreenshot(
     imagePlaceholder: TRANSPARENT_IMAGE_PLACEHOLDER,
     pixelRatio,
     filter: shouldIncludeCaptureNode,
+    // Root margins position an element in its parent, but html-to-image copies them inside its
+    // border-box crop. Preserve computed vertical margins; clear horizontal margins to stop drift.
+    ...(elementStyle && (elementStyle.marginLeft !== '0px' || elementStyle.marginRight !== '0px')
+      ? { style: { margin: `${elementStyle.marginTop} 0px ${elementStyle.marginBottom} 0px` } }
+      : {}),
   };
 
   const redactionSnapshot = createRedactionSnapshot(target);
