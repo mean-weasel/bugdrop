@@ -4,6 +4,7 @@ import { test, expect, type Page } from '@playwright/test';
 // rendered localized UI through the widget shadow DOM.
 
 const WELCOME_TITLES = {
+  de: 'Teilen Sie Ihr Feedback',
   en: 'Share Your Feedback',
   nl: 'Deel uw feedback',
   pl: 'Podziel się opinią',
@@ -58,6 +59,11 @@ test.describe('Widget localization', () => {
   test('defaults to English without data-locale', async ({ page }) => {
     await openWidget(page);
     await expect(modalTitle(page)).toHaveText(WELCOME_TITLES.en);
+  });
+
+  test('data-locale="de" renders the German UI', async ({ page }) => {
+    await openWidget(page, { locale: 'de' });
+    await expect(modalTitle(page)).toHaveText(WELCOME_TITLES.de);
   });
 
   test('data-locale="nl" renders the Dutch UI', async ({ page }) => {
