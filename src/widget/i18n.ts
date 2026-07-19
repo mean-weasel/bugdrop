@@ -1,3 +1,4 @@
+import { de } from './locales/de';
 import { en } from './locales/en';
 import { nl } from './locales/nl';
 import { pl } from './locales/pl';
@@ -115,7 +116,7 @@ export interface WidgetStrings {
   captureTimeout: string;
 }
 
-const DICTIONARIES = { en, nl, pl } satisfies Record<string, WidgetStrings>;
+const DICTIONARIES = { en, de, nl, pl } satisfies Record<string, WidgetStrings>;
 
 export type SupportedLocale = keyof typeof DICTIONARIES;
 
