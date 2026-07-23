@@ -1,4 +1,4 @@
-.PHONY: dev build build-widget build-all deploy test test-watch test-e2e test-e2e-ui test-e2e-shard test-radix-e2e test-live-radix test-live-cross-browser lint lint-fix format format-check typecheck knip audit check-actions-node24 check ci clean install install-playwright help
+.PHONY: dev build build-widget build-all deploy test test-watch test-e2e test-e2e-ui test-e2e-shard test-radix-e2e test-live-radix test-live-cross-browser lint lint-fix format format-check typecheck knip audit check-actions-node24 check-ci-scope check-ci-workflow check ci clean install install-playwright help
 
 # Development
 dev:
@@ -86,8 +86,14 @@ knip:
 check-actions-node24:
 	npm run check:actions-node24
 
+check-ci-scope:
+	bash test/ci-scope.test.sh
+
+check-ci-workflow:
+	bash test/ci-workflow-contract.test.sh
+
 # Combined Commands
-check: lint format-check typecheck knip audit check-actions-node24
+check: lint format-check typecheck knip audit check-actions-node24 check-ci-scope check-ci-workflow
 	@echo "✓ All checks passed"
 
 ci: check test build-all test-e2e
