@@ -10,10 +10,92 @@ jobs:
   check:
     name: Lint, Typecheck, Knip, Audit
     runs-on: ubuntu-latest
+    permissions:
+      checks: read
+      contents: read
+    outputs:
+      full_ci: ${{ steps.scope.outputs.full_ci }}
+      diff_base: ${{ steps.scope.outputs.diff_base }}
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      - name: Verify previous full CI succeeded
+        id: previous-ci
+        if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
+        uses: actions/github-script@v8
+        with:
+          result-encoding: string
+          script: |
+            const expected = [
+              'Lint, Typecheck, Knip, Audit',
+              'Unit Tests & Build',
+              'E2E Tests (Shard 1/2)',
+              'E2E Tests (Shard 2/2)',
+              'Radix Cross-Browser E2E (chromium)',
+              'Radix Cross-Browser E2E (firefox)',
+              'Radix Cross-Browser E2E (webkit)',
+            ];
+            const { data } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.payload.before,
+              filter: 'latest',
+              per_page: 100,
+            });
+            const expectedNames = new Set(expected);
+            const suites = new Map();
+            for (const run of data.check_runs) {
+              if (
+                run.app?.slug !== 'github-actions' ||
+                !expectedNames.has(run.name) ||
+                !run.check_suite?.id
+              ) {
+                continue;
+              }
+              const suite = suites.get(run.check_suite.id) ?? {
+                runs: new Map(),
+              };
+              const current = suite.runs.get(run.name);
+              if (!current || run.id > current.id) {
+                suite.runs.set(run.name, run);
+              }
+              suites.set(run.check_suite.id, suite);
+            }
+            const gateName = 'Lint, Typecheck, Knip, Audit';
+            const latestSuite = [...suites.values()]
+              .filter((suite) => suite.runs.has(gateName))
+              .sort(
+                (left, right) =>
+                  right.runs.get(gateName).id - left.runs.get(gateName).id,
+              )[0];
+            const passed = expected.every(
+              (name) => latestSuite?.runs.get(name)?.conclusion === 'success',
+            );
+            core.info(
+              passed
+                ? 'All reusable checks passed on the previous SHA.'
+                : 'Previous checks are missing, pending, or unsuccessful; full CI is required.',
+            );
+            return passed;
+
+      - name: Determine CI scope
+        id: scope
+        shell: bash
+        env:
+          PR_ACTION: ${{ github.event.action }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          scripts/ci-scope.sh \
+            "$GITHUB_EVENT_NAME" \
+            "$PR_ACTION" \
+            "$PR_BASE_SHA" \
+            "$PR_HEAD_SHA" \
+            "$PR_BEFORE_SHA" \
+            "${{ steps.previous-ci.outputs.result }}"
 
       - uses: actions/setup-node@v5
         with:
@@ -21,16 +103,40 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
+        if: steps.scope.outputs.full_ci != 'false'
         run: make install
 
       - name: Run checks (lint, typecheck, knip, audit)
+        if: steps.scope.outputs.full_ci != 'false'
         run: make check
+
+      - name: Check changed documentation formatting
+        if: steps.scope.outputs.full_ci == 'false'
+        shell: bash
+        env:
+          DIFF_BASE_SHA: ${{ steps.scope.outputs.diff_base }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          format_files=()
+          while IFS= read -r -d '' path; do
+            format_files+=("$path")
+          done < <(
+            scripts/changed-docs.sh "$DIFF_BASE_SHA" "$PR_HEAD_SHA"
+          )
+          if (( ${#format_files[@]} > 0 )); then
+            printf '%s\0' "${format_files[@]}" |
+              xargs -0 npx --yes prettier@3.8.1 --check --ignore-unknown --
+          else
+            echo 'No remaining documentation files require formatting.'
+          fi
 
   # Unit tests and build
   test:
     name: Unit Tests & Build
     runs-on: ubuntu-latest
     needs: check
+    # Keep the required check visible as skipped for docs-only pull requests.
+    if: needs.check.outputs.full_ci != 'false'
     steps:
       - uses: actions/checkout@v5
 
@@ -58,24 +164,36 @@ jobs:
       matrix:
         shard: [1, 2]
     steps:
+      # These no-op matrix jobs preserve the two exact required check names. A job-level
+      # condition is evaluated before matrix expansion and would collapse them into one.
+      - name: Skip expensive E2E for documentation-only changes
+        if: needs.check.outputs.full_ci == 'false'
+        run: echo 'Documentation-only change; required E2E context satisfied without browser tests.'
+
       - uses: actions/checkout@v5
+        if: needs.check.outputs.full_ci != 'false'
 
       - uses: actions/setup-node@v5
+        if: needs.check.outputs.full_ci != 'false'
         with:
           node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
+        if: needs.check.outputs.full_ci != 'false'
         run: make install
 
       - name: Build widget
+        if: needs.check.outputs.full_ci != 'false'
         run: make build-widget
 
       - name: Get Playwright version
+        if: needs.check.outputs.full_ci != 'false'
         id: pw-version
         run: echo "version=$(npx playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
 
       - name: Cache Playwright browsers
+        if: needs.check.outputs.full_ci != 'false'
         id: pw-cache
         uses: actions/cache@v5
         with:
@@ -84,22 +202,23 @@ jobs:
 
       - name: Install Playwright browsers
         timeout-minutes: 5
-        if: steps.pw-cache.outputs.cache-hit != 'true'
+        if: needs.check.outputs.full_ci != 'false' && steps.pw-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
 
       - name: Install Playwright system deps
         timeout-minutes: 5
-        if: steps.pw-cache.outputs.cache-hit == 'true'
+        if: needs.check.outputs.full_ci != 'false' && steps.pw-cache.outputs.cache-hit == 'true'
         run: npx playwright install-deps chromium
 
       - name: Run E2E Tests (Shard ${{ matrix.shard }}/2)
+        if: needs.check.outputs.full_ci != 'false'
         run: make test-e2e-shard SHARD=${{ matrix.shard }}/2
         env:
           CI: true
 
       - name: Upload E2E Report
         uses: actions/upload-artifact@v5
-        if: failure()
+        if: needs.check.outputs.full_ci != 'false' && failure()
         with:
           name: playwright-report-shard-${{ matrix.shard }}
           path: playwright-report/
@@ -110,6 +229,7 @@ jobs:
     name: Radix Cross-Browser E2E (${{ matrix.browser }})
     runs-on: ubuntu-latest
     needs: check
+    if: needs.check.outputs.full_ci != 'false'
     strategy:
       fail-fast: false
       matrix:
