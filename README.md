@@ -58,6 +58,60 @@ That's it! Users can now click the bug button to submit feedback as GitHub Issue
 
 See [full documentation](https://bugdrop.dev/docs/configuration) for all options including styling, submitter info, and dismissible button.
 
+## Test a Local Widget on a Live Site
+
+Build the widget and start the local server:
+
+```bash
+npm run build:widget && npm run dev
+```
+
+Then open the live site, open the browser console, and paste the script below. Change the
+`script.dataset.repo` value if the site should use a different repository.
+
+```js
+(() => {
+  const localBase = 'http://127.0.0.1:8787';
+
+  // Local development normally has no GitHub App credentials, so allow the
+  // widget to open while leaving every other request unchanged.
+  window.__bugdropRealFetch ??= window.fetch.bind(window);
+  window.fetch = (input, options) => {
+    if (String(input).startsWith(`${localBase}/api/check/`)) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ installed: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+    }
+
+    return window.__bugdropRealFetch(input, options);
+  };
+
+  document.querySelector('#bugdrop-host')?.remove();
+  delete window.BugDrop;
+
+  document
+    .querySelectorAll('script[data-bugdrop-local-test="true"]')
+    .forEach(script => script.remove());
+
+  const script = document.createElement('script');
+  script.src = `${localBase}/widget.js`;
+  script.dataset.repo = 'owner/repo';
+  script.dataset.welcome = 'never';
+  script.dataset.theme = 'light';
+  script.dataset.bugdropLocalTest = 'true';
+  script.onload = () => window.BugDrop?.open();
+  document.body.appendChild(script);
+})();
+```
+
+This is intended for testing the widget and screenshot flow only. Submitting feedback still
+requires valid GitHub App credentials on the local server. If Chrome asks whether the page may
+access devices or services on the local network, allow it so the page can load `widget.js`. Reload
+the live page after testing to restore its original widget and `fetch` implementation.
+
 ## Documentation
 
 - [Full Documentation](https://bugdrop.dev/docs)
