@@ -813,7 +813,22 @@ test.describe('Screenshot Capture (Live)', () => {
 });
 
 test.describe('Feedback Submission (Live)', () => {
-  test('feedback form submits and gets expected response', async ({ page }) => {
+  test('feedback form submits through a mocked transport and shows success', async ({ page }) => {
+    const payloads: Array<Record<string, unknown>> = [];
+    await page.route('**/feedback', async route => {
+      payloads.push(route.request().postDataJSON());
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          issueNumber: 1,
+          issueUrl: 'https://github.com/mean-weasel/bugdrop-widget-test/issues/1',
+          isPublic: false,
+        }),
+      });
+    });
+
     // Mock the installation check to return installed: true
     await page.route('**/api/check/**', async route => {
       await route.fulfill({
@@ -848,18 +863,11 @@ test.describe('Feedback Submission (Live)', () => {
     await expect(skipBtn).toBeVisible({ timeout: 5_000 });
     await skipBtn.click();
 
-    // Wait for submission to complete
-    await page.waitForTimeout(8_000);
-
-    // Check that the widget is showing either a success or error state
-    // (not stuck in the form state, which would indicate a CORS/network failure)
+    // The ordinary live suite verifies UI/transport integration without mutating GitHub.
     const successScreen = page.locator('#bugdrop-host').locator('css=.bd-success-content');
-    const errorMessage = page.locator('#bugdrop-host').locator('css=.bd-error');
-
-    const hasSuccess = await successScreen.isVisible().catch(() => false);
-    const hasError = await errorMessage.isVisible().catch(() => false);
-
-    // Either success or error is fine — both mean the cross-origin request completed
-    expect(hasSuccess || hasError).toBeTruthy();
+    await expect(successScreen).toBeVisible({ timeout: 10_000 });
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0].title).toBe('Live E2E test submission');
+    expect(payloads[0].screenshot).toBeNull();
   });
 });

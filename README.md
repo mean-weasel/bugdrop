@@ -122,6 +122,7 @@ the live page after testing to restore its original widget and `fetch` implement
 - [JavaScript API](https://bugdrop.dev/docs/javascript-api)
 - [Version Pinning](https://bugdrop.dev/docs/version-pinning)
 - [CI Testing](https://bugdrop.dev/docs/ci-testing)
+- [Merge-queue Issue canary operations](docs/merge-queue-issue-canary.md)
 - [Security & Rate Limiting](https://bugdrop.dev/docs/security)
 - [Self-Hosting](https://bugdrop.dev/docs/self-hosting)
 - [FAQ](https://bugdrop.dev/docs/faq)

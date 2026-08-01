@@ -83,6 +83,13 @@ api.use('*', async (c, next) => {
   return corsMiddleware(c, next);
 });
 
+// Additive deployment identity for preview canaries. Keep it off unconfigured deployments.
+api.use('/feedback', async (c, next) => {
+  await next();
+  const buildSha = getBuildSha(c.env);
+  if (buildSha) c.header('X-BugDrop-Build-SHA', buildSha);
+});
+
 // Rate limit: 20 requests per 15 minutes per IP
 api.use(
   '/feedback',
@@ -107,12 +114,18 @@ api.use(
 
 // Health check
 api.get('/health', c => {
+  const buildSha = getBuildSha(c.env);
   return c.json({
     status: 'ok',
     environment: c.env.ENVIRONMENT,
     timestamp: new Date().toISOString(),
+    ...(buildSha ? { buildSha } : {}),
   });
 });
+
+function getBuildSha(env: Env): string | undefined {
+  return env.BUILD_SHA?.trim() || undefined;
+}
 
 // Check if app is installed on repo
 api.get('/check/:owner/:repo', async c => {

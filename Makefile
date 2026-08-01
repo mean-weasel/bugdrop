@@ -50,7 +50,7 @@ test-live-radix:
 		echo "Set VERCEL_AUTOMATION_BYPASS_SECRET when the Vercel venue is protected."; \
 		exit 1; \
 	fi
-	npx playwright test e2e/widget.live-radix.spec.ts --project=chromium-live-radix --workers=1
+	npx playwright test e2e/widget.live-radix.spec.ts --project=chromium-live-radix --workers=1 --retries=0
 
 test-live-cross-browser:
 	@if [ -z "$(BROWSER)" ] || [ -z "$(LIVE_TARGET)" ] || [ -z "$(PLAYWRIGHT_BASE_URL)" ]; then \
@@ -59,7 +59,7 @@ test-live-cross-browser:
 		echo "Set VERCEL_AUTOMATION_BYPASS_SECRET when the Vercel venue is protected."; \
 		exit 1; \
 	fi
-	npx playwright test e2e/widget.cross-browser-live.spec.ts --project=$(BROWSER)-cross-browser-live --workers=1
+	npx playwright test e2e/widget.cross-browser-live.spec.ts --project=$(BROWSER)-cross-browser-live --workers=1 --retries=0
 
 # Code Quality
 lint:
