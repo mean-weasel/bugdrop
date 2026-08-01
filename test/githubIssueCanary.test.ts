@@ -12,6 +12,7 @@ const REPO = 'mean-weasel/bugdrop-widget-test';
 const MARKER = `bugdrop-ci-canary:123:1:${'a'.repeat(40)}`;
 const SHA = 'a'.repeat(40);
 const TOKEN = 'synthetic-redaction-sentinel-not-a-credential';
+const noWait = vi.fn(async () => {});
 
 type Issue = {
   number: number;
@@ -66,6 +67,15 @@ function result(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function issueFetch(
+  matches: Issue[],
+  direct: Issue = matches[0]
+): ReturnType<typeof vi.fn<typeof fetch>> {
+  return vi.fn<typeof fetch>(async input =>
+    String(input).includes('/issues?') ? jsonResponse(matches) : jsonResponse(direct)
+  );
+}
+
 describe('GitHub Issue canary discovery and verification', () => {
   it('paginates state=all, filters PRs, and discovers a body-only marker', async () => {
     const matching = issue({ number: 42, title: 'unexpected title' });
@@ -98,7 +108,7 @@ describe('GitHub Issue canary discovery and verification', () => {
   });
 
   it('verifies the complete Issue and browser response contract', async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse([issue()]));
+    const fetchImpl = issueFetch([issue()]);
 
     const verified = await verifyCanaryIssue({
       fetchImpl,
@@ -107,6 +117,7 @@ describe('GitHub Issue canary discovery and verification', () => {
       marker: MARKER,
       expectedSha: SHA,
       result: result(),
+      sleepImpl: noWait,
     });
 
     expect(verified.number).toBe(42);
@@ -121,7 +132,7 @@ describe('GitHub Issue canary discovery and verification', () => {
     ['closed before verification', issue({ state: 'closed' })],
     ['screenshot section', issue({ body: `${issue().body}\n## Screenshot` })],
   ])('rejects %s', async (_name, candidate) => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse([candidate]));
+    const fetchImpl = issueFetch([candidate], candidate);
 
     await expect(
       verifyCanaryIssue({
@@ -131,14 +142,14 @@ describe('GitHub Issue canary discovery and verification', () => {
         marker: MARKER,
         expectedSha: SHA,
         result: result(),
+        sleepImpl: noWait,
       })
     ).rejects.toThrow();
   });
 
   it('rejects duplicate marker matches while preserving their numbers for cleanup diagnostics', async () => {
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(jsonResponse([issue(), issue({ number: 43 })]));
+    const candidates = [issue(), issue({ number: 43 })];
+    const fetchImpl = issueFetch(candidates);
 
     await expect(
       verifyCanaryIssue({
@@ -148,6 +159,7 @@ describe('GitHub Issue canary discovery and verification', () => {
         marker: MARKER,
         expectedSha: SHA,
         result: result(),
+        sleepImpl: noWait,
       })
     ).rejects.toThrow('exactly one');
   });
@@ -159,7 +171,7 @@ describe('GitHub Issue canary discovery and verification', () => {
     ['wrong URL', result({ issueUrl: `https://github.com/${REPO}/issues/99` })],
     ['wrong Worker SHA', result({ workerSha: 'b'.repeat(40) })],
   ])('rejects a %s independently of cleanup discovery', async (_name, browserResult) => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse([issue()]));
+    const fetchImpl = issueFetch([issue()]);
 
     await expect(
       verifyCanaryIssue({
@@ -169,8 +181,93 @@ describe('GitHub Issue canary discovery and verification', () => {
         marker: MARKER,
         expectedSha: SHA,
         result: browserResult,
+        sleepImpl: noWait,
       })
     ).rejects.toThrow();
+  });
+
+  it('uses exact browser Issue readback while bounded list discovery stabilizes', async () => {
+    const candidate = issue();
+    const listResponses = [[], [candidate], [candidate]];
+    const sleepImpl = vi.fn(async () => {});
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      if (!String(input).includes('/issues?')) return jsonResponse(candidate);
+      return jsonResponse(listResponses.shift() ?? [candidate]);
+    });
+
+    const verified = await verifyCanaryIssue({
+      fetchImpl,
+      repo: REPO,
+      token: TOKEN,
+      marker: MARKER,
+      expectedSha: SHA,
+      result: result(),
+      consistencyAttempts: 4,
+      sleepImpl,
+    });
+
+    expect(verified.number).toBe(42);
+    expect(sleepImpl).toHaveBeenCalledTimes(2);
+    expect(String(fetchImpl.mock.calls[0][0])).toMatch(/\/issues\/42$/);
+  });
+
+  it('fails immediately when a duplicate appears during singleton stabilization', async () => {
+    const candidate = issue();
+    const duplicate = issue({ number: 43 });
+    const listResponses = [[candidate], [candidate, duplicate]];
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      if (!String(input).includes('/issues?')) return jsonResponse(candidate);
+      return jsonResponse(listResponses.shift() ?? [candidate, duplicate]);
+    });
+
+    await expect(
+      verifyCanaryIssue({
+        fetchImpl,
+        repo: REPO,
+        token: TOKEN,
+        marker: MARKER,
+        expectedSha: SHA,
+        result: result(),
+        consistencyAttempts: 4,
+        sleepImpl: noWait,
+      })
+    ).rejects.toThrow('found 2');
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('rejects a stable marker singleton that differs from the browser-reported Issue', async () => {
+    const browserIssue = issue();
+    const otherMatch = issue({ number: 43 });
+    const fetchImpl = issueFetch([otherMatch], browserIssue);
+
+    await expect(
+      verifyCanaryIssue({
+        fetchImpl,
+        repo: REPO,
+        token: TOKEN,
+        marker: MARKER,
+        expectedSha: SHA,
+        result: result(),
+        sleepImpl: noWait,
+      })
+    ).rejects.toThrow('not browser Issue #42');
+  });
+
+  it('rejects an unbounded consistency configuration before making a request', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await expect(
+      verifyCanaryIssue({
+        fetchImpl,
+        repo: REPO,
+        token: TOKEN,
+        marker: MARKER,
+        expectedSha: SHA,
+        result: result(),
+        consistencyAttempts: Number.POSITIVE_INFINITY,
+      })
+    ).rejects.toThrow('consistencyAttempts');
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 
@@ -194,6 +291,7 @@ describe('GitHub Issue canary cleanup', () => {
       repo: REPO,
       token: TOKEN,
       marker: MARKER,
+      sleepImpl: noWait,
     });
 
     expect(cleanup.matchedNumbers).toEqual([42, 43]);
@@ -216,9 +314,109 @@ describe('GitHub Issue canary cleanup', () => {
     });
 
     await expect(
-      closeMatchingIssues({ fetchImpl, repo: REPO, token: TOKEN, marker: MARKER })
+      closeMatchingIssues({
+        fetchImpl,
+        repo: REPO,
+        token: TOKEN,
+        marker: MARKER,
+        consistencyAttempts: 2,
+        sleepImpl: noWait,
+      })
     ).rejects.toThrow('42');
     expect(issues[1].state).toBe('closed');
+  });
+
+  it('waits for a newly-created marker Issue to appear before cleanup', async () => {
+    const candidate = issue();
+    const listResponses = [[], [], [candidate], [candidate]];
+    const sleepImpl = vi.fn(async () => {});
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input).includes('/issues?')) {
+        return jsonResponse(listResponses.shift() ?? [candidate]);
+      }
+      if (init?.method === 'PATCH') candidate.state = 'closed';
+      return jsonResponse(candidate);
+    });
+
+    const cleanup = await closeMatchingIssues({
+      fetchImpl,
+      repo: REPO,
+      token: TOKEN,
+      marker: MARKER,
+      consistencyAttempts: 4,
+      sleepImpl,
+    });
+
+    expect(cleanup.closedNumbers).toEqual([42]);
+    expect(cleanup.openNumbers).toEqual([]);
+    expect(sleepImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('fails closed when marker cleanup never observes the newly-created Issue', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse([]));
+
+    await expect(
+      closeMatchingIssues({
+        fetchImpl,
+        repo: REPO,
+        token: TOKEN,
+        marker: MARKER,
+        consistencyAttempts: 3,
+        sleepImpl: noWait,
+      })
+    ).rejects.toThrow('appeared within the retry bound');
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('requires stable zero-open evidence after cleanup', async () => {
+    const candidate = issue();
+    const listResponses = [[candidate], [], []];
+    const sleepImpl = vi.fn(async () => {});
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input).includes('/issues?')) {
+        return jsonResponse(listResponses.shift() ?? []);
+      }
+      if (init?.method === 'PATCH') candidate.state = 'closed';
+      return jsonResponse(candidate);
+    });
+
+    const cleanup = await closeMatchingIssues({
+      fetchImpl,
+      repo: REPO,
+      token: TOKEN,
+      marker: MARKER,
+      consistencyAttempts: 3,
+      sleepImpl,
+    });
+
+    expect(cleanup.openNumbers).toEqual([]);
+    expect(listResponses).toEqual([]);
+    expect(sleepImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a late open match after a transient empty final list', async () => {
+    const candidate = issue();
+    const lateDuplicate = issue({ number: 43 });
+    const listResponses = [[candidate], [], [lateDuplicate], [lateDuplicate]];
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input).includes('/issues?')) {
+        return jsonResponse(listResponses.shift() ?? [lateDuplicate]);
+      }
+      if (init?.method === 'PATCH') candidate.state = 'closed';
+      return jsonResponse(candidate);
+    });
+
+    await expect(
+      closeMatchingIssues({
+        fetchImpl,
+        repo: REPO,
+        token: TOKEN,
+        marker: MARKER,
+        consistencyAttempts: 3,
+        sleepImpl: noWait,
+      })
+    ).rejects.toThrow('still open after cleanup: #43');
+    expect(listResponses).toEqual([]);
   });
 
   it('treats an ambiguous close as success when exact readback is closed', async () => {
@@ -242,10 +440,11 @@ describe('GitHub Issue canary cleanup', () => {
       repo: REPO,
       token: TOKEN,
       marker: MARKER,
+      sleepImpl: noWait,
     });
 
     expect(cleanup.closedNumbers).toEqual([42]);
-    expect(listCount).toBe(2);
+    expect(listCount).toBe(3);
   });
 
   it('retries an ambiguous close once only after readback proves the Issue is still open', async () => {
@@ -262,10 +461,48 @@ describe('GitHub Issue canary cleanup', () => {
       return jsonResponse(candidate);
     });
 
-    await closeMatchingIssues({ fetchImpl, repo: REPO, token: TOKEN, marker: MARKER });
+    await closeMatchingIssues({
+      fetchImpl,
+      repo: REPO,
+      token: TOKEN,
+      marker: MARKER,
+      sleepImpl: noWait,
+    });
 
     expect(patchCount).toBe(2);
     expect(candidate.state).toBe('closed');
+  });
+
+  it('waits for stale exact and paginated close readbacks without another PATCH', async () => {
+    const openCandidate = issue();
+    const closedCandidate = issue({ state: 'closed' });
+    const exactStates = [openCandidate, openCandidate, closedCandidate];
+    const listStates = [[openCandidate], [openCandidate], [openCandidate], [closedCandidate]];
+    const sleepImpl = vi.fn(async () => {});
+    let patchCount = 0;
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (init?.method === 'PATCH') {
+        patchCount += 1;
+        return jsonResponse(closedCandidate);
+      }
+      if (String(input).includes('/issues?')) {
+        return jsonResponse(listStates.shift() ?? [closedCandidate]);
+      }
+      return jsonResponse(exactStates.shift() ?? closedCandidate);
+    });
+
+    const cleanup = await closeMatchingIssues({
+      fetchImpl,
+      repo: REPO,
+      token: TOKEN,
+      marker: MARKER,
+      consistencyAttempts: 4,
+      sleepImpl,
+    });
+
+    expect(cleanup.openNumbers).toEqual([]);
+    expect(patchCount).toBe(1);
+    expect(sleepImpl).toHaveBeenCalledTimes(5);
   });
 
   it('sweeps only open non-PR Issues with the reserved title prefix', async () => {
@@ -289,6 +526,7 @@ describe('GitHub Issue canary cleanup', () => {
       repo: REPO,
       token: TOKEN,
       prefix: CANARY_TITLE_PREFIX,
+      sleepImpl: noWait,
     });
 
     expect(cleanup.matchedNumbers).toEqual([42]);
@@ -319,7 +557,7 @@ describe('GitHub Issue canary cleanup', () => {
 
 describe('GitHub Issue canary CLI', () => {
   it('verifies through the CLI without exposing its token', async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse([issue()]));
+    const fetchImpl = issueFetch([issue()]);
     const output: string[] = [];
     const errors: string[] = [];
 
@@ -341,6 +579,7 @@ describe('GitHub Issue canary CLI', () => {
         readFileImpl: vi.fn().mockResolvedValue(JSON.stringify(result())),
         stdout: value => output.push(value),
         stderr: value => errors.push(value),
+        sleepImpl: noWait,
       }
     );
 

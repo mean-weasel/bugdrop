@@ -9,6 +9,10 @@ const DEFAULT_API_BASE_URL = 'https://api.github.com';
 const DEFAULT_LABELS = ['bug', 'bugdrop'];
 const DEFAULT_AUTHOR = 'neonwatty-bugdrop[bot]';
 const ATTRIBUTION_FOOTER = '*Submitted via [BugDrop](https://github.com/mean-weasel/bugdrop)*';
+const DEFAULT_CONSISTENCY_ATTEMPTS = 6;
+const DEFAULT_CONSISTENCY_DELAY_MS = 2_000;
+const MAX_CONSISTENCY_ATTEMPTS = 20;
+const MAX_CONSISTENCY_DELAY_MS = 10_000;
 
 export function canaryTitle(marker) {
   requireNonempty(marker, 'marker');
@@ -46,15 +50,43 @@ export async function verifyCanaryIssue({
   result,
   expectedLabels = DEFAULT_LABELS,
   expectedAuthor = DEFAULT_AUTHOR,
+  consistencyAttempts = DEFAULT_CONSISTENCY_ATTEMPTS,
+  consistencyDelayMs = DEFAULT_CONSISTENCY_DELAY_MS,
+  sleepImpl = sleep,
 }) {
   requireNonempty(marker, 'marker');
   requireNonempty(expectedSha, 'expectedSha');
-  const matches = await listMatchingIssues({
+  const consistency = validateConsistencyOptions({
+    consistencyAttempts,
+    consistencyDelayMs,
+    sleepImpl,
+  });
+  const referenceFailures = [];
+  validateBrowserResultReference({
+    failures: referenceFailures,
+    result,
+    marker,
+    expectedSha,
+    repo,
+  });
+  if (referenceFailures.length > 0) {
+    throw new Error(`Browser result failed verification: ${referenceFailures.join('; ')}`);
+  }
+
+  const candidate = await getIssue({
+    fetchImpl,
+    apiBaseUrl,
+    repo,
+    token,
+    number: result.issueNumber,
+  });
+  const matches = await waitForStableSingleton({
     fetchImpl,
     apiBaseUrl,
     repo,
     token,
     marker,
+    consistency,
   });
   const numbers = matches.map(candidate => candidate.number);
   if (matches.length !== 1) {
@@ -63,9 +95,13 @@ export async function verifyCanaryIssue({
     );
   }
 
-  const candidate = matches[0];
   const canonicalUrl = canonicalIssueUrl(repo, candidate.number);
   const failures = [];
+  if (matches[0].number !== candidate.number) {
+    failures.push(
+      `Marker listing found Issue #${matches[0].number}, not browser Issue #${candidate.number}`
+    );
+  }
   if (!Number.isInteger(candidate.number) || candidate.number <= 0) {
     failures.push('Issue number is not a positive integer');
   }
@@ -107,15 +143,27 @@ export async function closeMatchingIssues({
   token,
   marker,
   prefix,
+  consistencyAttempts = DEFAULT_CONSISTENCY_ATTEMPTS,
+  consistencyDelayMs = DEFAULT_CONSISTENCY_DELAY_MS,
+  sleepImpl = sleep,
 }) {
   const selector = validateSelector({ marker, prefix });
-  const matches = await listMatchingIssues({
+  const consistency = validateConsistencyOptions({
+    consistencyAttempts,
+    consistencyDelayMs,
+    sleepImpl,
+  });
+  const matches = await waitForInitialCleanupMatches({
     fetchImpl,
     apiBaseUrl,
     repo,
     token,
     ...selector,
+    consistency,
   });
+  if (marker && matches.length === 0) {
+    throw new Error(`No non-PR Issue for marker ${marker} appeared within the retry bound`);
+  }
   const closedNumbers = [];
   const failures = [];
 
@@ -127,6 +175,7 @@ export async function closeMatchingIssues({
         repo,
         token,
         number: candidate.number,
+        consistency,
       });
       closedNumbers.push(candidate.number);
     } catch (error) {
@@ -134,12 +183,13 @@ export async function closeMatchingIssues({
     }
   }
 
-  const finalMatches = await listMatchingIssues({
+  const finalMatches = await waitForZeroOpenMatches({
     fetchImpl,
     apiBaseUrl,
     repo,
     token,
     ...selector,
+    consistency,
   });
   const openNumbers = finalMatches
     .filter(candidate => candidate.state === 'open')
@@ -169,6 +219,9 @@ export async function runCli(
     readFileImpl = readFile,
     stdout = value => process.stdout.write(`${value}\n`),
     stderr = value => process.stderr.write(`${value}\n`),
+    consistencyAttempts = DEFAULT_CONSISTENCY_ATTEMPTS,
+    consistencyDelayMs = DEFAULT_CONSISTENCY_DELAY_MS,
+    sleepImpl = sleep,
   } = {}
 ) {
   const token = env.BUGDROP_CANARY_GITHUB_TOKEN;
@@ -189,6 +242,9 @@ export async function runCli(
         marker: options.marker,
         expectedSha: options.expectedSha,
         result,
+        consistencyAttempts,
+        consistencyDelayMs,
+        sleepImpl,
       });
       output = { verified: true, issueNumber: candidate.number, issueUrl: candidate.html_url };
     } else if (command === 'cleanup') {
@@ -198,6 +254,9 @@ export async function runCli(
         repo: options.repo,
         token,
         marker: options.marker,
+        consistencyAttempts,
+        consistencyDelayMs,
+        sleepImpl,
       });
     } else if (command === 'preflight' || command === 'sweep') {
       requireNonempty(options.prefix, '--prefix');
@@ -206,6 +265,9 @@ export async function runCli(
         repo: options.repo,
         token,
         prefix: options.prefix,
+        consistencyAttempts,
+        consistencyDelayMs,
+        sleepImpl,
       });
     } else {
       throw new Error(`Unknown command: ${command || '(missing)'}`);
@@ -238,34 +300,107 @@ async function listRepositoryIssues({ fetchImpl, apiBaseUrl, repo, token }) {
   return issues;
 }
 
-async function closeOneIssue({ fetchImpl, apiBaseUrl, repo, token, number }) {
+async function closeOneIssue({ fetchImpl, apiBaseUrl, repo, token, number, consistency }) {
+  let firstError;
   try {
-    const updated = await patchIssueClosed({ fetchImpl, apiBaseUrl, repo, token, number });
-    if (updated.state === 'closed') return;
-    throw new Error(`PATCH returned state ${updated.state ?? 'missing'}`);
-  } catch (firstError) {
-    const afterFirst = await getIssue({ fetchImpl, apiBaseUrl, repo, token, number });
-    if (afterFirst.state === 'closed') return;
-    if (afterFirst.state !== 'open') {
-      throw new Error(
-        `Close was ambiguous and readback returned state ${afterFirst.state ?? 'missing'}: ${safeErrorMessage(firstError, token)}`
-      );
-    }
-    try {
-      const retried = await patchIssueClosed({ fetchImpl, apiBaseUrl, repo, token, number });
-      if (retried.state === 'closed') return;
-    } catch (retryError) {
-      const afterRetry = await getIssue({ fetchImpl, apiBaseUrl, repo, token, number });
-      if (afterRetry.state === 'closed') return;
-      throw new Error(
-        `Close retry failed and Issue remains ${afterRetry.state ?? 'unknown'}: ${safeErrorMessage(retryError, token)}`
-      );
-    }
-    const afterRetry = await getIssue({ fetchImpl, apiBaseUrl, repo, token, number });
-    if (afterRetry.state !== 'closed') {
-      throw new Error(`Close retry returned but Issue remains ${afterRetry.state ?? 'unknown'}`);
-    }
+    await patchIssueClosed({ fetchImpl, apiBaseUrl, repo, token, number });
+  } catch (error) {
+    firstError = error;
   }
+  const afterFirst = await waitForClosedIssue({
+    fetchImpl,
+    apiBaseUrl,
+    repo,
+    token,
+    number,
+    consistency,
+  });
+  if (afterFirst.state === 'closed') return;
+  if (afterFirst.state !== 'open') {
+    throw new Error(
+      `Close readback returned state ${afterFirst.state ?? 'missing'}${firstError ? `: ${safeErrorMessage(firstError, token)}` : ''}`
+    );
+  }
+
+  let retryError;
+  try {
+    await patchIssueClosed({ fetchImpl, apiBaseUrl, repo, token, number });
+  } catch (error) {
+    retryError = error;
+  }
+  const afterRetry = await waitForClosedIssue({
+    fetchImpl,
+    apiBaseUrl,
+    repo,
+    token,
+    number,
+    consistency,
+  });
+  if (afterRetry.state !== 'closed') {
+    throw new Error(
+      `Close retry failed and Issue remains ${afterRetry.state ?? 'unknown'}${retryError ? `: ${safeErrorMessage(retryError, token)}` : ''}`
+    );
+  }
+}
+
+async function waitForStableSingleton({ consistency, ...listOptions }) {
+  let previousNumber;
+  let lastMatches = [];
+  for (let attempt = 1; attempt <= consistency.attempts; attempt += 1) {
+    const matches = await listMatchingIssues(listOptions);
+    lastMatches = matches;
+    if (matches.length > 1) return matches;
+    if (matches.length === 1 && matches[0].number === previousNumber) return matches;
+    previousNumber = matches.length === 1 ? matches[0].number : undefined;
+    await waitBeforeNextAttempt({ attempt, consistency });
+  }
+  if (lastMatches.length === 1) {
+    throw new Error('Exactly-one marker discovery did not stabilize within the retry bound');
+  }
+  return lastMatches;
+}
+
+async function waitForInitialCleanupMatches({ consistency, marker, prefix, ...listOptions }) {
+  let matches = [];
+  for (let attempt = 1; attempt <= consistency.attempts; attempt += 1) {
+    matches = await listMatchingIssues({ ...listOptions, marker, prefix });
+    if (matches.length > 0 || prefix) return matches;
+    await waitBeforeNextAttempt({ attempt, consistency });
+  }
+  return matches;
+}
+
+async function waitForZeroOpenMatches({ consistency, ...listOptions }) {
+  let matches = [];
+  let consecutiveZeroOpenObservations = 0;
+  for (let attempt = 1; attempt <= consistency.attempts; attempt += 1) {
+    matches = await listMatchingIssues(listOptions);
+    if (matches.every(candidate => candidate.state !== 'open')) {
+      consecutiveZeroOpenObservations += 1;
+      if (consecutiveZeroOpenObservations >= 2) return matches;
+    } else {
+      consecutiveZeroOpenObservations = 0;
+    }
+    await waitBeforeNextAttempt({ attempt, consistency });
+  }
+  if (matches.every(candidate => candidate.state !== 'open')) {
+    throw new Error('Zero-open discovery did not stabilize within the retry bound');
+  }
+  return matches;
+}
+
+async function waitForClosedIssue({ consistency, ...issueOptions }) {
+  let candidate;
+  for (let attempt = 1; attempt <= consistency.attempts; attempt += 1) {
+    candidate = await getIssue(issueOptions);
+    if (candidate.state !== 'open') return candidate;
+    await waitBeforeNextAttempt({ attempt, consistency });
+  }
+  return candidate;
+}
+
+async function waitBeforeNextAttempt({ attempt, consistency }) {
+  if (attempt < consistency.attempts) await consistency.sleep(consistency.delayMs);
 }
 
 async function patchIssueClosed({ fetchImpl, apiBaseUrl, repo, token, number }) {
@@ -337,6 +472,20 @@ function validateBrowserResult({ failures, result, marker, expectedSha, candidat
   if (result.workerSha !== expectedSha) failures.push('Browser result Worker SHA differs');
 }
 
+function validateBrowserResultReference({ failures, result, marker, expectedSha, repo }) {
+  if (!result || typeof result !== 'object') {
+    failures.push('Browser result file is missing or invalid');
+    return;
+  }
+  if (result.marker !== marker) failures.push('Browser result marker does not match');
+  if (!Number.isInteger(result.issueNumber) || result.issueNumber <= 0) {
+    failures.push('Browser result Issue number is not a positive integer');
+  } else if (result.issueUrl !== canonicalIssueUrl(repo, result.issueNumber)) {
+    failures.push('Browser result Issue URL is not canonical');
+  }
+  if (result.workerSha !== expectedSha) failures.push('Browser result Worker SHA differs');
+}
+
 function normalizeLabels(labels) {
   if (!Array.isArray(labels)) return [];
   return labels
@@ -396,6 +545,29 @@ function issueApiUrl(apiBaseUrl, repo, number) {
 function requireNonempty(value, name) {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`${name} is required`);
   return value.trim();
+}
+
+function validateConsistencyOptions({ consistencyAttempts, consistencyDelayMs, sleepImpl }) {
+  if (
+    !Number.isInteger(consistencyAttempts) ||
+    consistencyAttempts < 2 ||
+    consistencyAttempts > MAX_CONSISTENCY_ATTEMPTS
+  ) {
+    throw new Error(`consistencyAttempts must be an integer from 2 to ${MAX_CONSISTENCY_ATTEMPTS}`);
+  }
+  if (
+    !Number.isInteger(consistencyDelayMs) ||
+    consistencyDelayMs < 0 ||
+    consistencyDelayMs > MAX_CONSISTENCY_DELAY_MS
+  ) {
+    throw new Error(`consistencyDelayMs must be an integer from 0 to ${MAX_CONSISTENCY_DELAY_MS}`);
+  }
+  if (typeof sleepImpl !== 'function') throw new Error('sleepImpl must be a function');
+  return { attempts: consistencyAttempts, delayMs: consistencyDelayMs, sleep: sleepImpl };
+}
+
+function sleep(delayMs) {
+  return new Promise(resolve => setTimeout(resolve, delayMs));
 }
 
 function safeErrorMessage(error, token) {
