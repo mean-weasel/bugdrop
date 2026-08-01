@@ -286,40 +286,13 @@ jobs:
   deploy-preview:
     name: Deploy Preview
     runs-on: ubuntu-latest
-    needs: check
+    timeout-minutes: 45
+    needs: [check, test, e2e, radix-e2e]
     if: github.event_name == 'merge_group'
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: make install
-
-      - name: Build all
-        run: VERSION=$(git describe --tags --abbrev=0) make build-all
-
-      - name: Deploy to preview
-        run: npx wrangler deploy --env preview
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-  # Live E2E tests against real cross-origin deployment (merge queue only)
-  live-preview-tests:
-    name: Live Preview Tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: [deploy-preview]
-    if: github.event_name == 'merge_group'
-    env:
-      LIVE_TARGET: preview
-      PLAYWRIGHT_BASE_URL: https://bugdrop-widget-test-git-preview-jermwatts-projects.vercel.app
+    concurrency:
+      group: bugdrop-shared-preview
+      cancel-in-progress: false
+      queue: max
     steps:
       - uses: actions/checkout@v5
         with:
@@ -342,55 +315,69 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
-          key: pw-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
+          key: pw-${{ runner.os }}-all-${{ steps.pw-version.outputs.version }}
 
       - name: Install Playwright browsers
-        timeout-minutes: 5
+        timeout-minutes: 10
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Install Playwright system deps
-        timeout-minutes: 5
+        timeout-minutes: 10
         if: steps.pw-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
+        run: npx playwright install-deps chromium firefox webkit
 
-      - name: Wait for preview widget deployment
+      - name: Record canary identity
+        shell: bash
+        run: |
+          echo "BUGDROP_CANARY_MARKER=bugdrop-ci-canary:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "BUGDROP_CANARY_RESULT_FILE=test-results/issue-canary-result.json" >> "$GITHUB_ENV"
+          echo "EXPECTED_WORKER_SHA=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "EXPECTED_WIDGET_ORIGIN=https://bugdrop-preview.neonwatty.workers.dev" >> "$GITHUB_ENV"
+          echo "LIVE_TARGET=preview" >> "$GITHUB_ENV"
+          echo "PLAYWRIGHT_BASE_URL=https://bugdrop-widget-test-git-preview-jermwatts-projects.vercel.app" >> "$GITHUB_ENV"
+
+      - name: Preflight stale canary cleanup
+        run: >-
+          node scripts/github-issue-canary.mjs preflight
+          --repo mean-weasel/bugdrop-widget-test
+          --prefix "[BugDrop CI canary]"
+        env:
+          BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
+
+      - name: Build all
+        run: VERSION=$(git describe --tags --abbrev=0) make build-all
+
+      - name: Record expected preview widget hash
+        run: echo "EXPECTED_WIDGET_SHA256=$(shasum -a 256 public/widget.js | awk '{print $1}')" >> "$GITHUB_ENV"
+
+      - name: Deploy to preview
+        run: npx wrangler deploy --env preview --var "BUILD_SHA:$GITHUB_SHA"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Wait for exact preview Worker
         run: |
           WORKER_URL="https://bugdrop-preview.neonwatty.workers.dev/api/health"
-          echo "Polling $WORKER_URL until ready..."
+          echo "Polling preview health for the expected environment and build SHA..."
           for i in $(seq 1 30); do
-            if curl -sfo /dev/null "$WORKER_URL"; then
-              echo "Preview worker ready after $((i * 10))s"
+            HEALTH=$(curl -sSf "$WORKER_URL" || true)
+            ENVIRONMENT=$(jq -r '.environment // empty' <<< "$HEALTH")
+            BUILD_SHA=$(jq -r '.buildSha // empty' <<< "$HEALTH")
+            if [ "$ENVIRONMENT" = "preview" ] && [ "$BUILD_SHA" = "$GITHUB_SHA" ]; then
+              echo "Preview worker matched the expected build after $((i * 10))s"
               exit 0
             fi
-            echo "Attempt $i/30 — not ready, waiting 10s..."
+            echo "Attempt $i/30 did not match the expected preview identity; waiting 10s..."
             sleep 10
           done
-          echo "Preview worker not ready after 300s"
+          echo "Preview worker did not report the expected environment and build SHA"
           exit 1
 
-      - name: Verify test venue is reachable
+      - name: Wait for exact preview widget asset
         run: |
-          VENUE_URL="${PLAYWRIGHT_BASE_URL}"
-          echo "Checking test venue at $VENUE_URL..."
-          BYPASS_ARGS=""
-          if [ -n "$VERCEL_AUTOMATION_BYPASS_SECRET" ]; then
-            BYPASS_ARGS="-H x-vercel-protection-bypass:${VERCEL_AUTOMATION_BYPASS_SECRET}"
-          fi
-          curl -sfo /dev/null $BYPASS_ARGS "$VENUE_URL" || (echo "Test venue unreachable at $VENUE_URL" && exit 1)
-          echo "Test venue reachable"
-        env:
-          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-
-      - name: Record expected preview widget asset
-        run: |
-          VERSION=$(git describe --tags --abbrev=0) npm run build:widget
-          echo "EXPECTED_WIDGET_ORIGIN=https://bugdrop-preview.neonwatty.workers.dev" >> "$GITHUB_ENV"
-          echo "EXPECTED_WIDGET_SHA256=$(shasum -a 256 public/widget.js | awk '{print $1}')" >> "$GITHUB_ENV"
-
-      - name: Wait for expected preview widget asset
-        run: |
-          WIDGET_URL="https://bugdrop-preview.neonwatty.workers.dev/widget.js"
+          WIDGET_URL="$EXPECTED_WIDGET_ORIGIN/widget.js"
           echo "Waiting for $WIDGET_URL to serve $EXPECTED_WIDGET_SHA256..."
           for i in $(seq 1 30); do
             ACTUAL_SHA="$(curl -sSf "$WIDGET_URL" | shasum -a 256 | awk '{print $1}')"
@@ -404,8 +391,22 @@ jobs:
           echo "Preview widget did not serve expected asset $EXPECTED_WIDGET_SHA256"
           exit 1
 
+      - name: Verify fixed preview venue
+        run: |
+          BYPASS_ARGS=()
+          if [ -n "$VERCEL_AUTOMATION_BYPASS_SECRET" ]; then
+            BYPASS_ARGS=(-H "x-vercel-protection-bypass:${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+          HTML=$(curl -sSf "${BYPASS_ARGS[@]}" "$PLAYWRIGHT_BASE_URL")
+          grep -Fq "$EXPECTED_WIDGET_ORIGIN/widget.js" <<< "$HTML" || {
+            echo 'The fixed venue does not reference the expected preview widget.'
+            exit 1
+          }
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
       - name: Run live E2E tests
-        run: npx playwright test --project=chromium-live --workers=1
+        run: npx playwright test --project=chromium-live --workers=1 --retries=0
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
@@ -414,106 +415,74 @@ jobs:
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
-      - name: Upload test report
+      - name: Run Chromium live cross-browser smoke
+        run: make test-live-cross-browser BROWSER=chromium
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+      - name: Run Firefox live cross-browser smoke
+        run: make test-live-cross-browser BROWSER=firefox
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+      - name: Run WebKit live cross-browser smoke
+        run: make test-live-cross-browser BROWSER=webkit
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+      - name: Run one real-Issue canary
+        run: npx playwright test e2e/widget.issue-canary.spec.ts --project=chromium-issue-canary --workers=1 --retries=0
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+      - name: Verify canary Issue independently
+        run: >-
+          node scripts/github-issue-canary.mjs verify
+          --repo mean-weasel/bugdrop-widget-test
+          --marker "$BUGDROP_CANARY_MARKER"
+          --expected-sha "$GITHUB_SHA"
+          --result-file "$BUGDROP_CANARY_RESULT_FILE"
+        env:
+          BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
+
+      - name: Cleanup current canary marker
+        if: always()
+        run: >-
+          node scripts/github-issue-canary.mjs cleanup
+          --repo mean-weasel/bugdrop-widget-test
+          --marker "$BUGDROP_CANARY_MARKER"
+        env:
+          BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
+
+      - name: Final reserved-prefix sweep
+        if: always()
+        run: >-
+          node scripts/github-issue-canary.mjs sweep
+          --repo mean-weasel/bugdrop-widget-test
+          --prefix "[BugDrop CI canary]"
+        env:
+          BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
+
+      - name: Upload preview failure report
         uses: actions/upload-artifact@v5
         if: failure()
         with:
-          name: playwright-live-report
+          name: playwright-preview-critical-report
           path: playwright-report/
           retention-days: 7
 
-  # Cross-browser live smoke tests against real cross-origin deployment (merge queue only)
-  live-preview-cross-browser-tests:
-    name: Live Preview Cross-Browser (${{ matrix.browser }})
+  # Required-check bridge: fail closed if the merge-group critical section did not succeed.
+  live-preview-tests:
+    name: Live Preview Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
     needs: [deploy-preview]
-    if: github.event_name == 'merge_group'
-    strategy:
-      fail-fast: false
-      matrix:
-        browser: [chromium, firefox, webkit]
-    env:
-      LIVE_TARGET: preview
-      PLAYWRIGHT_BASE_URL: https://bugdrop-widget-test-git-preview-jermwatts-projects.vercel.app
+    if: ${{ always() && github.event_name == 'merge_group' }}
     steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: make install
-
-      - name: Get Playwright version
-        id: pw-version
-        run: echo "version=$(npx playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Playwright browser
-        id: pw-cache
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: pw-${{ runner.os }}-${{ matrix.browser }}-${{ steps.pw-version.outputs.version }}
-
-      - name: Install Playwright browser
-        timeout-minutes: 5
-        if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps ${{ matrix.browser }}
-
-      - name: Install Playwright system deps
-        timeout-minutes: 5
-        if: steps.pw-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps ${{ matrix.browser }}
-
-      - name: Verify test venue is reachable
+      - name: Require successful preview critical section
+        env:
+          CRITICAL_RESULT: ${{ needs.deploy-preview.result }}
         run: |
-          VENUE_URL="${PLAYWRIGHT_BASE_URL}"
-          echo "Checking test venue at $VENUE_URL..."
-          BYPASS_ARGS=""
-          if [ -n "$VERCEL_AUTOMATION_BYPASS_SECRET" ]; then
-            BYPASS_ARGS="-H x-vercel-protection-bypass:${VERCEL_AUTOMATION_BYPASS_SECRET}"
+          if [ "$CRITICAL_RESULT" != "success" ]; then
+            echo "Deploy Preview concluded $CRITICAL_RESULT; failing required status."
+            exit 1
           fi
-          curl -sfo /dev/null $BYPASS_ARGS "$VENUE_URL" || (echo "Test venue unreachable at $VENUE_URL" && exit 1)
-          echo "Test venue reachable"
-        env:
-          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-
-      - name: Record expected preview widget asset
-        run: |
-          VERSION=$(git describe --tags --abbrev=0) npm run build:widget
-          echo "EXPECTED_WIDGET_ORIGIN=https://bugdrop-preview.neonwatty.workers.dev" >> "$GITHUB_ENV"
-          echo "EXPECTED_WIDGET_SHA256=$(shasum -a 256 public/widget.js | awk '{print $1}')" >> "$GITHUB_ENV"
-
-      - name: Wait for expected preview widget asset
-        run: |
-          WIDGET_URL="https://bugdrop-preview.neonwatty.workers.dev/widget.js"
-          echo "Waiting for $WIDGET_URL to serve $EXPECTED_WIDGET_SHA256..."
-          for i in $(seq 1 30); do
-            ACTUAL_SHA="$(curl -sSf "$WIDGET_URL" | shasum -a 256 | awk '{print $1}')"
-            if [ "$ACTUAL_SHA" = "$EXPECTED_WIDGET_SHA256" ]; then
-              echo "Preview widget asset matched after $((i * 5))s"
-              exit 0
-            fi
-            echo "Attempt $i/30 served $ACTUAL_SHA; waiting 5s..."
-            sleep 5
-          done
-          echo "Preview widget did not serve expected asset $EXPECTED_WIDGET_SHA256"
-          exit 1
-
-      - name: Run cross-browser live smoke tests
-        run: npx playwright test e2e/widget.cross-browser-live.spec.ts --project=${{ matrix.browser }}-cross-browser-live --workers=1
-        env:
-          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-
-      - name: Upload cross-browser test report
-        uses: actions/upload-artifact@v5
-        if: failure()
-        with:
-          name: playwright-cross-browser-report-${{ matrix.browser }}
-          path: playwright-report/
-          retention-days: 7

@@ -236,8 +236,9 @@ test.describe('Widget Loading', () => {
     await page.setViewportSize({ width: 900, height: 860 });
     await page.setViewportSize({ width: 900, height: 900 });
 
-    const savedAfterResize = await page.evaluate(key => localStorage.getItem(key), storageKey);
-    expect(savedAfterResize).toBe(savedTop);
+    await expect
+      .poll(() => page.evaluate(key => localStorage.getItem(key), storageKey))
+      .toBe(savedTop);
   });
 
   test('missing local test config returns a javascript file', async ({ page }) => {
@@ -637,8 +638,15 @@ test.describe('Widget Interaction', () => {
     expect(afterResize!.x).toBeGreaterThanOrEqual(0);
     expect(afterResize!.width).toBeLessThanOrEqual(390);
   });
-
   test('dragged feedback modal reflows fixed sizing on narrow desktop resize', async ({ page }) => {
+    await page.route('**/api/check**', route => {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ installed: true }),
+      });
+    });
+
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto('/test/');
 
@@ -652,10 +660,16 @@ test.describe('Widget Interaction', () => {
     await dragModalHeader(page, -90, 70);
     await page.setViewportSize({ width: 660, height: 720 });
 
+    await expect
+      .poll(async () => {
+        const box = await modal.boundingBox();
+        return box ? box.x + box.width : Number.POSITIVE_INFINITY;
+      })
+      .toBeLessThanOrEqual(660);
+
     const afterResize = await modal.boundingBox();
     expect(afterResize).not.toBeNull();
     expect(afterResize!.width).toBeLessThanOrEqual(594);
-    expect(afterResize!.x + afterResize!.width).toBeLessThanOrEqual(660);
   });
 
   test('element picker handles SVG elements without errors', async ({ page }) => {

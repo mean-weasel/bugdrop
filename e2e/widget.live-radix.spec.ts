@@ -44,11 +44,18 @@ async function openFeedbackForm(page: Page) {
   await triggerLabel.click();
 
   const getStartedBtn = host.locator('css=[data-action="continue"]');
-  if (await getStartedBtn.isVisible({ timeout: 1_000 }).catch(() => false)) {
+  const titleInput = host.locator('css=#title');
+  await expect
+    .poll(async () => (await getStartedBtn.isVisible()) || (await titleInput.isVisible()), {
+      timeout: 5_000,
+    })
+    .toBe(true);
+
+  if (await getStartedBtn.isVisible()) {
     await getStartedBtn.click();
   }
 
-  await expect(host.locator('css=#title')).toBeVisible({ timeout: 5_000 });
+  await expect(titleInput).toBeVisible({ timeout: 5_000 });
   return host;
 }
 

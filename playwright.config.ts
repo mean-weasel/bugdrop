@@ -1,6 +1,15 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8787';
+const issueCanaryProject = 'chromium-issue-canary';
+const issueCanaryExplicitlySelected = process.argv.some((argument, index, arguments_) => {
+  return (
+    argument === `--project=${issueCanaryProject}` ||
+    (argument === '--project' && arguments_[index + 1] === issueCanaryProject)
+  );
+});
+const issueCanaryTest = /.*\.issue-canary\.spec\.ts$/;
+const noTests = /$a/;
 
 export default defineConfig({
   testDir: './e2e',
@@ -17,7 +26,7 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: /.*\.(?:live|live-radix|cross-browser-live|radix)\.spec\.ts$/,
+      testIgnore: /.*\.(?:live|live-radix|cross-browser-live|issue-canary|radix)\.spec\.ts$/,
     },
     {
       name: 'chromium-radix',
@@ -77,6 +86,21 @@ export default defineConfig({
         ...devices['Desktop Safari'],
       },
       testMatch: /.*\.cross-browser-live\.spec\.ts/,
+      timeout: 60_000,
+    },
+    {
+      name: issueCanaryProject,
+      fullyParallel: false,
+      workers: 1,
+      retries: 0,
+      use: {
+        ...devices['Desktop Chrome'],
+        screenshot: 'off',
+        trace: 'off',
+        video: 'off',
+      },
+      // An unqualified `playwright test` must not discover the real-Issue canary.
+      testMatch: issueCanaryExplicitlySelected ? issueCanaryTest : noTests,
       timeout: 60_000,
     },
   ],

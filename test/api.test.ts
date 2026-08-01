@@ -93,6 +93,25 @@ describe('API Routes', () => {
 
       expect(data.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
     });
+
+    it('should expose the configured Worker build SHA', async () => {
+      const buildSha = 'a'.repeat(40);
+      const req = new Request('http://localhost/health');
+      const res = await app.fetch(req, { ...mockEnv, BUILD_SHA: buildSha });
+      const data = await res.json();
+
+      expect(data.buildSha).toBe(buildSha);
+    });
+
+    it('should omit Worker build identity when BUILD_SHA is unconfigured or blank', async () => {
+      for (const buildSha of [undefined, '', '   ']) {
+        const req = new Request('http://localhost/health');
+        const res = await app.fetch(req, { ...mockEnv, BUILD_SHA: buildSha });
+        const data = await res.json();
+
+        expect(data).not.toHaveProperty('buildSha');
+      }
+    });
   });
 
   describe('GET /check/:owner/:repo', () => {
@@ -257,6 +276,65 @@ describe('API Routes', () => {
         expect.stringContaining('This is a test feedback'),
         ['bug', 'bugdrop']
       );
+    });
+
+    it('should expose the configured Worker build SHA on successful feedback', async () => {
+      const buildSha = 'a'.repeat(40);
+      const req = new Request('http://localhost/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(validPayload),
+      });
+
+      const res = await app.fetch(req, { ...mockEnv, BUILD_SHA: buildSha });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('X-BugDrop-Build-SHA')).toBe(buildSha);
+    });
+
+    it.each([
+      ['invalid JSON', '{'],
+      ['validation error', JSON.stringify({ ...validPayload, title: '' })],
+    ])('should expose the configured Worker build SHA on %s', async (_name, body) => {
+      const buildSha = 'b'.repeat(40);
+      const req = new Request('http://localhost/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+
+      const res = await app.fetch(req, { ...mockEnv, BUILD_SHA: buildSha });
+
+      expect(res.status).toBe(400);
+      expect(res.headers.get('X-BugDrop-Build-SHA')).toBe(buildSha);
+    });
+
+    it('should expose the configured Worker build SHA on GitHub failures', async () => {
+      const buildSha = 'c'.repeat(40);
+      mockCreateIssue.mockRejectedValueOnce(new Error('GitHub unavailable'));
+      const req = new Request('http://localhost/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(validPayload),
+      });
+
+      const res = await app.fetch(req, { ...mockEnv, BUILD_SHA: buildSha });
+
+      expect(res.status).toBe(500);
+      expect(res.headers.get('X-BugDrop-Build-SHA')).toBe(buildSha);
+    });
+
+    it('should omit Worker build identity when BUILD_SHA is unconfigured', async () => {
+      const req = new Request('http://localhost/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(validPayload),
+      });
+
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(200);
+      expect(res.headers.has('X-BugDrop-Build-SHA')).toBe(false);
     });
 
     it('should reject feedback without a bearer token when token auth is configured', async () => {

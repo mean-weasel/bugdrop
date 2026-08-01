@@ -2,6 +2,9 @@ import { test, expect, type Page } from '@playwright/test';
 
 declare global {
   interface Window {
+    BugDrop?: {
+      open: () => void;
+    };
     __hostModalOpen?: boolean;
     __hostDismissEvents?: string[];
     __hostFocusTrapEvents?: string[];
@@ -19,11 +22,23 @@ async function mockInstalledRepo(page: Page): Promise<void> {
   });
 }
 
-async function openFeedbackForm(page: Page) {
+async function openFeedbackForm(page: Page, viaTrigger = false) {
   const host = page.locator('#bugdrop-host');
-  const triggerLabel = host.locator('css=.bd-trigger-label');
-  await expect(triggerLabel).toBeVisible({ timeout: 5000 });
-  await triggerLabel.click();
+  const trigger = host.locator('css=.bd-trigger');
+  await expect(trigger).toBeVisible({ timeout: 5000 });
+  await expect.poll(() => page.evaluate(() => typeof window.BugDrop?.open)).toBe('function');
+
+  if (viaTrigger) {
+    await trigger.evaluate(async element => {
+      await Promise.allSettled(element.getAnimations().map(animation => animation.finished));
+    });
+    const triggerLabel = trigger.locator('css=.bd-trigger-label');
+    await expect(triggerLabel).toBeVisible({ timeout: 5000 });
+    await triggerLabel.click();
+  } else {
+    await page.evaluate(() => window.BugDrop?.open());
+  }
+
   await expect(host.locator('css=#title')).toBeVisible({ timeout: 5000 });
   return host;
 }
@@ -71,7 +86,7 @@ test.describe('Radix dialog compatibility', () => {
 
     const host = page.locator('#bugdrop-host');
     await expect(host).toHaveCSS('pointer-events', 'auto');
-    await openFeedbackForm(page);
+    await openFeedbackForm(page, true);
 
     await expect.poll(() => page.evaluate(() => window.__hostModalOpen)).toBe(true);
     await expect
