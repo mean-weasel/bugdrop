@@ -628,6 +628,37 @@ tasks:
         - cmd: "git diff --check"
           status: pass
       summary: "Independent pre-PR review gaps are closed: actual conditional .d.ts package exports resolve from a packed artifact; complete runtime config validation rejects malformed JavaScript values; empty-section semantics are explicit; required whitespace-only text is rejected; post-format Issue bodies are bounded; multiple registrations remain isolated; malformed responses fail closed; exact canary section values are independently verified; provenance runs in required CI; and both reconstructed legacy bundles have browser coverage. The final widget is 46,440 gzip bytes within the 52,597-byte budget."
+  - id: T009
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: low
+    objective: "Keep immutable compatibility goldens outside automatic formatting so required CI validates rather than rewrites their exact bytes."
+    allowed_files:
+      - ".prettierignore"
+    verify:
+      - "npm run format:check"
+      - "node scripts/verify-legacy-compat.mjs"
+      - "npm test"
+      - "git diff --check"
+    stop_if:
+      - "The fix would weaken hash verification or change any frozen fixture byte."
+    receipt:
+      result: done
+      harness: codex
+      changed_files:
+        - .prettierignore
+      commands:
+        - cmd: "npm run format:check"
+          status: pass
+        - cmd: "node scripts/verify-legacy-compat.mjs"
+          status: pass
+        - cmd: "npm test"
+          status: pass
+          evidence: "30 files and 442 tests passed after the ignore rule."
+        - cmd: "git diff --check"
+          status: pass
+      summary: "Required CI had tried to enforce Prettier on immutable tag bundles and the exact Issue golden. The compatibility fixture directory is now explicitly ignored by formatting while its dedicated hash, size, gzip, provenance, and behavior checks remain required. No frozen fixture byte changed."
 checks:
   dirty_fingerprint: unknown
   last_verification:
