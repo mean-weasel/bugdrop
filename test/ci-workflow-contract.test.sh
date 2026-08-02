@@ -111,6 +111,11 @@ grep -Fq 'ACTUAL_SHA" = "$EXPECTED_WIDGET_SHA256"' <<< "$critical" ||
   fail 'deployed widget bytes are not polled to an exact hash match'
 grep -Fq 'EXACT_WIDGET_FIXTURE_PATH=' <<< "$critical" ||
   fail 'the exact deployed widget snapshot path is not recorded'
+grep -Fq 'EXACT_WIDGET_FIXTURE_PATH=$RUNNER_TEMP/' <<< "$critical" ||
+  fail "Playwright may delete the exact widget snapshot unless it lives in RUNNER_TEMP"
+if grep -Fq 'EXACT_WIDGET_FIXTURE_PATH=$GITHUB_WORKSPACE/test-results/' <<< "$critical"; then
+  fail 'the exact widget snapshot must not live in Playwright outputDir'
+fi
 grep -Fq 'mv "$CANDIDATE_PATH" "$EXACT_WIDGET_FIXTURE_PATH"' <<< "$critical" ||
   fail 'the exact deployed widget response is not retained for browser execution'
 
