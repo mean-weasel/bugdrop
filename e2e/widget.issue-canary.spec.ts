@@ -1,7 +1,11 @@
-import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { expect, test, type Page, type Request } from '@playwright/test';
+import { expect, type Page, type Request } from '@playwright/test';
+import {
+  assertExactPreviewWidgetResponse,
+  test,
+  waitForPreviewWidgetResponse,
+} from './live-preview-widget';
 
 const TEST_REPO = 'mean-weasel/bugdrop-widget-test';
 const PREVIEW_WIDGET_ORIGIN = 'https://bugdrop-preview.neonwatty.workers.dev';
@@ -26,12 +30,15 @@ test.describe.configure({ mode: 'serial', retries: 0 });
 
 test('headless structured preview widget creates one real Issue with exact deployment identity', async ({
   page,
-  request,
 }) => {
   const environment = requireCanaryEnvironment();
   const submissionId = `ci:${environment.marker}`;
   await installVercelBypass(page);
 
+  const widgetResponsePromise = waitForPreviewWidgetResponse(
+    page,
+    environment.expectedWidgetOrigin
+  );
   await page.goto('/');
   const widgetSrc = await page.evaluate(() => {
     return Array.from(document.scripts)
@@ -44,9 +51,10 @@ test('headless structured preview widget creates one real Issue with exact deplo
   expect(widgetUrl.origin).toBe(environment.expectedWidgetOrigin);
   expect(widgetUrl.pathname).toBe('/widget.js');
 
-  const widgetResponse = await request.get(widgetUrl.href);
-  expect(widgetResponse.ok()).toBe(true);
-  expect(sha256(await widgetResponse.body())).toBe(environment.expectedWidgetSha256);
+  await assertExactPreviewWidgetResponse(
+    await widgetResponsePromise,
+    environment.expectedWidgetSha256
+  );
 
   const feedbackPosts: Request[] = [];
   let rejectedRequest: string | undefined;
@@ -215,8 +223,4 @@ async function installVercelBypass(page: Page): Promise<void> {
       },
     });
   });
-}
-
-function sha256(buffer: Buffer): string {
-  return createHash('sha256').update(buffer).digest('hex');
 }

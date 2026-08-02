@@ -7,6 +7,9 @@ ci_workflow="$repo_root/.github/workflows/ci.yml"
 live_workflow="$repo_root/.github/workflows/live-tests.yml"
 canary_spec="$repo_root/e2e/widget.issue-canary.spec.ts"
 live_spec="$repo_root/e2e/widget.live.spec.ts"
+live_radix_spec="$repo_root/e2e/widget.live-radix.spec.ts"
+cross_browser_live_spec="$repo_root/e2e/widget.cross-browser-live.spec.ts"
+exact_widget_fixture="$repo_root/e2e/live-preview-widget.ts"
 
 fail() {
   echo "CI workflow contract failed: $*" >&2
@@ -106,6 +109,10 @@ grep -Fq 'BUILD_SHA" = "$GITHUB_SHA"' <<< "$critical" ||
 grep -Fq 'EXPECTED_WIDGET_SHA256=' <<< "$critical" || fail 'checkout widget hash is not recorded'
 grep -Fq 'ACTUAL_SHA" = "$EXPECTED_WIDGET_SHA256"' <<< "$critical" ||
   fail 'deployed widget bytes are not polled to an exact hash match'
+grep -Fq 'EXACT_WIDGET_FIXTURE_PATH=' <<< "$critical" ||
+  fail 'the exact deployed widget snapshot path is not recorded'
+grep -Fq 'mv "$CANDIDATE_PATH" "$EXACT_WIDGET_FIXTURE_PATH"' <<< "$critical" ||
+  fail 'the exact deployed widget response is not retained for browser execution'
 
 [[ $(grep -Fc 'npx wrangler deploy --env preview' "$ci_workflow") -eq 1 ]] ||
   fail 'preview deployment must have exactly one workflow owner'
@@ -133,12 +140,17 @@ sweep_line=$(grep -n 'name: Final reserved-prefix sweep' "$ci_workflow" | cut -d
 artifact_line=$(grep -n 'name: Upload preview failure report' "$ci_workflow" | cut -d: -f1)
 [[ -n "$cleanup_line" && -n "$sweep_line" && -n "$artifact_line" ]] || fail 'cleanup/artifact steps missing'
 (( cleanup_line < sweep_line && sweep_line < artifact_line )) || fail 'artifacts must follow both cleanup steps'
-sed -n "${cleanup_line},$((cleanup_line + 8))p" "$ci_workflow" | grep -Fq 'if: always()' ||
+sed -n "${cleanup_line},$((cleanup_line + 12))p" "$ci_workflow" | grep -Fq 'if: always()' ||
   fail 'current-marker cleanup is not unconditional'
-sed -n "${cleanup_line},$((cleanup_line + 8))p" "$ci_workflow" | grep -Fq -- '--marker "$BUGDROP_CANARY_MARKER"' ||
+sed -n "${cleanup_line},$((cleanup_line + 12))p" "$ci_workflow" | grep -Fq -- '--marker "$BUGDROP_CANARY_MARKER"' ||
   fail 'current cleanup does not discover by marker'
-sed -n "${cleanup_line},$((cleanup_line + 8))p" "$ci_workflow" | grep -Fq -- '--result-file' &&
+sed -n "${cleanup_line},$((cleanup_line + 12))p" "$ci_workflow" | grep -Fq -- '--result-file' &&
   fail 'cleanup must not depend on the browser result file'
+grep -Fq ': > "$BUGDROP_CANARY_ATTEMPT_FILE"' <<< "$critical" ||
+  fail 'the canary does not record that its browser action started'
+sed -n "${cleanup_line},$((cleanup_line + 12))p" "$ci_workflow" |
+  grep -Fq 'if [ ! -f "$BUGDROP_CANARY_ATTEMPT_FILE" ]' ||
+  fail 'current-marker cleanup does not distinguish a skipped canary from an attempted canary'
 
 grep -Fq 'name: Live Preview Tests' <<< "$bridge" || fail 'status bridge lost its required name'
 grep -Fq 'needs: [deploy-preview]' <<< "$bridge" || fail 'status bridge does not depend on critical job'
@@ -159,10 +171,17 @@ require_absent "$live_workflow" 'chromium-issue-canary'
 require_absent "$live_workflow" 'BUGDROP_CANARY_MARKER'
 
 require_literal "$canary_spec" 'expect(outgoingUrl.origin).toBe(environment.expectedWidgetOrigin)'
+require_literal "$canary_spec" "from './live-preview-widget'"
 require_literal "$canary_spec" "response.request().method() === 'POST'"
 require_literal "$canary_spec" 'responseUrl.origin === environment.expectedWidgetOrigin'
 require_literal "$canary_spec" "responseUrl.pathname === '/api/feedback'"
 require_literal "$canary_spec" 'expect(feedbackUrl.origin).toBe(environment.expectedWidgetOrigin)'
 require_literal "$live_spec" "page.route('**/feedback'"
+require_literal "$live_spec" 'installExactPreviewWidgetFromEnvironment(context)'
+for live_browser_spec in "$live_spec" "$live_radix_spec" "$cross_browser_live_spec"; do
+  require_literal "$live_browser_spec" "from './live-preview-widget'"
+done
+require_literal "$exact_widget_fixture" 'EXACT_WIDGET_FIXTURE_PATH'
+require_literal "$exact_widget_fixture" 'x-bugdrop-widget-sha256'
 
 echo 'CI workflow contract checks passed'

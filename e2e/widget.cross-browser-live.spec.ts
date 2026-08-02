@@ -1,5 +1,9 @@
-import { createHash } from 'node:crypto';
-import { test, expect, type Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
+import {
+  assertExactPreviewWidgetResponse,
+  test,
+  waitForPreviewWidgetResponse,
+} from './live-preview-widget';
 
 const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
 const expectedWidgetOrigin =
@@ -23,10 +27,6 @@ if (bypassSecret) {
       });
     });
   });
-}
-
-function sha256(buffer: Buffer): string {
-  return createHash('sha256').update(buffer).digest('hex');
 }
 
 async function mockInstalledRepo(page: Page) {
@@ -74,7 +74,10 @@ async function padDomToNodeCount(page: Page, targetNodeCount: number) {
 }
 
 test.describe('Cross-Browser Live Preview Smoke', () => {
-  test('loads the expected preview widget asset', async ({ page, request }) => {
+  test('loads the expected preview widget asset', async ({ page }) => {
+    const responsePromise = expectedWidgetOrigin
+      ? waitForPreviewWidgetResponse(page, expectedWidgetOrigin)
+      : undefined;
     await page.goto(venuePath);
 
     const host = page.locator('#bugdrop-host');
@@ -95,11 +98,8 @@ test.describe('Cross-Browser Live Preview Smoke', () => {
       expect(widgetSrc).toContain(`${expectedWidgetOrigin}/widget.js`);
     }
 
-    const response = await request.get(widgetSrc);
-    expect(response.ok()).toBeTruthy();
-
-    if (expectedWidgetSha256) {
-      expect(sha256(await response.body())).toBe(expectedWidgetSha256);
+    if (responsePromise && expectedWidgetSha256) {
+      await assertExactPreviewWidgetResponse(await responsePromise, expectedWidgetSha256);
     }
   });
 
