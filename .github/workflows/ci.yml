@@ -337,7 +337,7 @@ jobs:
         run: |
           echo "BUGDROP_CANARY_MARKER=bugdrop-ci-canary:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${GITHUB_SHA}" >> "$GITHUB_ENV"
           echo "BUGDROP_CANARY_RESULT_FILE=test-results/issue-canary-result.json" >> "$GITHUB_ENV"
-          echo "BUGDROP_CANARY_ATTEMPT_FILE=test-results/issue-canary-attempted" >> "$GITHUB_ENV"
+          echo "BUGDROP_CANARY_ATTEMPT_FILE=$RUNNER_TEMP/bugdrop-canary-attempt-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
           echo "EXACT_WIDGET_FIXTURE_PATH=$RUNNER_TEMP/bugdrop-exact-preview-widget-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.js" >> "$GITHUB_ENV"
           echo "EXPECTED_WORKER_SHA=${GITHUB_SHA}" >> "$GITHUB_ENV"
           echo "EXPECTED_WIDGET_ORIGIN=https://bugdrop-preview.neonwatty.workers.dev" >> "$GITHUB_ENV"
