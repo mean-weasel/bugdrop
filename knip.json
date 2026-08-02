@@ -3,8 +3,10 @@
   "entry": [
     "src/index.ts",
     "src/widget/index.ts",
+    "src/widget/public-api.d.ts",
     "scripts/build-widget.js",
-    "scripts/github-issue-canary.mjs"
+    "scripts/github-issue-canary.mjs",
+    "scripts/verify-legacy-compat.mjs"
   ],
   "project": ["src/**/*.ts", "scripts/**/*.{js,mjs}"],
   "ignore": [],

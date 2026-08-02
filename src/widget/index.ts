@@ -32,6 +32,8 @@ import {
 import { escapeWidgetText, resolveLocale, setLocale, t, type SupportedLocale } from './i18n';
 import { installRadixDialogCompatibility } from './radix-compat';
 import { resolveAccentColor } from '../defaults';
+import type { BugDropPublicAPI } from './variants/public-types';
+import { createVariantManager, type VariantManager } from './variants/manager';
 
 type FeedbackCategory = 'bug' | 'feature' | 'question';
 type CategoryLabelConfig = Partial<Record<FeedbackCategory, string | string[]>>;
@@ -88,21 +90,10 @@ interface WidgetConfig {
   locale: SupportedLocale;
 }
 
-// BugDrop JavaScript API interface
-interface BugDropAPI {
-  open: () => void;
-  close: () => void;
-  hide: () => void;
-  show: () => void;
-  isOpen: () => boolean;
-  isButtonVisible: () => boolean;
-  setTheme: (mode: ThemeMode) => void;
-}
-
 // Declare global BugDrop API
 declare global {
   interface Window {
-    BugDrop?: BugDropAPI;
+    BugDrop?: BugDropPublicAPI;
   }
 }
 
@@ -892,6 +883,7 @@ function exposeBugDropAPI(root: HTMLElement, config: WidgetConfig) {
   // the matchMedia listener below and mutated by setTheme. No module-level
   // state needed — keeps per-init isolation if multi-instance is ever added.
   let currentMode: ThemeMode = config.theme;
+  let variantManager: VariantManager | undefined;
 
   window.BugDrop = {
     // Open the feedback modal programmatically
@@ -971,6 +963,17 @@ function exposeBugDropAPI(root: HTMLElement, config: WidgetConfig) {
       const resolved = resolveTheme(mode);
       applyThemeClass(root, resolved);
       applyCustomStyles(root, config, resolved);
+    },
+
+    // The sidecar is created only on the first registration. Legacy-only pages
+    // do not allocate variant maps, IDs, DOM, listeners, observers, or storage.
+    registerVariant: variantConfig => {
+      variantManager ??= createVariantManager({
+        repo: config.repo,
+        apiUrl: config.apiUrl,
+        authTokenProvider: config.authTokenProvider,
+      });
+      return variantManager.register(variantConfig);
     },
   };
 

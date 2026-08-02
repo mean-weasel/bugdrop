@@ -1,9 +1,10 @@
 # Merge-Queue Issue Canary Operations
 
 The CI workflow runs one real-Issue canary only for GitHub `merge_group` events. It uses the fixed
-Vercel preview venue, the shared `bugdrop-preview` Worker, the legacy widget form, and the existing
-BugDrop GitHub App. Pull requests, manual and reusable live workflows, the daily live workflow, and
-local Playwright commands do not select the canary.
+Vercel preview venue, the shared `bugdrop-preview` Worker, the deployed widget's headless structured
+API, and the existing BugDrop GitHub App. Pull requests, manual and reusable live workflows, the
+daily live workflow, and local Playwright commands do not select the canary. The Phase 0 run remains
+the retained live proof for the legacy form; the routine action was replaced rather than duplicated.
 
 ## Safety model
 
@@ -23,11 +24,13 @@ The marker format is:
 bugdrop-ci-canary:<run-id>:<run-attempt>:<full-merge-group-sha>
 ```
 
-The browser sends exactly one screenshot-free request and must observe the expected request origin,
-response origin, full Worker build SHA, positive Issue number, and canonical Issue URL. The
-server-side verifier independently lists repository Issues, rejects duplicates and pull requests,
-and checks the complete Issue contract. Cleanup always rediscovers by marker; it never depends on
-the browser result file.
+The browser registers one headless canary variant and sends exactly one screenshot-free structured
+request. It asserts the discriminator, schema version, generic Issue draft, server-owned label
+boundary, submission ID, request origin, response origin, full Worker build SHA, positive Issue
+number, and canonical Issue URL. The server-side verifier independently lists repository Issues,
+rejects duplicates and pull requests, and checks the structured section, exact submission marker,
+title, labels, author, attribution, system information, and absence of screenshots. Cleanup always
+rediscovers by marker; it never depends on the browser result file.
 
 ## Credential and rotation
 
@@ -72,7 +75,8 @@ For the first authorized live merge-group run and any incident, retain:
 - preview health environment and full build SHA;
 - actual feedback request/response origins and response build-SHA header;
 - canonical Issue number and URL returned to the widget;
-- independent title, body, labels, author, no-screenshot, and exactly-one readback;
+- independent structured section/submission marker, title, body, labels, author, no-screenshot, and
+  exactly-one readback;
 - current-marker closed-state readback and final zero-open prefix sweep;
 - the final `Deploy Preview` and `Live Preview Tests` conclusions.
 

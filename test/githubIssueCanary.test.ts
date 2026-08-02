@@ -32,12 +32,15 @@ function issue(overrides: Partial<Issue> = {}): Issue {
     html_url: `https://github.com/${REPO}/issues/${number}`,
     title: canaryTitle(MARKER),
     body: [
-      '## Description',
+      '## Canary marker',
+      '',
       MARKER,
       '',
       '<details>',
       '<summary>System Info</summary>',
       '</details>',
+      '',
+      `<!-- bugdrop-submission: ci:${MARKER} -->`,
       '',
       '---',
       '*Submitted via [BugDrop](https://github.com/mean-weasel/bugdrop)*',
@@ -60,6 +63,8 @@ function jsonResponse(value: unknown, init: ResponseInit = {}): Response {
 function result(overrides: Record<string, unknown> = {}) {
   return {
     marker: MARKER,
+    kind: 'structured',
+    submissionId: `ci:${MARKER}`,
     issueNumber: 42,
     issueUrl: `https://github.com/${REPO}/issues/42`,
     workerSha: SHA,
@@ -127,6 +132,22 @@ describe('GitHub Issue canary discovery and verification', () => {
   it.each([
     ['wrong title', issue({ title: `${CANARY_TITLE_PREFIX} wrong` })],
     ['missing body marker', issue({ body: '## Description\nmissing marker' })],
+    [
+      'legacy body shape',
+      issue({ body: issue().body.replace('## Canary marker', '## Description') }),
+    ],
+    [
+      'wrong structured submission marker',
+      issue({
+        body: issue().body.replace(`<!-- bugdrop-submission: ci:${MARKER} -->`, '<!-- wrong -->'),
+      }),
+    ],
+    [
+      'wrong structured section value with marker retained in submission comment',
+      issue({
+        body: issue().body.replace(`## Canary marker\n\n${MARKER}`, '## Canary marker\n\nwrong'),
+      }),
+    ],
     ['unexpected labels', issue({ labels: [{ name: 'bug' }] })],
     ['wrong author', issue({ user: { login: 'someone-else' } })],
     ['closed before verification', issue({ state: 'closed' })],
@@ -167,6 +188,8 @@ describe('GitHub Issue canary discovery and verification', () => {
   it.each([
     ['missing result', undefined],
     ['wrong marker', result({ marker: 'wrong-marker' })],
+    ['wrong kind', result({ kind: 'legacy' })],
+    ['wrong submission ID', result({ submissionId: 'wrong' })],
     ['wrong number', result({ issueNumber: 99 })],
     ['wrong URL', result({ issueUrl: `https://github.com/${REPO}/issues/99` })],
     ['wrong Worker SHA', result({ workerSha: 'b'.repeat(40) })],

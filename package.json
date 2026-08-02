@@ -4,10 +4,20 @@
   "description": "In-app feedback → GitHub Issues. Screenshots, annotations, the works.",
   "type": "module",
   "main": "./public/widget.js",
+  "types": "./src/widget/public-api.d.ts",
   "exports": {
-    ".": "./public/widget.js",
-    "./widget": "./public/widget.js",
-    "./widget.js": "./public/widget.js"
+    ".": {
+      "types": "./src/widget/public-api.d.ts",
+      "default": "./public/widget.js"
+    },
+    "./widget": {
+      "types": "./src/widget/public-api.d.ts",
+      "default": "./public/widget.js"
+    },
+    "./widget.js": {
+      "types": "./src/widget/public-api.d.ts",
+      "default": "./public/widget.js"
+    }
   },
   "files": [
     "public/widget.js",
@@ -22,6 +32,7 @@
     "build:widget": "node scripts/build-widget.js",
     "deploy": "wrangler deploy",
     "render:board-gallery": "node scripts/render-board-gallery.mjs",
+    "verify:legacy-compat": "node scripts/verify-legacy-compat.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
@@ -30,6 +41,7 @@
     "typecheck": "tsc --noEmit && tsc --project tsconfig.widget.json --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint --fix .",
+    "knip": "knip",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check:actions-node24": "node -e \"const {execSync}=require('node:child_process'); const out=execSync('rg -n \\\\\\\"actions/(checkout|setup-node|cache|upload-artifact)@v4|cloudflare/wrangler-action\\\\\\\" .github/workflows || true',{encoding:'utf8'}); if(out.trim()){ console.error(out); process.exit(1); } console.log('GitHub Actions are Node 24-ready');\"",

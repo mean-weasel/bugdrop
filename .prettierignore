@@ -11,6 +11,9 @@ test-results/
 coverage/
 .playwright-cli/
 
+# Immutable compatibility goldens (formatting would invalidate their hashes/contracts)
+test/fixtures/legacy-compat/
+
 # Lock files
 package-lock.json
 

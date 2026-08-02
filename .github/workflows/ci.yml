@@ -139,6 +139,8 @@ jobs:
     if: needs.check.outputs.full_ci != 'false'
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v5
         with:
@@ -147,6 +149,9 @@ jobs:
 
       - name: Install dependencies
         run: make install
+
+      - name: Verify legacy compatibility provenance
+        run: npm run verify:legacy-compat
 
       - name: Run unit tests
         run: make test
@@ -332,6 +337,8 @@ jobs:
         run: |
           echo "BUGDROP_CANARY_MARKER=bugdrop-ci-canary:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${GITHUB_SHA}" >> "$GITHUB_ENV"
           echo "BUGDROP_CANARY_RESULT_FILE=test-results/issue-canary-result.json" >> "$GITHUB_ENV"
+          echo "BUGDROP_CANARY_ATTEMPT_FILE=test-results/issue-canary-attempted" >> "$GITHUB_ENV"
+          echo "EXACT_WIDGET_FIXTURE_PATH=$RUNNER_TEMP/bugdrop-exact-preview-widget-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.js" >> "$GITHUB_ENV"
           echo "EXPECTED_WORKER_SHA=${GITHUB_SHA}" >> "$GITHUB_ENV"
           echo "EXPECTED_WIDGET_ORIGIN=https://bugdrop-preview.neonwatty.workers.dev" >> "$GITHUB_ENV"
           echo "LIVE_TARGET=preview" >> "$GITHUB_ENV"
@@ -378,10 +385,18 @@ jobs:
       - name: Wait for exact preview widget asset
         run: |
           WIDGET_URL="$EXPECTED_WIDGET_ORIGIN/widget.js"
+          CANDIDATE_PATH="$EXACT_WIDGET_FIXTURE_PATH.candidate"
+          mkdir -p "$(dirname "$EXACT_WIDGET_FIXTURE_PATH")"
           echo "Waiting for $WIDGET_URL to serve $EXPECTED_WIDGET_SHA256..."
           for i in $(seq 1 30); do
-            ACTUAL_SHA="$(curl -sSf "$WIDGET_URL" | shasum -a 256 | awk '{print $1}')"
+            if ! curl -sSf "$WIDGET_URL" -o "$CANDIDATE_PATH"; then
+              echo "Attempt $i/30 could not download the preview widget; waiting 5s..."
+              sleep 5
+              continue
+            fi
+            ACTUAL_SHA="$(shasum -a 256 "$CANDIDATE_PATH" | awk '{print $1}')"
             if [ "$ACTUAL_SHA" = "$EXPECTED_WIDGET_SHA256" ]; then
+              mv "$CANDIDATE_PATH" "$EXACT_WIDGET_FIXTURE_PATH"
               echo "Preview widget asset matched after $((i * 5))s"
               exit 0
             fi
@@ -430,8 +445,11 @@ jobs:
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
-      - name: Run one real-Issue canary
-        run: npx playwright test e2e/widget.issue-canary.spec.ts --project=chromium-issue-canary --workers=1 --retries=0
+      - name: Run one structured real-Issue canary
+        run: |
+          mkdir -p "$(dirname "$BUGDROP_CANARY_ATTEMPT_FILE")"
+          : > "$BUGDROP_CANARY_ATTEMPT_FILE"
+          npx playwright test e2e/widget.issue-canary.spec.ts --project=chromium-issue-canary --workers=1 --retries=0
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
@@ -447,10 +465,14 @@ jobs:
 
       - name: Cleanup current canary marker
         if: always()
-        run: >-
-          node scripts/github-issue-canary.mjs cleanup
-          --repo mean-weasel/bugdrop-widget-test
-          --marker "$BUGDROP_CANARY_MARKER"
+        run: |
+          if [ ! -f "$BUGDROP_CANARY_ATTEMPT_FILE" ]; then
+            echo 'The Issue canary never started; no current marker can exist.'
+            exit 0
+          fi
+          node scripts/github-issue-canary.mjs cleanup \
+            --repo mean-weasel/bugdrop-widget-test \
+            --marker "$BUGDROP_CANARY_MARKER"
         env:
           BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
 

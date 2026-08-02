@@ -10,6 +10,7 @@ export interface Env {
   GITHUB_APP_NAME: string; // Your GitHub App name for install URL
   MAX_SCREENSHOT_SIZE_MB: string; // Max screenshot size in MB (default: 5)
   CATEGORY_LABELS?: string; // Optional JSON category-label mapping keyed by repo or "*"
+  VARIANT_LABELS?: string; // Optional JSON variant-label mapping keyed by repo then variant ID
   ALLOW_CLIENT_CATEGORY_LABELS?: string; // Self-host escape hatch for script-tag mappings
   ROOT_REDIRECT_URL?: string; // Optional landing page for self-hosted deployments
   AUTH_TOKEN_SECRET?: string; // Optional HMAC secret for host-app submission tokens
@@ -32,6 +33,41 @@ export interface Env {
 export type FeedbackCategory = 'bug' | 'feature' | 'question';
 type CategoryLabelConfig = Partial<Record<FeedbackCategory, string | string[]>>;
 
+export interface FeedbackMetadata {
+  url: string;
+  userAgent: string;
+  viewport: { width: number; height: number };
+  timestamp: string;
+  elementSelector?: string;
+  fullElementSelector?: string;
+  selectedElementHighlightColor?: string;
+  browser?: { name: string; version: string };
+  os?: { name: string; version: string };
+  devicePixelRatio?: number;
+  language?: string;
+}
+
+export type StructuredFeedbackClassification = FeedbackCategory | 'feedback';
+export type StructuredFeedbackSectionFormat = 'text' | 'quote' | 'code';
+
+export interface StructuredFeedbackPayload {
+  kind: 'bugdrop.variant-submission';
+  schemaVersion: 1;
+  repo: string;
+  variantId: string;
+  submissionId: string;
+  issue: {
+    title: string;
+    classification?: StructuredFeedbackClassification;
+    sections: Array<{
+      heading: string;
+      value: string;
+      format?: StructuredFeedbackSectionFormat;
+    }>;
+  };
+  metadata: FeedbackMetadata;
+}
+
 export interface FeedbackPayload {
   repo: string; // "owner/repo" format
   title: string;
@@ -47,20 +83,7 @@ export interface FeedbackPayload {
     name?: string;
     email?: string;
   };
-  metadata: {
-    url: string;
-    userAgent: string;
-    viewport: { width: number; height: number };
-    timestamp: string;
-    elementSelector?: string;
-    fullElementSelector?: string;
-    selectedElementHighlightColor?: string;
-    // Parsed system info
-    browser?: { name: string; version: string };
-    os?: { name: string; version: string };
-    devicePixelRatio?: number;
-    language?: string;
-  };
+  metadata: FeedbackMetadata;
 }
 
 export interface FeedbackAttachment {

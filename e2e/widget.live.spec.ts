@@ -1,5 +1,10 @@
-import { createHash } from 'node:crypto';
-import { test, expect, type Locator, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
+import {
+  assertExactPreviewWidgetResponse,
+  installExactPreviewWidgetFromEnvironment,
+  test,
+  waitForPreviewWidgetResponse,
+} from './live-preview-widget';
 
 /**
  * Live E2E tests for BugDrop widget on a real cross-origin deployment.
@@ -34,10 +39,6 @@ if (bypassSecret) {
       await route.continue({ headers });
     });
   });
-}
-
-function sha256(buffer: Buffer): string {
-  return createHash('sha256').update(buffer).digest('hex');
 }
 
 async function mockInstalledRepo(page: Page) {
@@ -345,7 +346,10 @@ test.describe('Widget Loading (Live)', () => {
     expect(unexpectedErrors).toHaveLength(0);
   });
 
-  test('venue loads the expected deployed widget asset', async ({ page, request }) => {
+  test('venue loads the expected deployed widget asset', async ({ page }) => {
+    const responsePromise = expectedWidgetOrigin
+      ? waitForPreviewWidgetResponse(page, expectedWidgetOrigin)
+      : undefined;
     await page.goto(venuePath);
 
     const widgetSrc = await page.evaluate(() => {
@@ -360,12 +364,8 @@ test.describe('Widget Loading (Live)', () => {
       expect(widgetSrc).toContain(`${expectedWidgetOrigin}/widget.js`);
     }
 
-    const response = await request.get(widgetSrc);
-    expect(response.ok()).toBeTruthy();
-
-    if (expectedWidgetSha256) {
-      const body = await response.body();
-      expect(sha256(body)).toBe(expectedWidgetSha256);
+    if (responsePromise && expectedWidgetSha256) {
+      await assertExactPreviewWidgetResponse(await responsePromise, expectedWidgetSha256);
     }
   });
 });
@@ -641,6 +641,7 @@ test.describe('Screenshot Capture (Live)', () => {
       isMobile: true,
       viewport: { width: 390, height: 844 },
     });
+    await installExactPreviewWidgetFromEnvironment(context);
     if (bypassSecret) {
       await context.route('**/*.vercel.app/**', async route => {
         const headers = {

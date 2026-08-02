@@ -1,0 +1,84 @@
+{
+  "historicalV1_1_0Submission": {
+    "repo": "mean-weasel/bugdrop-widget-test",
+    "title": "Historical v1.1.0 compatibility",
+    "description": "Tag-reconstructed browser submission",
+    "screenshot": null,
+    "metadata": {
+      "url": "/legacy-compat-fixture",
+      "userAgent": "<user-agent>",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "timestamp": "<timestamp>",
+      "elementSelector": null
+    }
+  },
+  "screenshotFree": {
+    "repo": "testowner/testrepo",
+    "title": "Legacy compatibility: screenshot-free",
+    "description": "Frozen legacy description.",
+    "category": "feature",
+    "metadata": {
+      "url": "https://example.test/feedback",
+      "userAgent": "FrozenAgent/1.0",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      },
+      "timestamp": "2026-08-01T00:00:00.000Z",
+      "browser": {
+        "name": "Chrome",
+        "version": "126.0"
+      },
+      "os": {
+        "name": "macOS",
+        "version": "14.5"
+      },
+      "devicePixelRatio": 2,
+      "language": "en-US"
+    }
+  },
+  "evidenceBearing": {
+    "repo": "testowner/testrepo",
+    "title": "Legacy compatibility: evidence",
+    "description": "Frozen legacy evidence description.",
+    "category": "bug",
+    "screenshot": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    "attachments": [
+      {
+        "name": "evidence.pdf",
+        "type": "application/pdf",
+        "size": 9,
+        "dataUrl": "data:application/pdf;base64,JVBERi0xLjQK"
+      }
+    ],
+    "submitter": {
+      "name": "Compatibility Bot",
+      "email": "compat@example.test"
+    },
+    "metadata": {
+      "url": "https://example.test/checkout",
+      "userAgent": "FrozenAgent/1.0",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "timestamp": "2026-08-01T01:02:03.000Z",
+      "elementSelector": "#checkout > button.submit",
+      "fullElementSelector": "html > body > main#checkout > button.submit",
+      "selectedElementHighlightColor": "#ff00aa",
+      "browser": {
+        "name": "Firefox",
+        "version": "128.0"
+      },
+      "os": {
+        "name": "Linux",
+        "version": "6.8"
+      },
+      "devicePixelRatio": 1.5,
+      "language": "en-GB"
+    }
+  }
+}

@@ -19,9 +19,10 @@ import {
 import { rateLimit, rateLimitByRepo } from '../middleware/rateLimit';
 import { resolveAccentColor } from '../defaults';
 import { verifyBugDropAuthToken } from '../lib/authToken';
+import { handleStructuredFeedback, isStructuredFeedbackRequest } from './structured-feedback';
 
 type ApiVariables = {
-  feedbackPayload?: FeedbackPayload;
+  feedbackPayload?: unknown;
 };
 type ApiEnv = { Bindings: Env; Variables: ApiVariables };
 
@@ -149,12 +150,18 @@ api.get('/check/:owner/:repo', async c => {
 // Submit feedback
 api.post('/feedback', async c => {
   // Parse payload
-  let payload: FeedbackPayload;
+  let requestPayload: unknown;
   try {
-    payload = c.get('feedbackPayload') ?? (await c.req.json());
+    requestPayload = c.get('feedbackPayload') ?? (await c.req.json());
   } catch {
     return c.json({ error: 'Invalid JSON' }, 400);
   }
+
+  if (isStructuredFeedbackRequest(requestPayload)) {
+    return handleStructuredFeedback(c, requestPayload);
+  }
+
+  const payload = requestPayload as FeedbackPayload;
 
   // Validate required fields (description is optional — many reports are title + screenshot)
   if (!payload.repo || !payload.title) {
@@ -307,9 +314,9 @@ async function requireBugDropFeedbackAuthToken(
   if (!hasBugDropAuthTokenSecret(c.env) || c.req.method !== 'POST') return next();
 
   try {
-    const payload = (await c.req.raw.clone().json()) as FeedbackPayload;
+    const payload = (await c.req.raw.clone().json()) as unknown;
     c.set('feedbackPayload', payload);
-    if (typeof payload.repo !== 'string') return next();
+    if (!isPlainObject(payload) || typeof payload.repo !== 'string') return next();
 
     const authError = await requireBugDropAuthToken(c, payload.repo);
     if (authError) return authError;

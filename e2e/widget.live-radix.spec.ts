@@ -1,4 +1,5 @@
-import { test, expect, type Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
+import { test } from './live-preview-widget';
 
 const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
 const venuePath = process.env.LIVE_VENUE_PATH || '/';

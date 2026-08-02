@@ -1,0 +1,107 @@
+import { describe, expect, it } from 'vitest';
+import type { VariantConfig } from '../src/widget/variants/public-types';
+import { compileIssueDraft } from '../src/widget/variants/issue-draft';
+
+const config: VariantConfig = {
+  id: 'next-integration-poll',
+  presentation: { kind: 'inline' },
+  content: { title: 'What next?' },
+  fields: [
+    { id: 'rating', type: 'rating', label: 'Rating', scale: 5, required: true },
+    {
+      id: 'choice',
+      type: 'singleChoice',
+      label: 'Choice',
+      required: true,
+      options: [
+        { value: 'gcp', label: 'Google Cloud' },
+        { value: 'azure', label: 'Microsoft Azure' },
+      ],
+    },
+    { id: 'detail', type: 'longText', label: 'Detail', maxLength: 500 },
+  ],
+  issue: {
+    classification: 'feature',
+    title: 'Vote — {{choice}} — {{context.surface}}',
+    sections: [
+      { heading: 'Rating', field: 'rating', format: 'stars' },
+      { heading: 'Choice', field: 'choice', format: 'choice' },
+      { heading: 'Detail', field: 'detail', omitWhenEmpty: true },
+      { heading: 'Surface', context: 'surface', format: 'code' },
+    ],
+  },
+};
+
+describe('variant Issue draft compilation', () => {
+  it('normalizes fields into the field-agnostic Worker draft', () => {
+    expect(
+      compileIssueDraft(config, { rating: 4, choice: 'gcp', detail: '  ' }, { surface: 'settings' })
+    ).toEqual({
+      title: 'Vote — gcp — settings',
+      classification: 'feature',
+      sections: [
+        { heading: 'Rating', value: '★★★★☆ (4/5)', format: 'text' },
+        { heading: 'Choice', value: 'Google Cloud', format: 'text' },
+        { heading: 'Surface', value: 'settings', format: 'code' },
+      ],
+    });
+  });
+
+  it('validates required, choice, rating, unknown-answer, and context boundaries', () => {
+    expect(() => compileIssueDraft(config, { choice: 'gcp' })).toThrow('rating is required');
+    expect(() =>
+      compileIssueDraft(
+        {
+          ...config,
+          fields: [{ id: 'detail', type: 'longText', label: 'Detail', required: true }],
+          issue: { title: 'Required text' },
+        },
+        { detail: '   ' }
+      )
+    ).toThrow('detail is required');
+    expect(() => compileIssueDraft(config, { rating: 6, choice: 'gcp' })).toThrow(
+      'rating from 1-5'
+    );
+    expect(() => compileIssueDraft(config, { rating: 5, choice: 'aws' })).toThrow(
+      'configured choice'
+    );
+    expect(() => compileIssueDraft(config, { rating: 5, choice: 'gcp', injected: true })).toThrow(
+      'Unknown BugDrop variant answer'
+    );
+    expect(() =>
+      compileIssueDraft(config, { rating: 5, choice: 'gcp' }, { invalidKey: true })
+    ).toThrow('Invalid context key');
+  });
+
+  it('keeps a visible placeholder unless an empty section is explicitly omitted', () => {
+    expect(
+      compileIssueDraft(
+        {
+          ...config,
+          issue: {
+            title: 'Optional sections',
+            sections: [
+              { heading: 'Visible empty', field: 'detail' },
+              { heading: 'Omitted empty', field: 'detail', omitWhenEmpty: true },
+            ],
+          },
+        },
+        { rating: 5, choice: 'gcp', detail: '' }
+      ).sections
+    ).toEqual([{ heading: 'Visible empty', value: 'Not provided.', format: 'text' }]);
+  });
+
+  it('bounds the compiled title after placeholder expansion', () => {
+    const longTitleConfig = {
+      ...config,
+      issue: { ...config.issue, title: '{{detail}}' },
+    };
+    const draft = compileIssueDraft(longTitleConfig, {
+      rating: 5,
+      choice: 'gcp',
+      detail: 'x'.repeat(500),
+    });
+
+    expect(draft.title).toHaveLength(256);
+  });
+});

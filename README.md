@@ -9,6 +9,13 @@
 
 In-app feedback → GitHub Issues. Screenshots, annotations, the works.
 
+The Worker also accepts a versioned, field-agnostic structured submission envelope for custom UXs.
+It validates bounded Issue drafts, keeps raw GitHub labels server-controlled through
+`VARIANT_LABELS`, and reuses the legacy endpoint, authentication, rate limits, GitHub App, and
+success response. `window.BugDrop.registerVariant(config).submit(answers)` provides the headless
+browser path; rendered modal and inline variants follow in a later phase. Existing script tags and
+legacy payloads remain unchanged.
+
 Featured on Product Hunt and ranked #6 Product of the Day on May 9, 2026.
 
 ![bugdrop-demo-small](https://github.com/user-attachments/assets/22d234fa-aa0f-4d01-bc4f-4c3e8f107165)
