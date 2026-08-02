@@ -177,9 +177,81 @@ mountedReview.reset();
 mountedReview.unmount();
 ```
 
-The inline renderer provides accessible short-text, long-text, and rating controls. Choosing a star
-changes only local form state; it never submits. A GitHub Issue is created only after the explicit
-Submit button succeeds.
+The inline renderer provides accessible short-text, long-text, rating, and single-choice controls.
+Choosing an option changes only local form state; it never submits. A GitHub Issue is created only
+after the explicit Submit button succeeds.
+
+For example, an inline poll keeps stable answer values separate from its visible labels and optional
+descriptions. `radio`, `cards`, and `buttons` displays all retain native radio keyboard semantics:
+
+```js
+const poll = window.BugDrop.registerVariant({
+  id: 'next-integration-poll',
+  presentation: { kind: 'inline' },
+  content: { title: 'What should we build next?', submitLabel: 'Vote' },
+  fields: [
+    {
+      id: 'choice',
+      type: 'singleChoice',
+      label: 'Choose one',
+      required: true,
+      display: 'cards',
+      options: [
+        { value: 'onedrive', label: 'OneDrive' },
+        { value: 'box', label: 'Box' },
+        { value: 'other', label: 'Something else' },
+      ],
+    },
+    { id: 'detail', type: 'longText', label: 'Optional detail', maxLength: 500 },
+  ],
+  issue: {
+    classification: 'feature',
+    title: 'Integration vote — {{choice}}',
+    sections: [
+      { heading: 'Choice', field: 'choice', format: 'choice' },
+      { heading: 'Detail', field: 'detail', omitWhenEmpty: true },
+    ],
+  },
+});
+
+const mountedPoll = poll.mount(document.querySelector('#poll-slot'));
+```
+
+The title template receives the stable configured value (for example, `onedrive`), while the
+`choice` section renders its display label (`OneDrive`). Configured labels and descriptions are
+inserted as text. Resetting a successful mounted poll restores its initial answers and creates a new
+submission identity; `unmount()` disposes only that instance.
+
+Compact suggestions do not need a special renderer or field. Compose the existing short- and
+long-text controllers in the modal presentation:
+
+```js
+const suggestion = window.BugDrop.registerVariant({
+  id: 'compact-suggestion',
+  presentation: { kind: 'modal', size: 'default' },
+  content: { title: 'Share an idea', submitLabel: 'Submit idea' },
+  fields: [
+    { id: 'summary', type: 'shortText', label: 'Idea', required: true, maxLength: 120 },
+    { id: 'detail', type: 'longText', label: 'How would this help?', maxLength: 2000 },
+  ],
+  issue: {
+    classification: 'feature',
+    title: '[Idea] {{summary}}',
+    sections: [
+      { heading: 'Idea', field: 'summary' },
+      { heading: 'Why it would help', field: 'detail', omitWhenEmpty: true },
+    ],
+  },
+});
+
+suggestion.open();
+```
+
+Every built-in controller follows the same internal controller contract for values, errors,
+disabled state, focus, reset, and disposal. Contributors extending the built-in field union add a
+controller and its shared conformance fixture; the browser still emits generic Issue sections, so
+the Worker formatter does not gain a field-specific branch. A public renderer registration API is
+not part of this contract.
 
 For a host-owned CTA, register a modal variant and call its handle instead of the legacy
 `BugDrop.open()` method:
@@ -222,10 +294,17 @@ as `submitted`, `closed`, or `busy`. A variant requested while the legacy wizard
 `busy`. Opening the legacy wizard while a variant modal is active closes the variant first. The
 legacy `BugDrop.close()` method remains legacy-scoped.
 
-BugDrop's merge-queue preview checks render both this CTA modal and the inline star review from the
-exact deployed widget bytes. They assert each normalized draft without creating Issues, followed by
-one zero-retry rendered CTA canary that creates, independently verifies, closes, and sweeps one real
-GitHub Issue through the existing GitHub App.
+BugDrop's merge-queue preview checks render the star review, CTA question, poll, and compact
+suggestion from the exact deployed widget bytes. Each UX intercepts and asserts its normalized draft
+without creating an Issue. A separate zero-retry representative canary then creates, independently
+verifies, closes, and sweeps exactly one real GitHub Issue through the shared Worker and GitHub App
+path; browser and UX coverage never multiply that destructive canary.
+
+For component cleanup, keep the returned mounted or opened handle. Call `unmount()` for inline
+instances and `close()` for an open modal. Both are safe to call repeatedly and dispose only their
+own host, controller state, and listeners. `reset()` restores the supplied initial answers and, after
+a successful submission, starts a new submission identity without affecting another mounted
+instance or the legacy widget.
 
 If your application owns the UI, the same immutable handle also supports headless submission:
 

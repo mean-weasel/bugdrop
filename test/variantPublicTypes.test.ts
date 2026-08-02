@@ -10,11 +10,30 @@ import type {
   VariantHandle,
 } from '../src/widget/public-api';
 
+const compactSuggestion = {
+  id: 'compact-suggestion',
+  presentation: { kind: 'modal', size: 'default' },
+  content: { title: 'Share an idea', submitLabel: 'Submit idea' },
+  fields: [
+    { id: 'summary', type: 'shortText', label: 'Idea', required: true, maxLength: 120 },
+    { id: 'detail', type: 'longText', label: 'How would this help?', maxLength: 2_000 },
+  ],
+  issue: {
+    classification: 'feature',
+    title: '[Idea] {{summary}}',
+    sections: [
+      { heading: 'Idea', field: 'summary' },
+      { heading: 'Why it would help', field: 'detail', omitWhenEmpty: true },
+    ],
+  },
+} satisfies VariantConfig;
+
 describe('published variant API declarations', () => {
   it('type-checks registration and headless submission without runtime imports', () => {
     expectTypeOf<BugDropPublicAPI['registerVariant']>().parameter(0).toMatchTypeOf<VariantConfig>();
     expectTypeOf<ReturnType<BugDropPublicAPI['registerVariant']>>().toEqualTypeOf<VariantHandle>();
     expectTypeOf<ReturnType<VariantHandle['submit']>>().toEqualTypeOf<Promise<SubmissionResult>>();
+    expect(compactSuggestion.id).toBe('compact-suggestion');
     expect(true).toBe(true);
   });
 
@@ -41,7 +60,7 @@ describe('published variant API declarations', () => {
           "import type { VariantHandle } from 'bugdrop/widget';",
           "import type { SubmissionResult } from 'bugdrop/widget.js';",
           'declare const api: BugDropPublicAPI;',
-          'declare const config: VariantConfig;',
+          `const config = ${JSON.stringify(compactSuggestion)} satisfies VariantConfig;`,
           'const handle: VariantHandle = api.registerVariant(config);',
           'const result: Promise<SubmissionResult> = handle.submit({});',
           'void result;',

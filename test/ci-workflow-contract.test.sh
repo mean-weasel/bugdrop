@@ -13,9 +13,12 @@ canary_engine="$repo_root/e2e/widget.issue-canary.ts"
 live_spec="$repo_root/e2e/widget.live.spec.ts"
 variant_live_spec="$repo_root/e2e/variant.live.spec.ts"
 variant_accessibility_spec="$repo_root/e2e/variant-accessibility.radix.spec.ts"
+variant_conformance_spec="$repo_root/test/variantFieldConformance.test.ts"
+variant_inline_spec="$repo_root/e2e/widget.spec.ts"
 live_radix_spec="$repo_root/e2e/widget.live-radix.spec.ts"
 cross_browser_live_spec="$repo_root/e2e/widget.cross-browser-live.spec.ts"
 exact_widget_fixture="$repo_root/e2e/live-preview-widget.ts"
+makefile="$repo_root/Makefile"
 
 fail() {
   echo "CI workflow contract failed: $*" >&2
@@ -428,10 +431,22 @@ require_literal "$variant_live_spec" "from './live-preview-widget'"
 require_literal "$variant_live_spec" "page.route('**/feedback'"
 require_literal "$variant_live_spec" 'renders and submits the exact inline star-review draft'
 require_literal "$variant_live_spec" 'opens and submits the exact CTA text-modal draft'
+require_literal "$variant_live_spec" 'renders and submits the exact inline poll draft from pinned bytes'
+require_literal "$variant_live_spec" 'opens and submits the exact compact-suggestion draft from pinned bytes'
 require_literal "$variant_live_spec" 'assertExactPreviewWidgetResponse'
 require_literal "$variant_accessibility_spec" 'rating keyboard behavior requires explicit Submit'
+require_literal "$variant_accessibility_spec" 'single-choice keyboard behavior requires explicit Submit'
+require_literal "$variant_accessibility_spec" 'compact suggestion validates and submits explicitly across browser engines'
 require_literal "$variant_accessibility_spec" 'modal focus is contained and Escape restores the host page'
 require_literal "$variant_accessibility_spec" "expect(submissionCount).toBe(0)"
+require_literal "$variant_conformance_spec" 'built-in field-controller conformance'
+require_literal "$variant_conformance_spec" 'short text'
+require_literal "$variant_conformance_spec" 'long text'
+require_literal "$variant_conformance_spec" 'rating'
+require_literal "$variant_conformance_spec" 'single choice'
+require_literal "$variant_inline_spec" 'simultaneous inline variants isolate answers, submission IDs, reset, disposal, and legacy state'
+require_literal "$cross_browser_live_spec" 'submits a compact suggestion from the exact preview widget without a real Issue'
+require_literal "$makefile" 'npx playwright test e2e/widget.radix.spec.ts e2e/variant-modal.radix.spec.ts e2e/variant-accessibility.radix.spec.ts --project=$(BROWSER)-radix --workers=1 --retries=0'
 for live_browser_spec in "$live_spec" "$live_radix_spec" "$cross_browser_live_spec"; do
   require_literal "$live_browser_spec" "from './live-preview-widget'"
 done

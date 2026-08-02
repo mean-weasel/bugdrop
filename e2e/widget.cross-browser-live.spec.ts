@@ -132,6 +132,76 @@ test.describe('Cross-Browser Live Preview Smoke', () => {
     expect(payloads[0].screenshot).toBeNull();
   });
 
+  test('submits a compact suggestion from the exact preview widget without a real Issue', async ({
+    page,
+  }) => {
+    const responsePromise = expectedWidgetOrigin
+      ? waitForPreviewWidgetResponse(page, expectedWidgetOrigin)
+      : undefined;
+    const payloads: Array<Record<string, unknown>> = [];
+    await page.route('**/feedback', route => {
+      if (route.request().method() !== 'POST') return route.continue();
+      payloads.push(route.request().postDataJSON() as Record<string, unknown>);
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          issueNumber: 2,
+          issueUrl: 'https://github.com/mean-weasel/bugdrop-widget-test/issues/2',
+          isPublic: false,
+        }),
+      });
+    });
+    await page.goto(venuePath);
+    await expect
+      .poll(() => page.evaluate(() => typeof window.BugDrop?.registerVariant))
+      .toBe('function');
+    if (responsePromise && expectedWidgetSha256) {
+      await assertExactPreviewWidgetResponse(await responsePromise, expectedWidgetSha256);
+    }
+    await page.evaluate(() => {
+      window
+        .BugDrop!.registerVariant({
+          id: 'cross-browser-live-compact-suggestion',
+          presentation: { kind: 'modal', size: 'default' },
+          content: { title: 'Share an idea', submitLabel: 'Submit idea' },
+          fields: [
+            { id: 'summary', type: 'shortText', label: 'Idea', required: true, maxLength: 120 },
+            { id: 'detail', type: 'longText', label: 'How would this help?', maxLength: 2_000 },
+          ],
+          issue: {
+            classification: 'feature',
+            title: '[Idea] {{summary}}',
+            sections: [
+              { heading: 'Idea', field: 'summary' },
+              { heading: 'Why it would help', field: 'detail', omitWhenEmpty: true },
+            ],
+          },
+        })
+        .open();
+    });
+
+    const variantHost = page.locator('body > [data-bugdrop-owned]');
+    await variantHost.getByRole('textbox', { name: 'Idea' }).fill('Cross-browser preview idea');
+    expect(payloads).toHaveLength(0);
+    await variantHost.getByRole('button', { name: 'Submit idea' }).click();
+    await expect(
+      variantHost.getByRole('heading', { name: 'Thanks for your feedback!' })
+    ).toBeVisible();
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]).toMatchObject({
+      kind: 'bugdrop.variant-submission',
+      schemaVersion: 1,
+      variantId: 'cross-browser-live-compact-suggestion',
+      issue: {
+        title: '[Idea] Cross-browser preview idea',
+        classification: 'feature',
+        sections: [{ heading: 'Idea', value: 'Cross-browser preview idea', format: 'text' }],
+      },
+    });
+  });
+
   test('handles complex-page screenshot options without starting expensive capture', async ({
     browserName,
     page,

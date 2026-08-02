@@ -132,6 +132,30 @@ describe('structured feedback Worker contract', () => {
     expect(mockGetInstallationToken).toHaveBeenCalledOnce();
   });
 
+  it('formats a hypothetical contributor field as generic sections without a Worker branch', async () => {
+    const payload = structuredClone(validPayload);
+    payload.variantId = 'contributor-priority-matrix';
+    payload.issue = {
+      title: 'Contributor extension proof',
+      classification: 'feature',
+      sections: [
+        { heading: 'Matrix selection', value: 'high-impact / low-effort', format: 'text' },
+        { heading: 'Contributor rationale', value: 'Ship the generic contract.', format: 'quote' },
+        { heading: 'Machine value', value: 'priority:p1', format: 'code' },
+      ],
+    };
+
+    const response = await submit(payload);
+    const body = mockCreateIssue.mock.calls[0][4] as string;
+
+    expect(response.status).toBe(200);
+    expect(mockCreateIssue).toHaveBeenCalledOnce();
+    expect(body).toContain('## Matrix selection\n\nhigh-impact / low-effort');
+    expect(body).toContain('## Contributor rationale\n\n> Ship the generic contract.');
+    expect(body).toContain('## Machine value\n\n```\npriority:p1\n```');
+    expect(body).toContain('<!-- bugdrop-submission: submission-1234 -->');
+  });
+
   it('shares the existing auth-token boundary before GitHub access', async () => {
     const protectedEnv = {
       ...env,

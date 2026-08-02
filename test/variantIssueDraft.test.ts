@@ -32,6 +32,35 @@ const config: VariantConfig = {
   },
 };
 
+const compactSuggestionConfig: VariantConfig = {
+  id: 'compact-suggestion',
+  presentation: { kind: 'modal', size: 'default' },
+  content: { title: 'Share an idea', submitLabel: 'Submit idea' },
+  fields: [
+    {
+      id: 'summary',
+      type: 'shortText',
+      label: 'Idea',
+      required: true,
+      maxLength: 120,
+    },
+    {
+      id: 'detail',
+      type: 'longText',
+      label: 'How would this help?',
+      maxLength: 2_000,
+    },
+  ],
+  issue: {
+    classification: 'feature',
+    title: '[Idea] {{summary}}',
+    sections: [
+      { heading: 'Idea', field: 'summary' },
+      { heading: 'Why it would help', field: 'detail', omitWhenEmpty: true },
+    ],
+  },
+};
+
 describe('variant Issue draft compilation', () => {
   it('normalizes fields into the field-agnostic Worker draft', () => {
     expect(
@@ -45,6 +74,15 @@ describe('variant Issue draft compilation', () => {
         { heading: 'Surface', value: 'settings', format: 'code' },
       ],
     });
+  });
+
+  it('uses stable choice values in titles and display labels only in choice sections', () => {
+    const draft = compileIssueDraft(config, { rating: 5, choice: 'azure', detail: '' });
+
+    expect(draft.title).toBe('Vote — azure —');
+    expect(draft.sections.find(section => section.heading === 'Choice')?.value).toBe(
+      'Microsoft Azure'
+    );
   });
 
   it('validates required, choice, rating, unknown-answer, and context boundaries', () => {
@@ -103,5 +141,32 @@ describe('variant Issue draft compilation', () => {
     });
 
     expect(draft.title).toHaveLength(256);
+  });
+
+  it('composes the exact compact-suggestion draft from existing text primitives', () => {
+    expect(
+      compileIssueDraft(compactSuggestionConfig, {
+        summary: '  Add keyboard shortcuts  ',
+        detail: '  They would speed up repeated triage.  ',
+      })
+    ).toEqual({
+      title: '[Idea] Add keyboard shortcuts',
+      classification: 'feature',
+      sections: [
+        { heading: 'Idea', value: 'Add keyboard shortcuts', format: 'text' },
+        {
+          heading: 'Why it would help',
+          value: 'They would speed up repeated triage.',
+          format: 'text',
+        },
+      ],
+    });
+
+    expect(
+      compileIssueDraft(compactSuggestionConfig, {
+        summary: 'Keep the form small',
+        detail: '   ',
+      }).sections
+    ).toEqual([{ heading: 'Idea', value: 'Keep the form small', format: 'text' }]);
   });
 });

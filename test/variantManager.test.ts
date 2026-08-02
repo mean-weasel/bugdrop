@@ -22,6 +22,25 @@ const modalConfig: VariantConfig = {
   issue: { title: 'Provider {{response}}' },
 };
 
+const pollConfig: VariantConfig = {
+  id: 'integration-poll',
+  presentation: { kind: 'inline' },
+  content: { title: 'Pick one' },
+  fields: [
+    {
+      id: 'choice',
+      type: 'singleChoice',
+      label: 'Choice',
+      required: true,
+      options: [
+        { value: 'one', label: 'One' },
+        { value: 'two', label: 'Two' },
+      ],
+    },
+  ],
+  issue: { title: 'Choice {{choice}}' },
+};
+
 describe('rendered variant manager', () => {
   beforeEach(() => {
     document.body.replaceChildren();
@@ -90,6 +109,29 @@ describe('rendered variant manager', () => {
         ?.shadowRoot?.querySelector('[aria-checked="true"]')
         ?.getAttribute('aria-label')
     ).toBe('5 stars');
+  });
+
+  it('restores and disposes single-choice controller state through the mounted handle', () => {
+    const manager = createVariantManager({ repo: 'owner/repo', apiUrl: '/api' });
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const mounted = manager
+      .register(pollConfig)
+      .mount(target, { initialAnswers: { choice: 'two' } });
+    const host = target.querySelector<HTMLElement>('[data-bugdrop-owned]');
+    const radios = Array.from(
+      host?.shadowRoot?.querySelectorAll<HTMLInputElement>('input[type="radio"]') ?? []
+    );
+
+    expect(radios[1]?.checked).toBe(true);
+    radios[0]?.click();
+    expect(radios[0]?.checked).toBe(true);
+    mounted.reset();
+    expect(radios[1]?.checked).toBe(true);
+    mounted.unmount();
+    mounted.reset();
+    mounted.unmount();
+    expect(target.childElementCount).toBe(0);
   });
 
   it('rejects modal mount and unknown initial answers without leaking a host', () => {

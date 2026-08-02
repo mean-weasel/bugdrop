@@ -222,4 +222,119 @@ test.describe('rendered inline variants', () => {
       'true'
     );
   });
+
+  test('submits an exact single-choice poll draft only through explicit Submit and resets identity', async ({
+    page,
+  }) => {
+    const submissions: Array<Record<string, unknown>> = [];
+    await page.route('**/api/feedback', route => {
+      submissions.push(route.request().postDataJSON() as Record<string, unknown>);
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          issueNumber: 106,
+          issueUrl: 'https://github.com/mean-weasel/bugdrop-widget-test/issues/106',
+          isPublic: false,
+        }),
+      });
+    });
+    await page.goto('/test/');
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
+    await page.evaluate(() => {
+      const slot = document.createElement('div');
+      slot.id = 'poll-slot';
+      document.body.appendChild(slot);
+      const mounted = window
+        .BugDrop!.registerVariant({
+          id: 'next-integration-poll',
+          presentation: { kind: 'inline' },
+          content: { title: 'What should we build next?', submitLabel: 'Vote' },
+          fields: [
+            {
+              id: 'choice',
+              type: 'singleChoice',
+              label: 'Choose one',
+              required: true,
+              display: 'cards',
+              options: [
+                {
+                  value: 'onedrive-stable',
+                  label: '<OneDrive>',
+                  description: 'Microsoft storage',
+                },
+                { value: 'box-stable', label: 'Box', description: 'Secure content cloud' },
+              ],
+            },
+            { id: 'detail', type: 'longText', label: 'Optional detail', maxLength: 500 },
+          ],
+          issue: {
+            classification: 'feature',
+            title: 'Integration vote — {{choice}}',
+            sections: [
+              { heading: 'Choice', field: 'choice', format: 'choice' },
+              { heading: 'Detail', field: 'detail', omitWhenEmpty: true },
+            ],
+          },
+        })
+        .mount(slot);
+      (window as Window & { __poll?: { reset(): void; unmount(): void } }).__poll = mounted;
+    });
+
+    const host = page.locator('#poll-slot > [data-bugdrop-owned]');
+    const group = host.getByRole('radiogroup', { name: 'Choose one' });
+    const submit = host.getByRole('button', { name: 'Vote' });
+    await submit.click();
+    await expect(group).toHaveAttribute('aria-invalid', 'true');
+    const oneDrive = group.getByRole('radio', { name: '<OneDrive> Microsoft storage' });
+    await expect(oneDrive).toBeFocused();
+    expect(submissions).toHaveLength(0);
+    await oneDrive.click();
+    expect(submissions).toHaveLength(0);
+    await expect(host.locator('img')).toHaveCount(0);
+    expect(
+      await oneDrive.evaluate(element => element.closest('label')!.getBoundingClientRect().height)
+    ).toBeGreaterThanOrEqual(44);
+    await host.getByRole('textbox', { name: 'Optional detail' }).fill('  Please add sync.  ');
+    expect(submissions).toHaveLength(0);
+    await submit.click();
+    await expect(host.getByRole('heading', { name: 'Thanks for your feedback!' })).toBeVisible();
+
+    expect(submissions).toHaveLength(1);
+    expect(submissions[0]).toMatchObject({
+      kind: 'bugdrop.variant-submission',
+      schemaVersion: 1,
+      variantId: 'next-integration-poll',
+      issue: {
+        title: 'Integration vote — onedrive-stable',
+        classification: 'feature',
+        sections: [
+          { heading: 'Choice', value: '<OneDrive>', format: 'text' },
+          { heading: 'Detail', value: 'Please add sync.', format: 'text' },
+        ],
+      },
+    });
+
+    await page.evaluate(() => (window as Window & { __poll?: { reset(): void } }).__poll?.reset());
+    await expect(oneDrive).not.toBeChecked();
+    await expect(host.getByRole('textbox', { name: 'Optional detail' })).toHaveValue('');
+    const box = group.getByRole('radio', { name: 'Box Secure content cloud' });
+    await box.click();
+    expect(submissions).toHaveLength(1);
+    await submit.click();
+    expect(submissions).toHaveLength(2);
+    expect(submissions[1]).toMatchObject({
+      issue: {
+        title: 'Integration vote — box-stable',
+        sections: [{ heading: 'Choice', value: 'Box', format: 'text' }],
+      },
+    });
+    expect(submissions[1]?.submissionId).not.toBe(submissions[0]?.submissionId);
+
+    await page.evaluate(() =>
+      (window as Window & { __poll?: { unmount(): void } }).__poll?.unmount()
+    );
+    await expect(host).toHaveCount(0);
+  });
 });

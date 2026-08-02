@@ -53,7 +53,7 @@ test-radix-e2e:
 		echo "Usage: make test-radix-e2e BROWSER=chromium|firefox|webkit"; \
 		exit 1; \
 	fi
-	npx playwright test e2e/widget.radix.spec.ts --project=$(BROWSER)-radix --workers=1
+	npx playwright test e2e/widget.radix.spec.ts e2e/variant-modal.radix.spec.ts e2e/variant-accessibility.radix.spec.ts --project=$(BROWSER)-radix --workers=1 --retries=0
 
 test-live-radix:
 	@if [ -z "$(LIVE_TARGET)" ] || [ -z "$(PLAYWRIGHT_BASE_URL)" ]; then \
