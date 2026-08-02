@@ -67,17 +67,18 @@ done
 job_count=$(awk '/^jobs:$/ { found = 1; next } found && /^  [[:alnum:]_-]+:$/ { count += 1 } END { print count + 0 }' "$release_workflow")
 [[ "$job_count" -eq 1 ]] || fail "freeze workflow must have exactly one job; found $job_count"
 
-semantic_release_matches=$(rg -n 'semantic-release' "$workflows_dir" || true)
+semantic_release_matches=$(grep -RInF --include='*.yml' --include='*.yaml' -- 'semantic-release' "$workflows_dir" || true)
 [[ -z "$semantic_release_matches" ]] ||
   fail "semantic-release remains executable in a workflow: $semantic_release_matches"
 
 for production_command in 'npm run deploy' 'make deploy' 'cloudflare/wrangler-action'; do
-  matches=$(rg -n -F -- "$production_command" "$workflows_dir" || true)
+  matches=$(grep -RInF --include='*.yml' --include='*.yaml' -- "$production_command" "$workflows_dir" || true)
   [[ -z "$matches" ]] || fail "production-capable workflow command remains: $matches"
 done
 
-wrangler_deploy_matches=$(rg -n 'wrangler deploy' "$workflows_dir" || true)
-[[ $(wc -l <<< "$wrangler_deploy_matches" | tr -d ' ') -eq 1 ]] ||
+wrangler_deploy_matches=$(grep -RInF --include='*.yml' --include='*.yaml' -- 'wrangler deploy' "$workflows_dir" || true)
+wrangler_deploy_count=$(printf '%s\n' "$wrangler_deploy_matches" | awk 'NF { count += 1 } END { print count + 0 }')
+[[ "$wrangler_deploy_count" -eq 1 ]] ||
   fail "expected exactly one preview Wrangler deploy; found: $wrangler_deploy_matches"
 [[ "$wrangler_deploy_matches" == *'.github/workflows/ci.yml:'* ]] ||
   fail "Wrangler deploy is not owned by preview CI: $wrangler_deploy_matches"
