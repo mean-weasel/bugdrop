@@ -12,6 +12,7 @@ const REPO = 'mean-weasel/bugdrop-widget-test';
 const MARKER = `bugdrop-ci-canary:123:1:${'a'.repeat(40)}`;
 const SHA = 'a'.repeat(40);
 const TOKEN = 'synthetic-redaction-sentinel-not-a-credential';
+const RENDERED_SUBMISSION_ID = 'submission-95a970ec-e4fa-41da-9a29-f4b62fb941ca';
 const noWait = vi.fn(async () => {});
 
 type Issue = {
@@ -72,6 +73,14 @@ function result(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function renderedResult(overrides: Record<string, unknown> = {}) {
+  return result({
+    presentation: 'modal',
+    submissionId: RENDERED_SUBMISSION_ID,
+    ...overrides,
+  });
+}
+
 function issueFetch(
   matches: Issue[],
   direct: Issue = matches[0]
@@ -127,6 +136,48 @@ describe('GitHub Issue canary discovery and verification', () => {
 
     expect(verified.number).toBe(42);
     expect(verified.html_url).toBe(`https://github.com/${REPO}/issues/42`);
+  });
+
+  it('verifies a rendered modal result with its runtime submission identity', async () => {
+    const renderedIssue = issue({
+      body: issue().body.replace(`ci:${MARKER}`, RENDERED_SUBMISSION_ID),
+    });
+    const fetchImpl = issueFetch([renderedIssue]);
+
+    const verified = await verifyCanaryIssue({
+      fetchImpl,
+      repo: REPO,
+      token: TOKEN,
+      marker: MARKER,
+      expectedSha: SHA,
+      result: renderedResult(),
+      sleepImpl: noWait,
+    });
+
+    expect(verified.number).toBe(42);
+  });
+
+  it.each([
+    ['missing rendered identity', renderedResult({ submissionId: undefined })],
+    ['non-rendered identity', renderedResult({ submissionId: `ci:${MARKER}` })],
+    ['malformed rendered identity', renderedResult({ submissionId: 'submission-not-random' })],
+  ])('rejects a rendered modal result with %s', async (_name, browserResult) => {
+    const renderedIssue = issue({
+      body: issue().body.replace(`ci:${MARKER}`, RENDERED_SUBMISSION_ID),
+    });
+    const fetchImpl = issueFetch([renderedIssue]);
+
+    await expect(
+      verifyCanaryIssue({
+        fetchImpl,
+        repo: REPO,
+        token: TOKEN,
+        marker: MARKER,
+        expectedSha: SHA,
+        result: browserResult,
+        sleepImpl: noWait,
+      })
+    ).rejects.toThrow('rendered submission identity');
   });
 
   it.each([

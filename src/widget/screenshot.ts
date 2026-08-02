@@ -10,6 +10,7 @@ import {
   type RedactionSummary,
 } from './mask';
 import { resolveAccentColor } from '../defaults';
+import { isBugDropOwnedNode } from './owned-roots';
 export { cropScreenshot } from './crop-screenshot';
 export { beginViewportCapture } from './viewport-capture';
 
@@ -200,7 +201,7 @@ export function getRedactionCount(element?: Element, rect?: DOMRect): number {
 }
 
 function shouldIncludeCaptureNode(node: HTMLElement): boolean {
-  if (node.id === 'bugdrop-host') return false;
+  if (isBugDropOwnedNode(node)) return false;
 
   if (isHtmlImage(node) && isInvisibleOrZeroSize(node)) {
     return false;

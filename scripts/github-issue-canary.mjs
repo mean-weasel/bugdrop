@@ -469,9 +469,7 @@ function validateBrowserResult({ failures, result, marker, expectedSha, candidat
   }
   if (result.marker !== marker) failures.push('Browser result marker does not match');
   if (result.kind !== 'structured') failures.push('Browser result kind is not structured');
-  if (result.submissionId !== `ci:${marker}`) {
-    failures.push('Browser result submission ID does not match the canary marker');
-  }
+  validateBrowserSubmissionId({ failures, result, marker });
   if (!Number.isInteger(result.issueNumber) || result.issueNumber <= 0) {
     failures.push('Browser result Issue number is not a positive integer');
   }
@@ -487,15 +485,32 @@ function validateBrowserResultReference({ failures, result, marker, expectedSha,
   }
   if (result.marker !== marker) failures.push('Browser result marker does not match');
   if (result.kind !== 'structured') failures.push('Browser result kind is not structured');
-  if (result.submissionId !== `ci:${marker}`) {
-    failures.push('Browser result submission ID does not match the canary marker');
-  }
+  validateBrowserSubmissionId({ failures, result, marker });
   if (!Number.isInteger(result.issueNumber) || result.issueNumber <= 0) {
     failures.push('Browser result Issue number is not a positive integer');
   } else if (result.issueUrl !== canonicalIssueUrl(repo, result.issueNumber)) {
     failures.push('Browser result Issue URL is not canonical');
   }
   if (result.workerSha !== expectedSha) failures.push('Browser result Worker SHA differs');
+}
+
+function validateBrowserSubmissionId({ failures, result, marker }) {
+  if (result.presentation === 'modal') {
+    if (!isRenderedSubmissionId(result.submissionId)) {
+      failures.push('Browser result submission ID is not a rendered submission identity');
+    }
+    return;
+  }
+  if (result.submissionId !== `ci:${marker}`) {
+    failures.push('Browser result submission ID does not match the canary marker');
+  }
+}
+
+function isRenderedSubmissionId(value) {
+  return (
+    typeof value === 'string' &&
+    /^submission-(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/i.test(value)
+  );
 }
 
 function normalizeLabels(labels) {

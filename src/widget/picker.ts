@@ -1,6 +1,7 @@
 /* eslint-disable max-lines, max-lines-per-function */
 import { resolvePickerStyle, type PickerStyle, type ResolvedPickerStyle } from './picker-style';
 import { getSelectionTarget } from './picker-target';
+import { isBugDropOwnedNode } from './owned-roots';
 import { t } from './i18n';
 
 export { resolvePickerStyle, type PickerStyle };
@@ -175,7 +176,7 @@ function startPicker(resolve: (element: Element | null) => void, style?: PickerS
 
     return elementsAtPoint.find(el => {
       if (isPickerChrome(el)) return false;
-      if (el.closest('#bugdrop-host')) return false;
+      if (isBugDropOwnedNode(el)) return false;
       return true;
     });
   }
@@ -238,7 +239,7 @@ function startPicker(resolve: (element: Element | null) => void, style?: PickerS
   function onClick(e: MouseEvent) {
     if (resolved) {
       document.removeEventListener('click', onClick, true);
-      if (e.target instanceof Element && e.target.closest('#bugdrop-host')) return;
+      if (isBugDropOwnedNode(e.target)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       return;

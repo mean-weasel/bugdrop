@@ -22,6 +22,7 @@ declare global {
       width: number;
       height: number;
     };
+    __ownedCaptureFilter?: boolean[];
   }
 }
 
@@ -3827,6 +3828,78 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
     });
     return () => count;
   }
+
+  test('full-page capture excludes owned variants', async ({ page }) => {
+    await mockHtmlToImage(
+      page,
+      `function(el, opts) {
+        window.__captureOpts = opts;
+        window.__ownedCaptureFilter = Array.from(document.querySelectorAll('[data-bugdrop-owned]'))
+          .map(function(root) { return opts.filter(root); });
+        return Promise.resolve('${STUB_PNG}');
+      }`
+    );
+    await page.goto('/test/');
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
+    await page.evaluate(() => {
+      for (const rating of [1, 5]) {
+        const slot = document.createElement('div');
+        document.body.appendChild(slot);
+        window
+          .BugDrop!.registerVariant({
+            id: `capture-review-${rating}`,
+            presentation: { kind: 'inline' },
+            content: { title: 'Capture review' },
+            fields: [{ id: 'rating', type: 'rating', label: 'Rating' }],
+            issue: { title: 'Capture {{rating}}' },
+          })
+          .mount(slot, { initialAnswers: { rating } });
+      }
+    });
+
+    await navigateToFullPageCapture(page);
+    await expect
+      .poll(() => page.evaluate(() => window.__ownedCaptureFilter))
+      .toEqual([false, false]);
+  });
+
+  test('element picker excludes owned variants', async ({ page }) => {
+    await page.goto('/test/');
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
+    await page.evaluate(() => {
+      const underlay = document.createElement('div');
+      underlay.id = 'capture-underlay';
+      Object.assign(underlay.style, { width: '500px', minHeight: '260px', padding: '20px' });
+      document.body.prepend(underlay);
+      window
+        .BugDrop!.registerVariant({
+          id: 'picker-review',
+          presentation: { kind: 'inline' },
+          content: { title: 'Picker review' },
+          fields: [{ id: 'rating', type: 'rating', label: 'Rating' }],
+          issue: { title: 'Picker {{rating}}' },
+        })
+        .mount(underlay, { initialAnswers: { rating: 3 } });
+    });
+    const host = await navigateToScreenshotOptions(page);
+    await host.locator('css=[data-action="element"]').click();
+    await expect(page.locator('#bugdrop-element-picker-tooltip')).toBeVisible();
+    const variant = page.locator('#capture-underlay > [data-bugdrop-owned]');
+    const box = await variant.boundingBox();
+    expect(box).not.toBeNull();
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    const highlight = page.locator('#bugdrop-element-picker-highlight');
+    await expect(highlight).toBeVisible();
+    const highlightBox = await highlight.boundingBox();
+    const underlayBox = await page.locator('#capture-underlay').boundingBox();
+    expect(highlightBox).not.toBeNull();
+    expect(underlayBox).not.toBeNull();
+    expect(Math.abs(highlightBox!.width - underlayBox!.width)).toBeLessThanOrEqual(12);
+    expect(Math.abs(highlightBox!.height - underlayBox!.height)).toBeLessThanOrEqual(12);
+    expect(highlightBox!.width).toBeGreaterThan(box!.width);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#bugdrop-element-picker-overlay')).toHaveCount(0);
+  });
 
   async function trackFeedbackPayloads(page: Page) {
     const payloads: Array<Record<string, unknown>> = [];

@@ -142,12 +142,12 @@ If your code runs after the page is fully loaded and you want to check whether B
 
 This "check first, listen second" pattern is useful in single-page applications where your code might run at various points in the page lifecycle.
 
-## Headless Variants
+## Configurable Variants
 
-Use a registered variant when your application owns the UI but should reuse BugDrop's validation,
+Use a registered variant for a focused feedback experience while reusing BugDrop's validation,
 metadata, auth, Worker policy, and GitHub Issue creation. Registration validates synchronously and
 stores an immutable copy. The variant sidecar does no DOM, listener, observer, storage, or ID work
-until registration or submission requires it.
+until a variant is mounted or submitted.
 
 ```js
 const review = window.BugDrop.registerVariant({
@@ -168,6 +168,68 @@ const review = window.BugDrop.registerVariant({
   },
 });
 
+const mountedReview = review.mount(document.querySelector('#export-review-slot'), {
+  context: { surface: 'export-complete' },
+});
+
+// Later, restore the form to its initial state or remove this instance only.
+mountedReview.reset();
+mountedReview.unmount();
+```
+
+The inline renderer provides accessible short-text, long-text, and rating controls. Choosing a star
+changes only local form state; it never submits. A GitHub Issue is created only after the explicit
+Submit button succeeds.
+
+For a host-owned CTA, register a modal variant and call its handle instead of the legacy
+`BugDrop.open()` method:
+
+```js
+const providerQuestion = window.BugDrop.registerVariant({
+  id: 'cloud-provider-question',
+  presentation: { kind: 'modal', size: 'compact' },
+  content: {
+    title: 'Which cloud provider should we support next?',
+    description: 'Tell us what would fit your workflow.',
+    submitLabel: 'Send idea',
+    cancelLabel: 'Not now',
+  },
+  fields: [
+    {
+      id: 'response',
+      type: 'longText',
+      label: 'Your answer',
+      required: true,
+      minLength: 2,
+      maxLength: 1000,
+    },
+  ],
+  issue: {
+    classification: 'feature',
+    title: 'Cloud provider request — {{response}}',
+    sections: [{ heading: 'Requested provider or workflow', field: 'response' }],
+  },
+});
+
+document.querySelector('#provider-cta').addEventListener('click', () => {
+  const opened = providerQuestion.open({ context: { surface: 'studio-upload' } });
+  opened.result.then(outcome => console.log(outcome.status));
+});
+```
+
+The modal traps focus, closes on Escape, restores focus and page scrolling, and settles its result
+as `submitted`, `closed`, or `busy`. A variant requested while the legacy wizard is active returns
+`busy`. Opening the legacy wizard while a variant modal is active closes the variant first. The
+legacy `BugDrop.close()` method remains legacy-scoped.
+
+BugDrop's merge-queue preview checks render both this CTA modal and the inline star review from the
+exact deployed widget bytes. They assert each normalized draft without creating Issues, followed by
+one zero-retry rendered CTA canary that creates, independently verifies, closes, and sweeps one real
+GitHub Issue through the existing GitHub App.
+
+If your application owns the UI, the same immutable handle also supports headless submission:
+
+```js
 const result = await review.submit(
   { rating: 5, message: 'Fast and clear.' },
   { context: { surface: 'export-complete' } }
@@ -175,9 +237,8 @@ const result = await review.submit(
 console.log(result.issueNumber, result.issueUrl);
 ```
 
-Selecting or changing a value in host UI never submits. Only `submit()` sends a request. Rendered
-`open()` and `mount()` variants are not part of the Phase 1 headless foundation. TypeScript consumers
-can import `VariantConfig`, `VariantHandle`, and related declarations from the `bugdrop` package.
+TypeScript consumers can import `VariantConfig`, `VariantHandle`, `MountedVariant`, and related
+declarations from the `bugdrop` package.
 
 ## Keyboard Shortcut Example
 

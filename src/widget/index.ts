@@ -31,6 +31,7 @@ import {
 } from './console-logs';
 import { escapeWidgetText, resolveLocale, setLocale, t, type SupportedLocale } from './i18n';
 import { installRadixDialogCompatibility } from './radix-compat';
+import { closeActiveVariantModal } from './variants/modal-coordinator';
 import { resolveAccentColor } from '../defaults';
 import type { BugDropPublicAPI } from './variants/public-types';
 import { createVariantManager, type VariantManager } from './variants/manager';
@@ -968,11 +969,14 @@ function exposeBugDropAPI(root: HTMLElement, config: WidgetConfig) {
     // The sidecar is created only on the first registration. Legacy-only pages
     // do not allocate variant maps, IDs, DOM, listeners, observers, or storage.
     registerVariant: variantConfig => {
-      variantManager ??= createVariantManager({
-        repo: config.repo,
-        apiUrl: config.apiUrl,
-        authTokenProvider: config.authTokenProvider,
-      });
+      variantManager ??= createVariantManager(
+        {
+          repo: config.repo,
+          apiUrl: config.apiUrl,
+          authTokenProvider: config.authTokenProvider,
+        },
+        { isLegacyModalOpen: () => _isModalOpen }
+      );
       return variantManager.register(variantConfig);
     },
   };
@@ -1053,6 +1057,8 @@ async function openFeedbackFlow(
   if (_isModalOpen) {
     return;
   }
+
+  closeActiveVariantModal();
 
   // Mark modal as open
   _isModalOpen = true;

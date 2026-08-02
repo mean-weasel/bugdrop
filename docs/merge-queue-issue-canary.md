@@ -1,8 +1,8 @@
 # Merge-Queue Issue Canary Operations
 
 The CI workflow runs one real-Issue canary only for GitHub `merge_group` events. It uses the fixed
-Vercel preview venue, the shared `bugdrop-preview` Worker, the deployed widget's headless structured
-API, and the existing BugDrop GitHub App. Pull requests, manual and reusable live workflows, the
+Vercel preview venue, the shared `bugdrop-preview` Worker, the deployed widget's rendered CTA
+variant, and the existing BugDrop GitHub App. Pull requests, manual and reusable live workflows, the
 daily live workflow, and local Playwright commands do not select the canary. The Phase 0 run remains
 the retained live proof for the legacy form; the routine action was replaced rather than duplicated.
 
@@ -24,8 +24,13 @@ The marker format is:
 bugdrop-ci-canary:<run-id>:<run-attempt>:<full-merge-group-sha>
 ```
 
-The browser registers one headless canary variant and sends exactly one screenshot-free structured
-request. It asserts the discriminator, schema version, generic Issue draft, server-owned label
+Before the mutating canary, two nonmutating live tests render the inline star review and CTA text
+modal from the exact deployed widget bytes. Each intercepts its only feedback POST, prevents it from
+reaching the Worker, and asserts the complete normalized Issue draft and explicit-submit behavior.
+
+The canary browser then opens one rendered CTA modal and activates its explicit Submit button once,
+sending exactly one screenshot-free structured request. It asserts the discriminator, schema
+version, generic Issue draft, server-owned label
 boundary, submission ID, request origin, response origin, full Worker build SHA, positive Issue
 number, and canonical Issue URL. The server-side verifier independently lists repository Issues,
 rejects duplicates and pull requests, and checks the structured section, exact submission marker,
