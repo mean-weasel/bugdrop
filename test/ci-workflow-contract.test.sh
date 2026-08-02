@@ -153,6 +153,11 @@ sed -n "${cleanup_line},$((cleanup_line + 12))p" "$ci_workflow" | grep -Fq -- '-
   fail 'cleanup must not depend on the browser result file'
 grep -Fq ': > "$BUGDROP_CANARY_ATTEMPT_FILE"' <<< "$critical" ||
   fail 'the canary does not record that its browser action started'
+grep -Fq 'BUGDROP_CANARY_ATTEMPT_FILE=$RUNNER_TEMP/bugdrop-canary-attempt-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' <<< "$critical" ||
+  fail 'the canary attempt sentinel must use an ephemeral run- and attempt-specific path'
+if grep -Fq 'BUGDROP_CANARY_ATTEMPT_FILE=test-results/' <<< "$critical"; then
+  fail 'the canary attempt sentinel must not live in Playwright outputDir'
+fi
 sed -n "${cleanup_line},$((cleanup_line + 12))p" "$ci_workflow" |
   grep -Fq 'if [ ! -f "$BUGDROP_CANARY_ATTEMPT_FILE" ]' ||
   fail 'current-marker cleanup does not distinguish a skipped canary from an attempted canary'
