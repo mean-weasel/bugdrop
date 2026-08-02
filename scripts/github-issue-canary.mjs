@@ -107,8 +107,12 @@ export async function verifyCanaryIssue({
   }
   if (candidate.html_url !== canonicalUrl) failures.push('Issue URL is not canonical');
   if (candidate.title !== canaryTitle(marker)) failures.push('Issue title does not match exactly');
-  if (!candidate.body?.includes('## Description')) failures.push('Issue body lacks Description');
-  if (!candidate.body?.includes(marker)) failures.push('Issue body lacks the CI marker');
+  if (!candidate.body?.includes(`## Canary marker\n\n${marker}\n`)) {
+    failures.push('Issue body lacks the exact structured Canary marker section and value');
+  }
+  if (!candidate.body?.includes(`<!-- bugdrop-submission: ${result.submissionId} -->`)) {
+    failures.push('Issue body lacks the exact structured submission marker');
+  }
   if (!candidate.body?.includes('<summary>System Info</summary>')) {
     failures.push('Issue body lacks System Info');
   }
@@ -464,6 +468,10 @@ function validateBrowserResult({ failures, result, marker, expectedSha, candidat
     return;
   }
   if (result.marker !== marker) failures.push('Browser result marker does not match');
+  if (result.kind !== 'structured') failures.push('Browser result kind is not structured');
+  if (result.submissionId !== `ci:${marker}`) {
+    failures.push('Browser result submission ID does not match the canary marker');
+  }
   if (!Number.isInteger(result.issueNumber) || result.issueNumber <= 0) {
     failures.push('Browser result Issue number is not a positive integer');
   }
@@ -478,6 +486,10 @@ function validateBrowserResultReference({ failures, result, marker, expectedSha,
     return;
   }
   if (result.marker !== marker) failures.push('Browser result marker does not match');
+  if (result.kind !== 'structured') failures.push('Browser result kind is not structured');
+  if (result.submissionId !== `ci:${marker}`) {
+    failures.push('Browser result submission ID does not match the canary marker');
+  }
   if (!Number.isInteger(result.issueNumber) || result.issueNumber <= 0) {
     failures.push('Browser result Issue number is not a positive integer');
   } else if (result.issueUrl !== canonicalIssueUrl(repo, result.issueNumber)) {

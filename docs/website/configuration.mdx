@@ -245,6 +245,35 @@ Self-hosted deployments can also let pages set labels via the `data-category-lab
 
 Only enable this when your worker's `ALLOWED_ORIGINS` is locked down to trusted domains.
 
+### Structured variant labels
+
+Structured submissions can request only a classification (`bug`, `feature`, `question`, or
+`feedback`). They cannot send raw labels or select a named label set. Self-hosted Workers may map a
+repository and variant ID to labels with `VARIANT_LABELS`:
+
+```json
+{
+  "acme-corp/my-app": {
+    "export-review": ["feedback", "rating"],
+    "cloud-provider-question": ["enhancement", "cloud-import"]
+  },
+  "*": {
+    "product-suggestion": "product-feedback"
+  }
+}
+```
+
+BugDrop always adds `bugdrop`. Missing, malformed, or invalid mappings fall back to the submitted
+classification (`bug`, `enhancement`, `question`, or only `bugdrop` for `feedback`) and surface a
+warning in Worker logs, the Issue body, and the success response. A configured variant ID is a
+classification hint, not an authorization boundary: do not attach security-sensitive automation to
+one of these labels without separately verifying the submitter.
+
+The structured envelope uses the existing `/api/feedback` endpoint and shares its CORS, auth-token,
+IP-rate-limit, repository-rate-limit, GitHub App, and response behavior. It is intentionally
+field-agnostic and does not accept field schemas, screenshots, attachments, annotations, console
+logs, raw `labels`, or `labelSet` values.
+
 ## Auth Token Provider
 
 Self-hosted deployments can require short-lived host-app auth tokens before BugDrop accepts feedback. This is useful when the widget is only meant for authenticated users in your product.

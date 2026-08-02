@@ -148,6 +148,9 @@ jobs:
       - name: Install dependencies
         run: make install
 
+      - name: Verify legacy compatibility provenance
+        run: npm run verify:legacy-compat
+
       - name: Run unit tests
         run: make test
 
@@ -430,7 +433,7 @@ jobs:
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
-      - name: Run one real-Issue canary
+      - name: Run one structured real-Issue canary
         run: npx playwright test e2e/widget.issue-canary.spec.ts --project=chromium-issue-canary --workers=1 --retries=0
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}

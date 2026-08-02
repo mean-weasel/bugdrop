@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 import type { Env, FeedbackPayload } from '../src/types';
@@ -33,6 +34,21 @@ const createApiRoutes = async () => {
   const { default: api } = await import('../src/routes/api');
   return api;
 };
+
+const legacyFixtureRoot = new URL('./fixtures/legacy-compat/', import.meta.url);
+const legacyPayloads = JSON.parse(
+  readFileSync(new URL('legacy-payload.json', legacyFixtureRoot), 'utf8')
+) as {
+  screenshotFree: FeedbackPayload;
+  evidenceBearing: FeedbackPayload;
+};
+const legacyResponse = JSON.parse(
+  readFileSync(new URL('legacy-response.json', legacyFixtureRoot), 'utf8')
+) as Record<string, unknown>;
+const legacyIssueBody = readFileSync(
+  new URL('legacy-issue.md', legacyFixtureRoot),
+  'utf8'
+).trimEnd();
 
 describe('API Routes', () => {
   const validPngDataUrl =
@@ -245,6 +261,78 @@ describe('API Routes', () => {
         timestamp: '2025-01-15T12:00:00Z',
       },
     };
+
+    it('preserves the frozen screenshot-free legacy request and response contract', async () => {
+      const req = new Request('http://localhost/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(legacyPayloads.screenshotFree),
+      });
+
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(legacyResponse);
+      expect(mockCreateIssue).toHaveBeenCalledWith(
+        'test-token',
+        'testowner',
+        'testrepo',
+        legacyPayloads.screenshotFree.title,
+        expect.stringContaining(legacyPayloads.screenshotFree.description),
+        ['enhancement', 'bugdrop']
+      );
+      expect(mockUploadScreenshotAsAsset).not.toHaveBeenCalled();
+      expect(mockUploadAttachmentAsAsset).not.toHaveBeenCalled();
+    });
+
+    it('preserves the frozen evidence-bearing Issue body and GitHub arguments', async () => {
+      mockUploadScreenshotAsAsset.mockResolvedValue('https://assets.test/screenshot.png');
+      mockUploadAttachmentAsAsset.mockResolvedValue('https://assets.test/evidence.pdf');
+      const req = new Request('http://localhost/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(legacyPayloads.evidenceBearing),
+      });
+
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(legacyResponse);
+      expect(mockUploadScreenshotAsAsset).toHaveBeenCalledWith(
+        'test-token',
+        'testowner',
+        'testrepo',
+        legacyPayloads.evidenceBearing.screenshot
+      );
+      expect(mockUploadAttachmentAsAsset).toHaveBeenCalledWith(
+        'test-token',
+        'testowner',
+        'testrepo',
+        legacyPayloads.evidenceBearing.attachments?.[0]
+      );
+      expect(mockCreateIssue).toHaveBeenCalledWith(
+        'test-token',
+        'testowner',
+        'testrepo',
+        legacyPayloads.evidenceBearing.title,
+        legacyIssueBody,
+        ['bug', 'bugdrop']
+      );
+    });
+
+    it('does not treat an unrelated top-level schemaVersion as a variant discriminator', async () => {
+      const req = new Request('http://localhost/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...legacyPayloads.screenshotFree, schemaVersion: 2 }),
+      });
+
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(legacyResponse);
+      expect(mockCreateIssue).toHaveBeenCalledOnce();
+    });
 
     it('should create issue with valid payload', async () => {
       mockGetInstallationToken.mockResolvedValue('test-token');

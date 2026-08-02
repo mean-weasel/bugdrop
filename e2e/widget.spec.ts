@@ -2527,6 +2527,7 @@ test.describe('JavaScript API', () => {
     expect(apiMethods).toContain('show');
     expect(apiMethods).toContain('isOpen');
     expect(apiMethods).toContain('isButtonVisible');
+    expect(apiMethods).toContain('registerVariant');
   });
 
   test('bugdrop:ready event fires after initialization', async ({ page }) => {
@@ -2545,6 +2546,272 @@ test.describe('JavaScript API', () => {
     // Verify the event was received
     const statusText = await page.locator('#status').textContent();
     expect(statusText).toContain('BugDrop ready');
+  });
+
+  test('bugdrop:ready keeps its exact event semantics and exposes the API first', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const state = {
+        documentCount: 0,
+        events: [] as Array<Record<string, unknown>>,
+      };
+      (window as Window & { __bugdropReadyState?: typeof state }).__bugdropReadyState = state;
+      document.addEventListener('bugdrop:ready', () => {
+        state.documentCount += 1;
+      });
+      window.addEventListener('bugdrop:ready', event => {
+        state.events.push({
+          targetIsWindow: event.target === window,
+          bubbles: event.bubbles,
+          cancelable: event.cancelable,
+          detail: (event as CustomEvent).detail,
+          apiMethods: Object.keys(window.BugDrop ?? {}).sort(),
+        });
+      });
+    });
+
+    await page.goto('/test/');
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
+
+    const state = await page.evaluate(
+      () =>
+        (
+          window as Window & {
+            __bugdropReadyState?: {
+              documentCount: number;
+              events: Array<Record<string, unknown>>;
+            };
+          }
+        ).__bugdropReadyState
+    );
+    expect(state).toEqual({
+      documentCount: 0,
+      events: [
+        {
+          targetIsWindow: true,
+          bubbles: false,
+          cancelable: false,
+          detail: null,
+          apiMethods: [
+            'close',
+            'hide',
+            'isButtonVisible',
+            'isOpen',
+            'open',
+            'registerVariant',
+            'setTheme',
+            'show',
+          ],
+        },
+      ],
+    });
+  });
+
+  test('legacy API methods remain detachable and ignore extra arguments', async ({ page }) => {
+    await page.route('**/api/check**', route =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{"installed":true}' })
+    );
+    await page.goto('/test/');
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
+
+    const openResult = await page.evaluate(() => {
+      const { open } = window.BugDrop!;
+      return (open as (...arguments_: unknown[]) => unknown)('future-instance-id', {
+        ignored: true,
+      });
+    });
+    expect(openResult).toBeUndefined();
+    await expect(page.locator('#bugdrop-host').locator('css=.bd-modal')).toBeVisible();
+
+    const closeResult = await page.evaluate(() => {
+      const { close } = window.BugDrop!;
+      return (close as (...arguments_: unknown[]) => unknown)('future-instance-id');
+    });
+    expect(closeResult).toBeUndefined();
+    await expect(page.locator('#bugdrop-host').locator('css=.bd-modal')).not.toBeVisible();
+  });
+
+  test('does no variant-only work before any future variant registration', async ({ page }) => {
+    await page.goto('/test/');
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
+
+    const variantWork = await page.evaluate(() => ({
+      ownedRoots: document.querySelectorAll('[data-bugdrop-owned]').length,
+      storageKeys: Object.keys(localStorage).filter(key => key.startsWith('bugdrop_variant_')),
+    }));
+    expect(variantWork).toEqual({ ownedRoots: 0, storageKeys: [] });
+  });
+
+  test('registers multiple isolated variants and submits exact headless drafts', async ({
+    page,
+  }) => {
+    const submitted: Record<string, unknown>[] = [];
+    await page.route('**/api/feedback', route => {
+      submitted.push(route.request().postDataJSON() as Record<string, unknown>);
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          issueNumber: 91,
+          issueUrl: 'https://github.com/mean-weasel/bugdrop-widget-test/issues/91',
+          isPublic: true,
+        }),
+      });
+    });
+    await page.goto('/test/?private=redacted#secret');
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
+
+    const result = await page.evaluate(async () => {
+      const source: Parameters<NonNullable<typeof window.BugDrop>['registerVariant']>[0] = {
+        id: 'export-review',
+        presentation: { kind: 'inline' },
+        content: { title: 'Export review' },
+        fields: [
+          { id: 'rating', type: 'rating', label: 'Rating', required: true, scale: 5 },
+          { id: 'message', type: 'longText', label: 'Comment' },
+        ],
+        issue: {
+          classification: 'feedback',
+          title: 'Review {{rating}}/5',
+          sections: [
+            { heading: 'Rating', field: 'rating', format: 'stars' },
+            { heading: 'Comment', field: 'message', omitWhenEmpty: true },
+          ],
+        },
+      };
+      const handle = window.BugDrop!.registerVariant(source);
+      const ctaHandle = window.BugDrop!.registerVariant({
+        id: 'cloud-provider-idea',
+        presentation: { kind: 'modal' },
+        content: { title: 'Which cloud provider should we add?' },
+        fields: [{ id: 'idea', type: 'shortText', label: 'Provider', required: true }],
+        issue: {
+          classification: 'feature',
+          title: 'Cloud provider idea: {{idea}}',
+          sections: [{ heading: 'Idea', field: 'idea' }],
+        },
+      });
+      source.issue.title = 'mutated {{message}}';
+      let duplicateError = '';
+      try {
+        window.BugDrop!.registerVariant(source);
+      } catch (error) {
+        duplicateError = error instanceof Error ? error.message : String(error);
+      }
+      const submission = await handle.submit(
+        { rating: 5, message: '' },
+        { submissionId: 'e2e-submission-1' }
+      );
+      const ctaSubmission = await ctaHandle.submit(
+        { idea: 'Google Cloud' },
+        { submissionId: 'e2e-submission-2' }
+      );
+      return {
+        id: handle.id,
+        submission,
+        ctaId: ctaHandle.id,
+        ctaSubmission,
+        duplicateError,
+        ownedRoots: document.querySelectorAll('[data-bugdrop-owned]').length,
+        variantStorage: Object.keys(localStorage).filter(key => key.startsWith('bugdrop_variant_')),
+      };
+    });
+
+    expect(result).toEqual({
+      id: 'export-review',
+      submission: {
+        issueNumber: 91,
+        issueUrl: 'https://github.com/mean-weasel/bugdrop-widget-test/issues/91',
+        isPublic: true,
+      },
+      ctaId: 'cloud-provider-idea',
+      ctaSubmission: {
+        issueNumber: 91,
+        issueUrl: 'https://github.com/mean-weasel/bugdrop-widget-test/issues/91',
+        isPublic: true,
+      },
+      duplicateError: 'BugDrop variant is already registered: export-review',
+      ownedRoots: 0,
+      variantStorage: [],
+    });
+    expect(submitted).toHaveLength(2);
+    expect(submitted[0]).toMatchObject({
+      kind: 'bugdrop.variant-submission',
+      schemaVersion: 1,
+      repo: 'mean-weasel/bugdrop-widget-test',
+      variantId: 'export-review',
+      submissionId: 'e2e-submission-1',
+      issue: {
+        title: 'Review 5/5',
+        classification: 'feedback',
+        sections: [{ heading: 'Rating', value: '★★★★★ (5/5)', format: 'text' }],
+      },
+      metadata: { url: 'http://localhost:8787/test/' },
+    });
+    expect(submitted[1]).toMatchObject({
+      kind: 'bugdrop.variant-submission',
+      schemaVersion: 1,
+      repo: 'mean-weasel/bugdrop-widget-test',
+      variantId: 'cloud-provider-idea',
+      submissionId: 'e2e-submission-2',
+      issue: {
+        title: 'Cloud provider idea: Google Cloud',
+        classification: 'feature',
+        sections: [{ heading: 'Idea', value: 'Google Cloud', format: 'text' }],
+      },
+    });
+    for (const payload of submitted) {
+      expect(payload).not.toHaveProperty('labels');
+      expect(payload).not.toHaveProperty('fields');
+    }
+  });
+
+  test('rejects failed and noncanonical structured submission responses', async ({ page }) => {
+    await page.route('**/api/feedback', route => {
+      const payload = route.request().postDataJSON() as { submissionId?: string };
+      if (payload.submissionId === 'bad-http') {
+        return route.fulfill({
+          status: 422,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Submission rejected' }),
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          issueNumber: 91,
+          issueUrl: 'https://attacker.test/not-an-issue',
+          isPublic: true,
+        }),
+      });
+    });
+    await page.goto('/test/');
+    await page.locator('#bugdrop-host').locator('css=.bd-trigger').waitFor();
+
+    const errors = await page.evaluate(async () => {
+      const handle = window.BugDrop!.registerVariant({
+        id: 'failure-contract',
+        presentation: { kind: 'inline' },
+        content: { title: 'Failure contract' },
+        fields: [{ id: 'message', type: 'shortText', label: 'Message', required: true }],
+        issue: { title: 'Failure: {{message}}' },
+      });
+      const messages: string[] = [];
+      for (const submissionId of ['bad-http', 'bad-result']) {
+        try {
+          await handle.submit({ message: 'test' }, { submissionId });
+        } catch (error) {
+          messages.push(error instanceof Error ? error.message : String(error));
+        }
+      }
+      return messages;
+    });
+
+    expect(errors).toEqual(['Submission rejected', 'BugDrop received an invalid Issue result']);
   });
 
   test('BugDrop.open() opens the modal', async ({ page }) => {

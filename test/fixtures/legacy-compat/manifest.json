@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "provenancePolicy": "Tag-reconstructed bundles are immutable compatibility fixtures built from the named git commit and lockfile. They are not claimed to be byte-identical to historically deployed assets.",
+  "bundleBudget": {
+    "baselineTag": "v1.53.1",
+    "maxGzipGrowthPercent": 25,
+    "baselineRawBytes": 148406,
+    "baselineGzipBytes": 42077,
+    "maxGzipBytes": 52597,
+    "gzipMeasurement": "node:zlib gzipSync level 9"
+  },
+  "bundles": {
+    "v1.1.0": {
+      "tag": "v1.1.0",
+      "commit": "5ec3aead9d49a9a9573c25ccdff86aada15cadc9",
+      "packageLockSha256": "d57cb54e35141ba9e363b7661b84e1c2917f67cb526d625c27bed8385e5dd5eb",
+      "buildCommand": "npm ci --ignore-scripts --no-audit --no-fund && VERSION=v1.1.0 npm run build:widget",
+      "bundle": "test/fixtures/legacy-compat/v1.1.0/widget.js",
+      "sha256": "5de4ee13f96e588a67b57b588c6e20be0b6ab1e3a38d6199e3a345aadcaba462",
+      "rawBytes": 34629,
+      "gzipBytes": 9014
+    },
+    "v1.53.1": {
+      "tag": "v1.53.1",
+      "commit": "5cf06f4ec3eab7cc7a507fc4c4d082a84e279539",
+      "packageLockSha256": "06ca1e524ecc457deff83f07d323f000a3c46230c98dea0548d11372d9686b1d",
+      "buildCommand": "npm ci --ignore-scripts --no-audit --no-fund && VERSION=v1.53.1 npm run build:widget",
+      "bundle": "test/fixtures/legacy-compat/v1.53.1/widget.js",
+      "sha256": "3398aa9052e561e63c84c7dde1e6bff344c7367061b23a6e449af536f36d973c",
+      "rawBytes": 148406,
+      "gzipBytes": 42077
+    }
+  },
+  "legacyBootstrap": {
+    "hostId": "bugdrop-host",
+    "shadowRootMode": "open",
+    "readyEvent": {
+      "target": "window",
+      "count": 1,
+      "bubbles": false,
+      "cancelable": false,
+      "detail": null
+    },
+    "storageKeys": [
+      "bugdrop_dismissed",
+      "bugdrop_trigger_position_<repo>",
+      "bugdrop_welcomed_<repo>",
+      "bugdrop_complex_screenshot_skipped_<repo>"
+    ]
+  },
+  "liveObservation": {
+    "observedAt": "2026-08-02",
+    "widget.v1.1.0.js": 404,
+    "widget.v1.53.1.js": 200,
+    "widget.v1.js": 200
+  }
+}

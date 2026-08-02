@@ -12,8 +12,9 @@ The `window.BugDrop` object is available after the widget initializes. It provid
 | `BugDrop.close()` | Method | Closes the feedback form |
 | `BugDrop.hide()` | Method | Hides the floating button |
 | `BugDrop.show()` | Method | Shows the floating button |
-| `BugDrop.isOpen` | Property (boolean) | `true` if the feedback form is currently open |
-| `BugDrop.isButtonVisible` | Property (boolean) | `true` if the floating button is currently visible |
+| `BugDrop.isOpen()` | Method | Returns `true` if the feedback form is currently open |
+| `BugDrop.isButtonVisible()` | Method | Returns `true` if the floating button is currently visible |
+| `BugDrop.registerVariant(config)` | Method | Registers an immutable custom feedback definition and returns a durable handle |
 
 ### Basic Usage
 
@@ -32,12 +33,12 @@ The `window.BugDrop` object is available after the widget initializes. It provid
   window.BugDrop.show();
 
   // Check if the form is open
-  if (window.BugDrop.isOpen) {
+  if (window.BugDrop.isOpen()) {
     console.log('Form is currently open');
   }
 
   // Check if the button is visible
-  if (window.BugDrop.isButtonVisible) {
+  if (window.BugDrop.isButtonVisible()) {
     console.log('Button is visible');
   }
 </script>
@@ -81,7 +82,7 @@ A common pattern is integrating BugDrop into your application's navigation or he
 
 ### Using the `bugdrop:ready` Event
 
-BugDrop dispatches a `bugdrop:ready` event on the `document` when it finishes initializing. This is the recommended way to set up integrations:
+BugDrop dispatches a non-bubbling `bugdrop:ready` event on `window` when it finishes initialization. This is the recommended way to set up integrations:
 
 ```html
 <nav>
@@ -103,7 +104,7 @@ BugDrop dispatches a `bugdrop:ready` event on the `document` when it finishes in
 ></script>
 
 <script>
-  document.addEventListener('bugdrop:ready', function () {
+  window.addEventListener('bugdrop:ready', function () {
     const link = document.getElementById('report-bug-link');
     link.style.display = '';
     link.addEventListener('click', function (e) {
@@ -132,7 +133,7 @@ If your code runs after the page is fully loaded and you want to check whether B
     window.BugDrop.open();
   } else {
     // Wait for it
-    document.addEventListener('bugdrop:ready', function () {
+    window.addEventListener('bugdrop:ready', function () {
       window.BugDrop.open();
     });
   }
@@ -140,6 +141,43 @@ If your code runs after the page is fully loaded and you want to check whether B
 ```
 
 This "check first, listen second" pattern is useful in single-page applications where your code might run at various points in the page lifecycle.
+
+## Headless Variants
+
+Use a registered variant when your application owns the UI but should reuse BugDrop's validation,
+metadata, auth, Worker policy, and GitHub Issue creation. Registration validates synchronously and
+stores an immutable copy. The variant sidecar does no DOM, listener, observer, storage, or ID work
+until registration or submission requires it.
+
+```js
+const review = window.BugDrop.registerVariant({
+  id: 'export-review',
+  presentation: { kind: 'inline' },
+  content: { title: 'How was this export?' },
+  fields: [
+    { id: 'rating', type: 'rating', label: 'Rating', required: true, scale: 5 },
+    { id: 'message', type: 'longText', label: 'Anything else?', maxLength: 1000 },
+  ],
+  issue: {
+    classification: 'feedback',
+    title: '[Export review] {{rating}}/5',
+    sections: [
+      { heading: 'Rating', field: 'rating', format: 'stars' },
+      { heading: 'Comment', field: 'message', omitWhenEmpty: true },
+    ],
+  },
+});
+
+const result = await review.submit(
+  { rating: 5, message: 'Fast and clear.' },
+  { context: { surface: 'export-complete' } }
+);
+console.log(result.issueNumber, result.issueUrl);
+```
+
+Selecting or changing a value in host UI never submits. Only `submit()` sends a request. Rendered
+`open()` and `mount()` variants are not part of the Phase 1 headless foundation. TypeScript consumers
+can import `VariantConfig`, `VariantHandle`, and related declarations from the `bugdrop` package.
 
 ## Keyboard Shortcut Example
 
@@ -151,7 +189,7 @@ You can bind BugDrop to a keyboard shortcut for power users:
     // Ctrl+Shift+B (or Cmd+Shift+B on Mac) to toggle bug report
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'B') {
       e.preventDefault();
-      if (window.BugDrop && window.BugDrop.isOpen) {
+      if (window.BugDrop && window.BugDrop.isOpen()) {
         window.BugDrop.close();
       } else if (window.BugDrop) {
         window.BugDrop.open();

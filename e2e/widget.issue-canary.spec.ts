@@ -24,11 +24,12 @@ type FeedbackResult = {
 
 test.describe.configure({ mode: 'serial', retries: 0 });
 
-test('legacy preview widget creates one real Issue with exact deployment identity', async ({
+test('headless structured preview widget creates one real Issue with exact deployment identity', async ({
   page,
   request,
 }) => {
   const environment = requireCanaryEnvironment();
+  const submissionId = `ci:${environment.marker}`;
   await installVercelBypass(page);
 
   await page.goto('/');
@@ -69,26 +70,24 @@ test('legacy preview widget creates one real Issue with exact deployment identit
 
     const payload = outgoing.postDataJSON() as Record<string, unknown>;
     expect(payload.repo).toBe(TEST_REPO);
-    expect(payload.title).toBe(`${TITLE_PREFIX} ${environment.marker}`);
-    expect(payload.description).toContain(environment.marker);
-    expect(payload.category).toBe('bug');
-    expect(payload.screenshot).toBeNull();
+    expect(payload).toMatchObject({
+      kind: 'bugdrop.variant-submission',
+      schemaVersion: 1,
+      repo: TEST_REPO,
+      variantId: 'merge-queue-canary',
+      submissionId,
+      issue: {
+        title: `${TITLE_PREFIX} ${environment.marker}`,
+        classification: 'bug',
+        sections: [{ heading: 'Canary marker', value: environment.marker, format: 'text' }],
+      },
+    });
+    expect(payload).not.toHaveProperty('labels');
+    expect(payload).not.toHaveProperty('labelSet');
+    expect(payload).not.toHaveProperty('screenshot');
+    expect(payload).not.toHaveProperty('fields');
     await route.continue();
   });
-
-  const host = page.locator('#bugdrop-host');
-  await expect(host.locator('css=.bd-trigger')).toBeVisible({ timeout: 10_000 });
-  await host.locator('css=.bd-trigger').click();
-  await expect(host.locator('css=[data-action="continue"]')).toBeVisible({ timeout: 5_000 });
-  await host.locator('css=[data-action="continue"]').click();
-
-  await expect(host.locator('css=#title')).toBeVisible({ timeout: 5_000 });
-  await host.locator('css=input[name="category"][value="bug"]').check();
-  await host.locator('css=#title').fill(`${TITLE_PREFIX} ${environment.marker}`);
-  await host.locator('css=#description').fill(environment.marker);
-  const screenshotCheckbox = host.locator('css=#include-screenshot');
-  await screenshotCheckbox.uncheck();
-  await expect(screenshotCheckbox).not.toBeChecked();
 
   const feedbackResponsePromise = page.waitForResponse(response => {
     const responseUrl = new URL(response.url());
@@ -98,7 +97,24 @@ test('legacy preview widget creates one real Issue with exact deployment identit
       responseUrl.pathname === '/api/feedback'
     );
   });
-  await host.locator('css=#submit-btn').click();
+  const result = await page.evaluate(
+    async ({ marker, submissionId, titlePrefix }) => {
+      if (!window.BugDrop) throw new Error('BugDrop API is unavailable');
+      const handle = window.BugDrop.registerVariant({
+        id: 'merge-queue-canary',
+        presentation: { kind: 'inline' },
+        content: { title: 'Merge-queue canary' },
+        fields: [{ id: 'marker', type: 'longText', label: 'Marker', required: true }],
+        issue: {
+          classification: 'bug',
+          title: `${titlePrefix} {{marker}}`,
+          sections: [{ heading: 'Canary marker', field: 'marker' }],
+        },
+      });
+      return handle.submit({ marker }, { submissionId });
+    },
+    { marker: environment.marker, submissionId, titlePrefix: TITLE_PREFIX }
+  );
   const feedbackResponse = await feedbackResponsePromise;
 
   const feedbackUrl = new URL(feedbackResponse.url());
@@ -106,14 +122,17 @@ test('legacy preview widget creates one real Issue with exact deployment identit
   expect(feedbackUrl.pathname).toBe('/api/feedback');
   expect(feedbackResponse.status()).toBe(200);
   expect(feedbackResponse.headers()['x-bugdrop-build-sha']).toBe(environment.expectedWorkerSha);
-  const result = (await feedbackResponse.json()) as FeedbackResult;
-  expect(result.success).toBe(true);
-  expect(Number.isInteger(result.issueNumber) && Number(result.issueNumber) > 0).toBe(true);
-  const issueNumber = Number(result.issueNumber);
+  const responseResult = (await feedbackResponse.json()) as FeedbackResult;
+  expect(responseResult.success).toBe(true);
+  expect(result.issueNumber).toBe(responseResult.issueNumber);
+  expect(result.issueUrl).toBe(responseResult.issueUrl);
+  expect(
+    Number.isInteger(responseResult.issueNumber) && Number(responseResult.issueNumber) > 0
+  ).toBe(true);
+  const issueNumber = Number(responseResult.issueNumber);
   const issueUrl = `https://github.com/${TEST_REPO}/issues/${issueNumber}`;
-  expect(result.issueUrl).toBe(issueUrl);
+  expect(responseResult.issueUrl).toBe(issueUrl);
 
-  await expect(host.locator('css=.bd-success-content')).toBeVisible({ timeout: 10_000 });
   await page.waitForTimeout(1_000);
   expect(rejectedRequest).toBeUndefined();
   expect(feedbackPosts).toHaveLength(1);
@@ -123,6 +142,8 @@ test('legacy preview widget creates one real Issue with exact deployment identit
     environment.resultFile,
     `${JSON.stringify({
       marker: environment.marker,
+      kind: 'structured',
+      submissionId,
       issueNumber,
       issueUrl,
       workerSha: environment.expectedWorkerSha,
