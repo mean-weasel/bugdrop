@@ -659,6 +659,38 @@ tasks:
         - cmd: "git diff --check"
           status: pass
       summary: "Required CI had tried to enforce Prettier on immutable tag bundles and the exact Issue golden. The compatibility fixture directory is now explicitly ignored by formatting while its dedicated hash, size, gzip, provenance, and behavior checks remain required. No frozen fixture byte changed."
+  - id: T010
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: low
+    objective: "Give the required provenance job access to the release tags it verifies and lock that checkout requirement into the CI contract."
+    allowed_files:
+      - ".github/workflows/ci.yml"
+      - "test/ci-workflow-contract.test.sh"
+    verify:
+      - "bash test/ci-workflow-contract.test.sh"
+      - "node scripts/verify-legacy-compat.mjs"
+      - "npm run format:check"
+      - "git diff --check"
+    stop_if:
+      - "The change would skip tag-to-commit verification or weaken the required Unit job."
+    receipt:
+      result: done
+      harness: codex
+      changed_files:
+        - .github/workflows/ci.yml
+        - test/ci-workflow-contract.test.sh
+      commands:
+        - cmd: "bash test/ci-workflow-contract.test.sh"
+          status: pass
+        - cmd: "node scripts/verify-legacy-compat.mjs"
+          status: pass
+        - cmd: "npm run format:check"
+          status: pass
+        - cmd: "git diff --check"
+          status: pass
+      summary: "The required Unit job now uses checkout fetch-depth 0, making v1.1.0 and v1.53.1 tag commits available to the provenance verifier. The CI contract fails if that tag-history checkout is removed."
 checks:
   dirty_fingerprint: unknown
   last_verification:

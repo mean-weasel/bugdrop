@@ -53,6 +53,9 @@ require_literal "$ci_workflow" 'name: Verify legacy compatibility provenance'
 require_literal "$ci_workflow" 'run: npm run verify:legacy-compat'
 [[ $(grep -Fc 'npm run verify:legacy-compat' "$ci_workflow") -eq 1 ]] ||
   fail 'legacy compatibility provenance must have exactly one required CI invocation'
+unit_block=$(job_block "$ci_workflow" test)
+grep -Fq 'fetch-depth: 0' <<< "$unit_block" ||
+  fail 'the provenance job must fetch tag history before verification'
 
 e2e_block=$(job_block "$ci_workflow" e2e)
 if grep -Eq '^    if:' <<< "$e2e_block"; then
