@@ -28,11 +28,10 @@ type FeedbackResult = {
 
 test.describe.configure({ mode: 'serial', retries: 0 });
 
-test('headless structured preview widget creates one real Issue with exact deployment identity', async ({
+test('rendered CTA preview widget creates one real Issue with exact deployment identity', async ({
   page,
 }) => {
   const environment = requireCanaryEnvironment();
-  const submissionId = `ci:${environment.marker}`;
   await installVercelBypass(page);
 
   const widgetResponsePromise = waitForPreviewWidgetResponse(
@@ -57,6 +56,7 @@ test('headless structured preview widget creates one real Issue with exact deplo
   );
 
   const feedbackPosts: Request[] = [];
+  let canarySubmissionId: string | undefined;
   let rejectedRequest: string | undefined;
   await page.route('**/feedback', async route => {
     const outgoing = route.request();
@@ -77,13 +77,14 @@ test('headless structured preview widget creates one real Issue with exact deplo
     }
 
     const payload = outgoing.postDataJSON() as Record<string, unknown>;
+    expect(payload.submissionId).toEqual(expect.any(String));
+    canarySubmissionId = String(payload.submissionId);
     expect(payload.repo).toBe(TEST_REPO);
     expect(payload).toMatchObject({
       kind: 'bugdrop.variant-submission',
       schemaVersion: 1,
       repo: TEST_REPO,
       variantId: 'merge-queue-canary',
-      submissionId,
       issue: {
         title: `${TITLE_PREFIX} ${environment.marker}`,
         classification: 'bug',
@@ -105,13 +106,13 @@ test('headless structured preview widget creates one real Issue with exact deplo
       responseUrl.pathname === '/api/feedback'
     );
   });
-  const result = await page.evaluate(
-    async ({ marker, submissionId, titlePrefix }) => {
+  await page.evaluate(
+    ({ titlePrefix }) => {
       if (!window.BugDrop) throw new Error('BugDrop API is unavailable');
       const handle = window.BugDrop.registerVariant({
         id: 'merge-queue-canary',
-        presentation: { kind: 'inline' },
-        content: { title: 'Merge-queue canary' },
+        presentation: { kind: 'modal', size: 'compact' },
+        content: { title: 'Merge-queue canary', submitLabel: 'Create canary Issue' },
         fields: [{ id: 'marker', type: 'longText', label: 'Marker', required: true }],
         issue: {
           classification: 'bug',
@@ -119,10 +120,43 @@ test('headless structured preview widget creates one real Issue with exact deplo
           sections: [{ heading: 'Canary marker', field: 'marker' }],
         },
       });
-      return handle.submit({ marker }, { submissionId });
+      const opened = handle.open({ context: { canary: true } });
+      (
+        window as Window & {
+          __bugdropCanaryOpened?: typeof opened;
+        }
+      ).__bugdropCanaryOpened = opened;
     },
-    { marker: environment.marker, submissionId, titlePrefix: TITLE_PREFIX }
+    { titlePrefix: TITLE_PREFIX }
   );
+  const canaryHost = page.locator('body > [data-bugdrop-owned]');
+  await expect(canaryHost.getByRole('dialog', { name: 'Merge-queue canary' })).toBeVisible();
+  const markerInput = canaryHost.getByRole('textbox', { name: 'Marker' });
+  await markerInput.fill(environment.marker);
+  await expect(markerInput).toHaveValue(environment.marker);
+  expect(feedbackPosts).toHaveLength(0);
+  await canaryHost.getByRole('button', { name: 'Create canary Issue' }).click();
+  const result = await page.evaluate(async () => {
+    const opened = (
+      window as Window & {
+        __bugdropCanaryOpened?: {
+          result: Promise<
+            | {
+                status: 'submitted';
+                result: { issueNumber: number; issueUrl: string; isPublic: boolean };
+              }
+            | { status: 'closed' | 'busy' }
+          >;
+        };
+      }
+    ).__bugdropCanaryOpened;
+    if (!opened) throw new Error('Rendered canary modal handle is unavailable');
+    const outcome = await opened.result;
+    if (outcome.status !== 'submitted') {
+      throw new Error(`Rendered canary ended with ${outcome.status}`);
+    }
+    return outcome.result;
+  });
   const feedbackResponse = await feedbackResponsePromise;
 
   const feedbackUrl = new URL(feedbackResponse.url());
@@ -144,6 +178,7 @@ test('headless structured preview widget creates one real Issue with exact deplo
   await page.waitForTimeout(1_000);
   expect(rejectedRequest).toBeUndefined();
   expect(feedbackPosts).toHaveLength(1);
+  expect(canarySubmissionId).toMatch(/^submission-/);
 
   await mkdir(dirname(environment.resultFile), { recursive: true });
   await writeFile(
@@ -151,7 +186,8 @@ test('headless structured preview widget creates one real Issue with exact deplo
     `${JSON.stringify({
       marker: environment.marker,
       kind: 'structured',
-      submissionId,
+      presentation: 'modal',
+      submissionId: canarySubmissionId,
       issueNumber,
       issueUrl,
       workerSha: environment.expectedWorkerSha,

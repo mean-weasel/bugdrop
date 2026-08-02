@@ -4,6 +4,7 @@ import type {
   VariantField,
   VariantIssueSection,
 } from './public-types';
+import { normalizeVariantAnswers } from './answer-validation';
 
 interface CompiledIssueDraft {
   title: string;
@@ -17,7 +18,7 @@ export function compileIssueDraft(
   context: VariantContext = {}
 ): CompiledIssueDraft {
   validateContext(context);
-  const normalizedAnswers = normalizeAnswers(config.fields, answers);
+  const normalizedAnswers = normalizeVariantAnswers(config.fields, answers);
   const title = config.issue.title
     .replace(/{{\s*([^{}]+?)\s*}}/g, (_match, reference: string) => {
       const value = reference.startsWith('context.')
@@ -47,57 +48,6 @@ export function compileIssueDraft(
     ...(config.issue.classification ? { classification: config.issue.classification } : {}),
     sections,
   };
-}
-
-function normalizeAnswers(
-  fields: ReadonlyArray<VariantField>,
-  answers: Record<string, unknown>
-): Record<string, string | number> {
-  if (!isObject(answers)) throw new TypeError('BugDrop variant answers must be an object');
-  const knownFields = new Set(fields.map(field => field.id));
-  const unknown = Object.keys(answers).find(key => !knownFields.has(key));
-  if (unknown) throw new TypeError(`Unknown BugDrop variant answer: ${unknown}`);
-
-  const normalized: Record<string, string | number> = {};
-  for (const field of fields) {
-    const raw = answers[field.id];
-    if (field.type === 'shortText' || field.type === 'longText') {
-      if (raw === undefined || raw === null || raw === '') {
-        if (field.required) throw new TypeError(`Answer ${field.id} is required`);
-        normalized[field.id] = '';
-        continue;
-      }
-      if (typeof raw !== 'string') throw new TypeError(`Answer ${field.id} must be text`);
-      const value = raw.trim();
-      if (field.required && !value) throw new TypeError(`Answer ${field.id} is required`);
-      const minimum = field.minLength ?? 0;
-      const maximum = field.maxLength ?? (field.type === 'shortText' ? 500 : 5_000);
-      if (value.length < minimum || value.length > maximum) {
-        throw new TypeError(`Answer ${field.id} must be ${minimum}-${maximum} characters`);
-      }
-      normalized[field.id] = value;
-    } else if (field.type === 'rating') {
-      const scale = field.scale ?? 5;
-      if (raw === undefined || raw === null || raw === '') {
-        if (field.required) throw new TypeError(`Answer ${field.id} is required`);
-        normalized[field.id] = '';
-      } else if (!Number.isInteger(raw) || (raw as number) < 1 || (raw as number) > scale) {
-        throw new TypeError(`Answer ${field.id} must be a rating from 1-${scale}`);
-      } else {
-        normalized[field.id] = raw as number;
-      }
-    } else {
-      if (raw === undefined || raw === null || raw === '') {
-        if (field.required) throw new TypeError(`Answer ${field.id} is required`);
-        normalized[field.id] = '';
-      } else if (typeof raw !== 'string' || !field.options.some(option => option.value === raw)) {
-        throw new TypeError(`Answer ${field.id} must be a configured choice`);
-      } else {
-        normalized[field.id] = raw;
-      }
-    }
-  }
-  return normalized;
 }
 
 function resolveSectionValue(

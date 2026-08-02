@@ -5,14 +5,25 @@
  * would dismiss its own dialogs or yank focus back.
  */
 
-export function installRadixDialogCompatibility(host: HTMLElement): void {
-  // Guards replayHostFocusOut: the synthetic focusout events it dispatches
-  // propagate a capture phase from window and would re-enter keepBugDropFocus
-  // with the same in-widget relatedTarget, replaying forever (stack overflow).
-  let replayingFocusOut = false;
+const ownedRoots = new Set<HTMLElement>();
+let installed = false;
+let replayingFocusOut = false;
 
+export function installRadixDialogCompatibility(host: HTMLElement): () => void {
+  ownedRoots.add(host);
+  if (!installed) installGlobalCompatibilityListeners();
+  let disposed = false;
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    ownedRoots.delete(host);
+  };
+}
+
+function installGlobalCompatibilityListeners(): void {
+  installed = true;
   const preventBugDropDismissal = (event: Event) => {
-    if (isBugDropInteraction(host, event)) {
+    if (isBugDropInteraction(event)) {
       event.preventDefault();
     }
   };
@@ -21,7 +32,7 @@ export function installRadixDialogCompatibility(host: HTMLElement): void {
       return;
     }
 
-    if (isBugDropFocusEvent(host, event)) {
+    if (isBugDropFocusEvent(event)) {
       if (event.type === 'focusin') {
         event.stopImmediatePropagation();
         return;
@@ -52,7 +63,7 @@ export function installRadixDialogCompatibility(host: HTMLElement): void {
   window.addEventListener('focusout', keepBugDropFocus, true);
 }
 
-function isBugDropInteraction(host: HTMLElement, event: Event): boolean {
+function isBugDropInteraction(event: Event): boolean {
   const originalEvent = (event as CustomEvent<{ originalEvent?: Event }>).detail?.originalEvent;
   const path =
     typeof originalEvent?.composedPath === 'function'
@@ -61,20 +72,18 @@ function isBugDropInteraction(host: HTMLElement, event: Event): boolean {
         ? event.composedPath()
         : [];
 
-  if (path.includes(host)) {
-    return true;
-  }
-
-  return (originalEvent?.target ?? event.target) === host;
+  return Array.from(ownedRoots).some(
+    host => path.includes(host) || (originalEvent?.target ?? event.target) === host
+  );
 }
 
-function isBugDropFocusEvent(host: HTMLElement, event: Event): boolean {
+function isBugDropFocusEvent(event: Event): boolean {
   if (!(event instanceof FocusEvent)) {
-    return isBugDropInteraction(host, event);
+    return isBugDropInteraction(event);
   }
 
   if (event.type === 'focusin') {
-    return isBugDropInteraction(host, event);
+    return isBugDropInteraction(event);
   }
 
   if (event.type !== 'focusout') {
@@ -82,10 +91,12 @@ function isBugDropFocusEvent(host: HTMLElement, event: Event): boolean {
   }
 
   const nextFocusedNode = event.relatedTarget;
-  const nextFocusIsBugDrop =
-    nextFocusedNode === host ||
-    (nextFocusedNode instanceof Node && (host.shadowRoot?.contains(nextFocusedNode) ?? false));
-  return nextFocusIsBugDrop && !isBugDropInteraction(host, event);
+  const nextFocusIsBugDrop = Array.from(ownedRoots).some(
+    host =>
+      nextFocusedNode === host ||
+      (nextFocusedNode instanceof Node && (host.shadowRoot?.contains(nextFocusedNode) ?? false))
+  );
+  return nextFocusIsBugDrop && !isBugDropInteraction(event);
 }
 
 function replayHostFocusOut(event: Event): void {

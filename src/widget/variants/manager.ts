@@ -1,4 +1,11 @@
-import type { VariantConfig, VariantHandle } from './public-types';
+import type {
+  VariantConfig,
+  VariantHandle,
+  VariantMountOptions,
+  VariantOpenOptions,
+} from './public-types';
+import { mountInlineVariant } from './presentations/inline';
+import { createBusyOpenedVariant, openModalVariant } from './presentations/modal';
 import { validateAndFreezeVariantConfig } from './validate-config';
 import { submitVariant, type VariantTransportConfig } from './submission';
 
@@ -6,7 +13,10 @@ export interface VariantManager {
   register(config: VariantConfig): VariantHandle;
 }
 
-export function createVariantManager(transport: VariantTransportConfig): VariantManager {
+export function createVariantManager(
+  transport: VariantTransportConfig,
+  runtime: { isLegacyModalOpen(): boolean } = { isLegacyModalOpen: () => false }
+): VariantManager {
   const variants = new Map<string, Readonly<VariantConfig>>();
 
   return {
@@ -19,11 +29,26 @@ export function createVariantManager(transport: VariantTransportConfig): Variant
 
       return Object.freeze({
         id: normalized.id,
-        open() {
-          throw new Error('BugDrop rendered variants are not available in the headless foundation');
+        open(options?: VariantOpenOptions) {
+          if (normalized.presentation.kind !== 'modal') {
+            throw new TypeError('BugDrop open() requires a modal variant');
+          }
+          if (runtime.isLegacyModalOpen()) return createBusyOpenedVariant(normalized.id);
+          return openModalVariant({
+            config: normalized,
+            options,
+            submit: (answers, submitOptions) =>
+              submitVariant(transport, normalized, answers, submitOptions),
+          });
         },
-        mount() {
-          throw new Error('BugDrop rendered variants are not available in the headless foundation');
+        mount(target: HTMLElement, options?: VariantMountOptions) {
+          return mountInlineVariant({
+            config: normalized,
+            target,
+            options,
+            submit: (answers, submitOptions) =>
+              submitVariant(transport, normalized, answers, submitOptions),
+          });
         },
         submit(answers: Record<string, unknown>, options = {}) {
           return submitVariant(transport, normalized, answers, options);

@@ -7,6 +7,8 @@ ci_workflow="$repo_root/.github/workflows/ci.yml"
 live_workflow="$repo_root/.github/workflows/live-tests.yml"
 canary_spec="$repo_root/e2e/widget.issue-canary.spec.ts"
 live_spec="$repo_root/e2e/widget.live.spec.ts"
+variant_live_spec="$repo_root/e2e/variant.live.spec.ts"
+variant_accessibility_spec="$repo_root/e2e/variant-accessibility.radix.spec.ts"
 live_radix_spec="$repo_root/e2e/widget.live-radix.spec.ts"
 cross_browser_live_spec="$repo_root/e2e/widget.cross-browser-live.spec.ts"
 exact_widget_fixture="$repo_root/e2e/live-preview-widget.ts"
@@ -186,8 +188,21 @@ require_literal "$canary_spec" "response.request().method() === 'POST'"
 require_literal "$canary_spec" 'responseUrl.origin === environment.expectedWidgetOrigin'
 require_literal "$canary_spec" "responseUrl.pathname === '/api/feedback'"
 require_literal "$canary_spec" 'expect(feedbackUrl.origin).toBe(environment.expectedWidgetOrigin)'
+require_literal "$canary_spec" "presentation: { kind: 'modal', size: 'compact' }"
+require_literal "$canary_spec" 'const opened = handle.open('
+require_literal "$canary_spec" 'await markerInput.fill(environment.marker)'
+require_literal "$canary_spec" "getByRole('button', { name: 'Create canary Issue' }).click()"
+require_absent "$canary_spec" 'return handle.submit('
 require_literal "$live_spec" "page.route('**/feedback'"
 require_literal "$live_spec" 'installExactPreviewWidgetFromEnvironment(context)'
+require_literal "$variant_live_spec" "from './live-preview-widget'"
+require_literal "$variant_live_spec" "page.route('**/feedback'"
+require_literal "$variant_live_spec" 'renders and submits the exact inline star-review draft'
+require_literal "$variant_live_spec" 'opens and submits the exact CTA text-modal draft'
+require_literal "$variant_live_spec" 'assertExactPreviewWidgetResponse'
+require_literal "$variant_accessibility_spec" 'rating keyboard behavior requires explicit Submit'
+require_literal "$variant_accessibility_spec" 'modal focus is contained and Escape restores the host page'
+require_literal "$variant_accessibility_spec" "expect(submissionCount).toBe(0)"
 for live_browser_spec in "$live_spec" "$live_radix_spec" "$cross_browser_live_spec"; do
   require_literal "$live_browser_spec" "from './live-preview-widget'"
 done

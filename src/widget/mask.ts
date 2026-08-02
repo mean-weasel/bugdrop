@@ -73,6 +73,9 @@ function createTarget(el: Element, reason: RedactionReason): RedactionTarget | n
 export function createRedactionSnapshot(root: Element): RedactionSnapshot {
   const targets: RedactionTarget[] = [];
   const unsupportedSurfaces: UnsupportedRedactionSurface[] = [];
+  if (isBugDropOwnedNode(root)) {
+    return { targets, unsupportedSurfaces, redactionCount: 0 };
+  }
   const rootReason = getRedactionReason(root);
 
   if (rootReason) {
@@ -143,6 +146,7 @@ function walk(
   unsupportedSurfaces: UnsupportedRedactionSurface[]
 ): void {
   for (const child of Array.from(node.children)) {
+    if (isBugDropOwnedNode(child)) continue;
     const reason = getRedactionReason(child);
     if (reason) {
       const target = createTarget(child, reason);
@@ -291,3 +295,4 @@ function loadImage(dataUrl: string): Promise<HTMLImageElement> {
     img.src = dataUrl;
   });
 }
+import { isBugDropOwnedNode } from './owned-roots';

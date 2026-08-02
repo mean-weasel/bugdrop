@@ -57,6 +57,21 @@ describe('collectMaskRects — explicit attribute', () => {
     expect(collectMaskRects(document.body)).toEqual([]);
   });
 
+  it('does not inspect BugDrop-owned light or shadow DOM', () => {
+    const owned = document.createElement('div');
+    owned.dataset.bugdropOwned = '';
+    const lightInput = withRect(document.createElement('input'), 0, 0, 100, 30);
+    lightInput.type = 'password';
+    const shadowInput = withRect(document.createElement('input'), 0, 40, 100, 30);
+    shadowInput.type = 'password';
+    owned.appendChild(lightInput);
+    owned.attachShadow({ mode: 'open' }).appendChild(shadowInput);
+    document.body.appendChild(owned);
+
+    expect(collectMaskRects(document.body)).toEqual([]);
+    expect(createRedactionSnapshot(owned).redactionCount).toBe(0);
+  });
+
   it('returns rect for a single masked div', () => {
     const div = withRect(document.createElement('div'), 10, 20, 100, 50);
     div.setAttribute('data-bugdrop-mask', '');

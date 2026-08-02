@@ -1,4 +1,5 @@
 import { withCaptureTimeout } from './capture-timeout';
+import { withBugDropOwnedRootsHidden } from './owned-roots';
 
 type DisplayMediaOptionsWithCurrentTab = DisplayMediaStreamOptions & {
   preferCurrentTab?: boolean;
@@ -15,9 +16,11 @@ declare global {
 }
 
 export function beginViewportCapture(): Promise<string> {
-  if (window.__bugdropMockViewportCapture) {
-    return window.__bugdropMockViewportCapture();
-  }
+  return withBugDropOwnedRootsHidden(beginVisibleViewportCapture);
+}
+
+function beginVisibleViewportCapture(): Promise<string> {
+  if (window.__bugdropMockViewportCapture) return window.__bugdropMockViewportCapture();
 
   if (!navigator.mediaDevices?.getDisplayMedia) {
     return Promise.reject(new Error('Screen Capture API is not available'));
