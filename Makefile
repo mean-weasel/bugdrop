@@ -1,4 +1,4 @@
-.PHONY: dev build build-widget build-all deploy test test-watch test-e2e test-e2e-ui test-e2e-shard test-radix-e2e test-live-radix test-live-cross-browser lint lint-fix format format-check typecheck knip audit check-actions-node24 check-ci-scope check-ci-workflow check-release-workflow check ci clean install install-playwright help
+.PHONY: dev build build-widget build-all deploy test test-release test-release-workflow test-static-assets release-plan-help test-watch test-e2e test-e2e-ui test-e2e-shard test-radix-e2e test-live-radix test-live-cross-browser lint lint-fix format format-check typecheck knip audit check-actions-node24 check-ci-scope check-ci-workflow check-release-workflow check ci clean install install-playwright help
 
 # Development
 dev:
@@ -9,7 +9,7 @@ build:
 	npm run build
 
 build-widget:
-	npm run build:widget
+	BUGDROP_BUILD_MODE="$${BUGDROP_BUILD_MODE:-development}" BUGDROP_DEVELOPMENT_ID="$${BUGDROP_DEVELOPMENT_ID:-local}" npm run build:widget
 
 build-all: build-widget build
 
@@ -19,6 +19,18 @@ deploy: build-all
 # Testing
 test:
 	npm run test
+
+test-release:
+	npm run test:release
+
+test-release-workflow:
+	npm run test:release-workflow
+
+test-static-assets:
+	npm run test:static-assets
+
+release-plan-help:
+	npm run release:plan -- --help
 
 test-watch:
 	npm run test:watch
@@ -96,7 +108,7 @@ check-release-workflow:
 	bash test/release-workflow-contract.test.sh
 
 # Combined Commands
-check: lint format-check typecheck knip audit check-actions-node24 check-ci-scope check-ci-workflow check-release-workflow
+check: test-release lint format-check typecheck knip audit check-actions-node24 check-ci-scope check-ci-workflow check-release-workflow
 	@echo "✓ All checks passed"
 
 ci: check test build-all test-e2e
@@ -104,7 +116,7 @@ ci: check test build-all test-e2e
 
 # Utilities
 clean:
-	rm -rf dist node_modules/.cache playwright-report test-results .wrangler/tmp public/widget*.js public/versions.json
+	rm -rf dist node_modules/.cache playwright-report test-results .wrangler/tmp public/widget*.js public/versions.json public/checksums.sha256 public/static-package.json
 
 install:
 	npm ci
@@ -125,6 +137,10 @@ help:
 	@echo ""
 	@echo "  Testing:"
 	@echo "    make test             - Run unit tests"
+	@echo "    make test-release     - Run deterministic release-planning tests"
+	@echo "    make test-release-workflow - Run manual workflow engine and contract tests"
+	@echo "    make test-static-assets - Run deterministic static-package tests"
+	@echo "    make release-plan-help - Show the read-only release planner interface"
 	@echo "    make test-watch       - Run unit tests in watch mode"
 	@echo "    make test-e2e         - Run E2E tests"
 	@echo "    make test-e2e-ui      - Run E2E tests with UI"

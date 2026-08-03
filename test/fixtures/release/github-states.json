@@ -1,0 +1,50 @@
+{
+  "published": {
+    "refs": [
+      { "tag": "v1.2.0", "sha": "1111111111111111111111111111111111111111" },
+      { "tag": "v1.3.0", "sha": "2222222222222222222222222222222222222222" }
+    ],
+    "releases": [
+      {
+        "tag": "v1.2.0",
+        "targetSha": "1111111111111111111111111111111111111111",
+        "published": true,
+        "draft": false,
+        "prerelease": false,
+        "reachableFromTarget": true
+      },
+      {
+        "tag": "v1.3.0",
+        "targetSha": "2222222222222222222222222222222222222222",
+        "published": true,
+        "draft": false,
+        "prerelease": false,
+        "reachableFromTarget": false
+      }
+    ]
+  },
+  "partial": {
+    "refs": [
+      { "tag": "v1.2.0", "sha": "1111111111111111111111111111111111111111" },
+      { "tag": "v1.2.1", "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+    ],
+    "releases": [
+      {
+        "tag": "v1.2.0",
+        "targetSha": "1111111111111111111111111111111111111111",
+        "published": true,
+        "draft": false,
+        "prerelease": false,
+        "reachableFromTarget": true
+      },
+      {
+        "tag": "v1.2.1",
+        "targetSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "published": false,
+        "draft": true,
+        "prerelease": false,
+        "reachableFromTarget": true
+      }
+    ]
+  }
+}

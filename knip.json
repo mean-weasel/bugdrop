@@ -6,6 +6,7 @@
     "src/widget/public-api.d.ts",
     "scripts/build-widget.js",
     "scripts/github-issue-canary.mjs",
+    "scripts/release/plan.mjs",
     "scripts/verify-legacy-compat.mjs"
   ],
   "project": ["src/**/*.ts", "scripts/**/*.{js,mjs}"],

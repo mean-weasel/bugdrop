@@ -23,11 +23,6 @@ MAX_SCREENSHOT_SIZE_MB = "5"  # Maximum screenshot size in MB
 BUGDROP_BOARD_TENANT_ID = "tenant_mean_weasel"
 BUGDROP_BOARD_APP_ID = "app_mean_weasel_bugdrop_dogfood"
 
-# Production configuration example (uncomment and customize for deployment)
-# [env.production.vars]
-# ENVIRONMENT = "production"
-# ALLOWED_ORIGINS = "https://yourdomain.com,https://app.yourdomain.com"
-
 # Rate limiting KV namespace
 [[kv_namespaces]]
 binding = "RATE_LIMIT"
@@ -56,3 +51,30 @@ MAX_SCREENSHOT_SIZE_MB = "5"
 [[env.preview.kv_namespaces]]
 binding = "RATE_LIMIT"
 id = "cdb88fa95d6348d6ab84037751853d5d"
+
+# Controller-owned production target. The release workflow must still pass
+# BUILD_SHA explicitly and remains frozen until the later operator cutover.
+[env.production]
+name = "bugdrop"
+workers_dev = true
+routes = [
+  { pattern = "bugdrop.dev/board*", zone_name = "bugdrop.dev" },
+  { pattern = "bugdrop.dev/board-dogfood*", zone_name = "bugdrop.dev" },
+  { pattern = "bugdrop.dev/api/bugdrop-board-token*", zone_name = "bugdrop.dev" },
+]
+
+[env.production.assets]
+directory = "public"
+binding = "ASSETS"
+
+[env.production.vars]
+ENVIRONMENT = "production"
+ALLOWED_ORIGINS = "*"
+GITHUB_APP_NAME = "neonwatty-bugdrop"
+MAX_SCREENSHOT_SIZE_MB = "5"
+BUGDROP_BOARD_TENANT_ID = "tenant_mean_weasel"
+BUGDROP_BOARD_APP_ID = "app_mean_weasel_bugdrop_dogfood"
+
+[[env.production.kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "e6454ed79f514ed3a9e24eea99dd6cd3"

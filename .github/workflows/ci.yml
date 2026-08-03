@@ -353,7 +353,7 @@ jobs:
           BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
 
       - name: Build all
-        run: VERSION=$(git describe --tags --abbrev=0) make build-all
+        run: BUGDROP_BUILD_MODE=development BUGDROP_DEVELOPMENT_ID="merge-group-${GITHUB_SHA}" make build-all
 
       - name: Record expected preview widget hash
         run: echo "EXPECTED_WIDGET_SHA256=$(shasum -a 256 public/widget.js | awk '{print $1}')" >> "$GITHUB_ENV"

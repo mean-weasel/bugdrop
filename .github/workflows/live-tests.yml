@@ -6,12 +6,74 @@ on:
       target:
         required: true
         type: string
+      target_sha:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      widget_origin:
+        required: true
+        type: string
+      widget_sha256:
+        required: true
+        type: string
+      manifest_sha256:
+        required: true
+        type: string
+      exact_filename:
+        required: true
+        type: string
+      alias_filenames_json:
+        required: true
+        type: string
+      retained_assets_json:
+        required: true
+        type: string
+    secrets:
+      BUGDROP_CANARY_GITHUB_TOKEN:
+        required: false
+      VERCEL_AUTOMATION_BYPASS_SECRET:
+        required: false
   workflow_dispatch:
     inputs:
       target:
         required: true
-        type: string
+        type: choice
+        options: [preview, production]
         default: preview
+      target_sha:
+        description: Optional exact 40-character build SHA; provide the complete identity set
+        required: false
+        type: string
+      version:
+        description: Optional stable release version
+        required: false
+        type: string
+      widget_origin:
+        description: Optional exact HTTPS widget origin
+        required: false
+        type: string
+      widget_sha256:
+        description: Optional expected widget SHA-256
+        required: false
+        type: string
+      manifest_sha256:
+        description: Optional expected versions.json SHA-256
+        required: false
+        type: string
+      exact_filename:
+        description: Optional exact-version widget filename
+        required: false
+        type: string
+      alias_filenames_json:
+        description: JSON array of expected mutable alias filenames
+        required: false
+        type: string
+      retained_assets_json:
+        description: JSON object of retained exact filenames to SHA-256 values
+        required: false
+        type: string
   schedule:
     - cron: '0 6 * * *'
 
@@ -29,8 +91,6 @@ jobs:
       PLAYWRIGHT_BASE_URL: ${{ (github.event_name == 'schedule' || inputs.target == 'production') && 'https://bugdrop-widget-test.vercel.app' || 'https://bugdrop-widget-test-git-preview-jermwatts-projects.vercel.app' }}
     steps:
       - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
 
       - uses: actions/setup-node@v5
         with:
@@ -43,64 +103,82 @@ jobs:
       - name: Install Playwright
         run: make install-playwright
 
-      - name: Wait for widget deployment
-        run: |
-          if [ "$LIVE_TARGET" = "preview" ]; then
-            WORKER_URL="https://bugdrop-preview.neonwatty.workers.dev/api/health"
-          else
-            WORKER_URL="https://bugdrop.neonwatty.workers.dev/api/health"
-          fi
-          echo "Polling $WORKER_URL until ready..."
-          for i in $(seq 1 30); do
-            if curl -sfo /dev/null "$WORKER_URL"; then
-              echo "$LIVE_TARGET worker ready after $((i * 10))s"
-              exit 0
-            fi
-            echo "Attempt $i/30 — not ready, waiting 10s..."
-            sleep 10
-          done
-          echo "$LIVE_TARGET worker not ready after 300s"
-          exit 1
-
-      - name: Verify test venue is reachable
-        run: |
-          VENUE_URL="${PLAYWRIGHT_BASE_URL}"
-          echo "Checking test venue at $VENUE_URL..."
-          BYPASS_ARGS=()
-          if [ -n "$VERCEL_AUTOMATION_BYPASS_SECRET" ]; then
-            BYPASS_ARGS=(-H "x-vercel-protection-bypass:${VERCEL_AUTOMATION_BYPASS_SECRET}")
-          fi
-          curl -sfo /dev/null "${BYPASS_ARGS[@]}" "$VENUE_URL" || (echo "Test venue unreachable at $VENUE_URL" && exit 1)
-          echo "Test venue reachable"
+      - name: Select explicit widget origin
+        shell: bash
         env:
-          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-
-      - name: Record expected widget asset
+          REQUESTED_WIDGET_ORIGIN: ${{ inputs.widget_origin }}
         run: |
-          if [ "$LIVE_TARGET" = "preview" ]; then
+          if [ -n "$REQUESTED_WIDGET_ORIGIN" ]; then
+            WIDGET_ORIGIN="$REQUESTED_WIDGET_ORIGIN"
+          elif [ "$LIVE_TARGET" = "preview" ]; then
             WIDGET_ORIGIN="https://bugdrop-preview.neonwatty.workers.dev"
           else
             WIDGET_ORIGIN="https://bugdrop.neonwatty.workers.dev"
           fi
-          VERSION=$(git describe --tags --abbrev=0) npm run build:widget
           echo "EXPECTED_WIDGET_ORIGIN=$WIDGET_ORIGIN" >> "$GITHUB_ENV"
-          echo "EXPECTED_WIDGET_SHA256=$(shasum -a 256 public/widget.js | awk '{print $1}')" >> "$GITHUB_ENV"
 
-      - name: Wait for expected widget asset
+      - name: Verify exact plan identity or observe scheduled identity
+        id: live-identity
+        shell: bash
+        env:
+          EXPECTED_TARGET_SHA: ${{ inputs.target_sha }}
+          EXPECTED_VERSION: ${{ inputs.version }}
+          EXPECTED_WIDGET_SHA256: ${{ inputs.widget_sha256 }}
+          EXPECTED_MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+          EXPECTED_EXACT_FILENAME: ${{ inputs.exact_filename }}
+          EXPECTED_ALIAS_FILENAMES: ${{ inputs.alias_filenames_json }}
+          EXPECTED_RETAINED_ASSETS: ${{ inputs.retained_assets_json }}
         run: |
-          WIDGET_URL="$EXPECTED_WIDGET_ORIGIN/widget.js"
-          echo "Waiting for $WIDGET_URL to serve $EXPECTED_WIDGET_SHA256..."
-          for i in $(seq 1 30); do
-            ACTUAL_SHA="$(curl -sSf "$WIDGET_URL" | shasum -a 256 | awk '{print $1}')"
-            if [ "$ACTUAL_SHA" = "$EXPECTED_WIDGET_SHA256" ]; then
-              echo "$LIVE_TARGET widget asset matched after $((i * 5))s"
-              exit 0
+          identity_values=(
+            "$EXPECTED_TARGET_SHA"
+            "$EXPECTED_VERSION"
+            "$EXPECTED_WIDGET_ORIGIN"
+            "$EXPECTED_WIDGET_SHA256"
+            "$EXPECTED_MANIFEST_SHA256"
+            "$EXPECTED_EXACT_FILENAME"
+            "$EXPECTED_ALIAS_FILENAMES"
+            "$EXPECTED_RETAINED_ASSETS"
+          )
+          present=0
+          for value in "${identity_values[@]}"; do
+            if [ -n "$value" ]; then
+              present=$((present + 1))
             fi
-            echo "Attempt $i/30 served $ACTUAL_SHA; waiting 5s..."
-            sleep 5
           done
-          echo "$LIVE_TARGET widget did not serve expected asset $EXPECTED_WIDGET_SHA256"
-          exit 1
+
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            identity_json=$(node scripts/release/verify-live.mjs observe)
+          elif [ "$present" -eq "${#identity_values[@]}" ]; then
+            identity_json=$(node scripts/release/verify-live.mjs verify)
+          else
+            echo 'Non-scheduled live tests require the complete explicit plan identity.' >&2
+            exit 1
+          fi
+
+          widget_sha=$(jq -er '.widgetSha256' <<< "$identity_json")
+          fixture_path="$RUNNER_TEMP/bugdrop-live-widget-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.js"
+          candidate_path="$fixture_path.candidate"
+          curl --max-time 30 -sSf "$EXPECTED_WIDGET_ORIGIN/widget.js" -o "$candidate_path"
+          actual_sha=$(shasum -a 256 "$candidate_path" | awk '{print $1}')
+          if [ "$actual_sha" != "$widget_sha" ]; then
+            echo "Observed widget changed from $widget_sha to $actual_sha before browser tests." >&2
+            exit 1
+          fi
+          mv "$candidate_path" "$fixture_path"
+          echo "EXPECTED_WIDGET_SHA256=$widget_sha" >> "$GITHUB_ENV"
+          echo "EXACT_WIDGET_FIXTURE_PATH=$fixture_path" >> "$GITHUB_ENV"
+          echo "$identity_json"
+
+      - name: Verify test venue is reachable
+        shell: bash
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          bypass_args=()
+          if [ -n "$VERCEL_AUTOMATION_BYPASS_SECRET" ]; then
+            bypass_args=(-H "x-vercel-protection-bypass:${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+          curl -sfo /dev/null "${bypass_args[@]}" "$PLAYWRIGHT_BASE_URL"
 
       - name: Run live E2E tests
         run: npx playwright test --project=chromium-live --workers=1 --retries=0

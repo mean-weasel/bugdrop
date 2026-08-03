@@ -88,6 +88,13 @@ grep -Fq "if: github.event_name == 'merge_group'" <<< "$critical" ||
 grep -Fq 'group: bugdrop-shared-preview' <<< "$critical" || fail 'shared preview lock is missing'
 grep -Fq 'cancel-in-progress: false' <<< "$critical" || fail 'active preview runs may be cancelled'
 grep -Fq 'queue: max' <<< "$critical" || fail 'pending merge groups may be dropped'
+grep -Fq 'BUGDROP_BUILD_MODE=development' <<< "$critical" ||
+  fail 'preview widget build does not declare development mode'
+grep -Fq 'BUGDROP_DEVELOPMENT_ID="merge-group-${GITHUB_SHA}"' <<< "$critical" ||
+  fail 'preview widget build lacks an explicit merge-group identity'
+if grep -Fq 'git describe' <<< "$critical"; then
+  fail 'preview widget identity must not be inferred from repository tags'
+fi
 
 for command in \
   'npx wrangler deploy --env preview' \
@@ -174,6 +181,28 @@ require_literal "$live_workflow" "group: \${{ github.event_name == 'schedule' &&
 require_literal "$live_workflow" "format('bugdrop-live-{0}-{1}', github.workflow, github.run_id)"
 require_literal "$live_workflow" 'cancel-in-progress: false'
 require_literal "$live_workflow" 'queue: max'
+for live_input in \
+  'target_sha:' \
+  'version:' \
+  'widget_origin:' \
+  'widget_sha256:' \
+  'manifest_sha256:' \
+  'exact_filename:' \
+  'alias_filenames_json:' \
+  'retained_assets_json:'; do
+  require_literal "$live_workflow" "$live_input"
+done
+require_literal "$live_workflow" 'node scripts/release/verify-live.mjs verify'
+require_literal "$live_workflow" 'node scripts/release/verify-live.mjs observe'
+require_literal "$live_workflow" 'EXPECTED_TARGET_SHA:'
+require_literal "$live_workflow" 'EXPECTED_VERSION:'
+require_literal "$live_workflow" 'EXPECTED_WIDGET_ORIGIN='
+require_literal "$live_workflow" 'REQUESTED_WIDGET_ORIGIN:'
+require_literal "$live_workflow" 'EXPECTED_WIDGET_SHA256:'
+require_literal "$live_workflow" 'EXACT_WIDGET_FIXTURE_PATH='
+require_literal "$live_workflow" 'Non-scheduled live tests require the complete explicit plan identity.'
+require_literal "$live_workflow" 'curl --max-time 30 -sSf "$EXPECTED_WIDGET_ORIGIN/widget.js"'
+require_absent "$live_workflow" 'git describe'
 require_literal "$live_workflow" "if: always() && github.event_name == 'schedule'"
 require_literal "$live_workflow" 'node scripts/github-issue-canary.mjs sweep'
 [[ $(grep -Fc 'BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}' "$live_workflow") -eq 1 ]] ||
