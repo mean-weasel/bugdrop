@@ -2,31 +2,33 @@
 
 ## Objective
 
-Produce a decision-complete specification and a detailed, verification-driven implementation plan for replacing BugDrop's push-to-main semantic-release/deploy coupling with a controlled weekly manual release process. This is a planning-only tranche: do not modify release workflows, dependencies, product code, GitHub settings, Cloudflare state, tags, or releases.
+Complete the first implementation tranche after the production safety freeze: use the already-open documentation-only planning PR as the post-freeze canary, prove that merging it cannot start a production release, create a fresh worktree from the resulting `main`, and implement the read-only deterministic planning and identity engine from Work Package 1.
+
+This tranche must not wire a production workflow, dispatch the freeze workflow, deploy production, create or modify tags or GitHub Releases, change repository settings, or use production credentials.
 
 ## Original Request
 
-On a fresh worktree off GitHub main, start with a specification for moving away from semantic-release to a weekly release cadence with a manually dispatched GitHub workflow, then convert that specification into a detailed implementation plan using GoalBuddyPrep.
+Move BugDrop away from push-triggered semantic-release toward a controlled weekly manual release process. After approving the specification and detailed implementation plan, begin the migration, merge the production safety freeze through the queue, and prepare the next step.
 
 ## Intake Summary
 
 - Input shape: `existing_plan`
-- Audience: BugDrop maintainers and the engineers who will implement and operate releases.
-- Authority: `requested`
-- Proof type: `artifact`
-- Completion proof: A reviewed release-cadence specification and a reviewed implementation plan exist in this goal's `notes/` directory, resolve the known release-safety decisions, cite current repository evidence, define migration/rollback/verification, and leave product and deployment state unchanged.
-- Goal oracle: A final Judge audit can trace every owner concern and every verified current-system risk to an explicit decision in the specification and a bounded implementation/verification step in the plan.
-- Likely misfire: Producing a generic workflow checklist that changes only the trigger while preserving hidden automatic deployments, branch-selection hazards, incomplete-stack releases, non-idempotent retries, broken pinned assets, or post-publication failure ambiguity.
-- Blind spots considered: Manual dispatch does not by itself prevent incomplete stacks; dispatch permits branch selection; production actions are not atomic across GitHub and Cloudflare; current no-release pushes still deploy; old exact-version assets disappear; `GITHUB_TOKEN` suppresses release-event notification workflows; production lacks a concurrency/environment gate and deployed SHA identity; package/changelog versions are stale.
-- Existing plan facts: Preserve the evidence-backed audit and validate it against the fresh `main` snapshot before writing the specification. The intended sequence is specification first, Judge review second, detailed implementation plan third, and final audit last.
+- Audience: BugDrop maintainers and release implementers.
+- Authority: `approved` for the bounded repository work and canary merge described by this tranche; production and operator cutover remain unauthorized.
+- Proof type: `test` plus GitHub audit evidence.
+- Completion proof: Planning PR #262 merges through the queue as a documentation-only canary with zero production-release runs; a fresh worktree starts from that exact `main`; the Work Package 1 planning/identity engine passes its focused adversarial tests and repository gates; and a final Judge audit maps the result to the approved plan without finding production side effects.
+- Goal oracle: GitHub shows the freeze still active and no production workflow run for the canary merge, while deterministic WP1 tests prove immutable controller/candidate identity, SemVer/frontier modeling, completed/partial-plan handling, canonical identities, and stale revalidation.
+- Likely misfire: Treating the already-observed freeze merge as the required documentation-only canary, implementing only happy-path SemVer calculation, trusting candidate-controlled release code, using mutable or abbreviated SHAs, reading nondeterministic runtime values inside identities, or beginning workflow/deployment wiring before the engine is reviewed.
+- Blind spots considered: PR #262 is still open and must land before its board is available on `main`; WP1 must operate on older main ancestors that lack release helpers; GitHub tags, Releases, drafts, and ancestry can disagree; network uncertainty must fail closed; same-version retries must distinguish complete, partial, changed, and contained plans; production remains intentionally disabled.
+- Existing plan facts: WP0 merged as PR #263 at `57317afd387f057706ca8e36383957a774218bba`. The approved implementation plan requires a documentation-only post-freeze canary before engine work and defines exact WP1 files, cases, verification, rollback, and acceptance-criterion coverage.
 
 ## Goal Oracle
 
-The oracle for this goal is:
+The oracle for this tranche is:
 
-`For every release concern in the original request and prior audit, the approved specification contains an explicit policy/acceptance criterion and the approved implementation plan contains a sequenced work package, exact verification, failure handling, and rollback or deferral; a final audit confirms no release implementation or external mutation occurred.`
+`PR #262 merges through the queue without any Production Release run; the freeze remains dispatch-only and read-only on main; WP1 is implemented from the post-canary main snapshot entirely within its approved scope; all focused adversarial tests and repository gates pass; and a final skeptical audit finds no production or publication side effect.`
 
-The PM must keep comparing task receipts to this oracle. Planning, discovery, or a plausible-looking workflow sketch is not enough. The goal finishes only when a final Judge/PM audit maps receipts and both artifacts back to this oracle and records `full_outcome_complete: true`.
+The PM must test this oracle after the canary, after implementation, and at final audit. A green happy path, local-only proof, an open PR, or a plausible data model is not enough.
 
 ## Goal Kind
 
@@ -34,39 +36,41 @@ The PM must keep comparing task receipts to this oracle. Planning, discovery, or
 
 ## Current Tranche
 
-This is explicitly plan-only. Revalidate the current release architecture and live evidence, write a decision-complete specification, review it skeptically, convert the approved specification into a detailed implementation plan with bounded work packages and verification, and perform a final completeness audit. Stop before implementation or external configuration changes.
+1. Queue and monitor documentation-only planning PR #262 as the required post-freeze canary.
+2. Prove from GitHub Actions and the merge SHA that no production-release workflow started and the freeze remains intact.
+3. Create a fresh WP1 worktree and `codex/` branch from the resulting `origin/main`.
+4. Revalidate the approved WP1 Worker package against that snapshot.
+5. Implement and skeptically review the deterministic planning and identity engine.
+6. Stop after a final tranche audit; Work Packages 2–8 require a later continuation.
 
 ## Non-Negotiable Constraints
 
-- Work only in the fresh worktree and branch created for this planning effort.
-- Do not modify product code, workflows, dependencies, lockfiles, repository settings, GitHub environments, secrets, Cloudflare state, tags, releases, or notifications.
-- Revalidate current facts from the fresh `origin/main` snapshot before treating the earlier audit as authoritative.
-- Treat weekly as an operator cadence and manual dispatch as the release authority unless the specification explicitly presents and resolves a competing scheduled-approval design.
-- Do not claim manual dispatch alone prevents incomplete stacked work; specify an immutable target and a release-readiness control.
-- Preserve preview CI and docs-sync behavior unless the specification explicitly justifies a change.
-- Address idempotency, concurrency, permissions, environment approval, failure ordering, rollback, deployed identity, notifications, release notes, stale package/changelog metadata, and exact-version asset retention.
-- Separate repository changes from GitHub/Cloudflare operator configuration steps in the implementation plan.
-- Every acceptance criterion must have observable verification.
+- Never dispatch `.github/workflows/deploy.yml` merely to prove the freeze.
+- The canary is PR #262 only; it may contain only `docs/goals/weekly-manual-release-cadence/**`.
+- If any production-release run starts for the canary merge, cancel it if possible, preserve evidence, and stop before WP1.
+- Start WP1 from the exact post-canary `origin/main`, not the stale planning or WP0 branches.
+- Keep production disabled. Do not edit release workflows, live-test/Discord workflows, Wrangler configuration, product deployment code, secrets, environments, repository variables, tags, Releases, or Cloudflare state.
+- WP1 may change only the files named by its approved Worker task. Stop if another file is required.
+- Controller and candidate identities must be full immutable main-history SHAs; candidate content must not control credentialed release logic.
+- Identity code must be deterministic and must not read clocks, run IDs, artifact IDs, or ambient environment values directly.
+- Network/API ambiguity must produce a typed non-mutating failure, never an inferred empty state.
+- Preserve the manual read-only production freeze throughout this tranche.
 
 ## Stop Rule
 
-Stop only when a final audit proves the full planning outcome is complete. This goal must not continue into implementation; implementation requires a separate owner-approved goal or request.
+Stop only when a final Judge or PM audit records that the canary proof and WP1 implementation satisfy this tranche's oracle. Do not continue into static assets, deployment, publication, workflow wiring, dependency cleanup, or operator cutover.
 
 ## Slice Sizing
 
-Safe means bounded, explicit, verified, and reversible. It does not mean tiny.
-
-A good task is the largest safe useful planning slice: evidence map, complete specification, complete implementation plan, or final audit. Do not split sections into isolated micro-tasks unless a material uncertainty blocks the larger artifact.
+The documentation canary is a small but mandatory safety gate. WP1 is one coherent Worker slice: schemas, canonical identity, planning/frontier/state modeling, fixtures, tests, and repository integration should be implemented and reviewed together rather than split into helper-sized tasks.
 
 ## Board Health
 
-The PM owns board health. If the board looks stale, misleading, offline, or inconsistent, run the bundled checker:
+The PM owns board health. If the board looks stale, misleading, offline, or inconsistent, run:
 
 ```bash
 node /Users/neonwatty/.codex/plugins/cache/goalbuddy/goalbuddy/0.4.2/skills/goal-prep/scripts/check-goal-state.mjs docs/goals/weekly-manual-release-cadence
 ```
-
-If the local board is running, compare `state.yaml` to the live board API. Repair only GoalBuddy control files during prep.
 
 ## Canonical Board
 
@@ -88,8 +92,8 @@ On every `/goal` continuation:
 
 1. Read this charter and the GoalBuddy execution contract.
 2. Read `state.yaml` and work only on its active task.
-3. Re-check the original request, prior audit facts, constraints, oracle, and likely misfire.
-4. Assign Scout, Judge, Worker, or PM according to the task card.
-5. Record a compact receipt and update the board.
-6. Continue through specification, review, implementation planning, and final audit without entering implementation.
-7. Before stopping, run GoalBuddy's `check-can-stop.mjs` gate.
+3. Re-check the tranche oracle, the approved specification/plan, and the production-freeze boundary.
+4. Assign PM, Judge, or Worker according to the task card; use only one active task.
+5. Record a compact receipt with exact SHAs, commands, checks, and external evidence.
+6. Stop immediately on unexpected production activity or required scope expansion.
+7. Before completion, run GoalBuddy's stop gate and the final audit task.

@@ -7,21 +7,21 @@ goal:
   title: "Weekly Manual Release Cadence"
   slug: "weekly-manual-release-cadence"
   kind: existing_plan
-  tranche: "Planning only: revalidate evidence, produce and review the specification, then produce and review the detailed implementation plan."
-  status: done
+  tranche: "Execution tranche 1: land the documentation-only canary, prove the production freeze, then implement and review Work Package 1 from fresh main."
+  status: active
   oracle:
-    signal: "Every owner concern and verified release risk maps to an explicit specification decision and a bounded implementation-plan step with proof and rollback or deferral."
-    cadence: "after each planning artifact and at final audit"
-    final_proof: "Judge receipt confirms both artifacts are decision-complete, evidence-backed, internally consistent, implementation-ready, and no product or external release state changed."
+    signal: "PR #262 merges with zero Production Release runs, the dispatch-only freeze remains intact, and the deterministic WP1 planning/identity engine passes adversarial tests and final review without production side effects."
+    cadence: "after the canary merge, after WP1 implementation, and at final tranche audit"
+    final_proof: "Judge receipt confirms the GitHub canary audit and WP1 test/review evidence satisfy the approved plan while production remains disabled."
   intake:
-    original_request: "On a fresh worktree off GitHub main, start with a spec for weekly manually dispatched releases, then convert it to a detailed implementation plan using GoalBuddyPrep."
-    interpreted_outcome: "Create an approved specification and implementation-ready plan for a safe weekly manual release system without implementing it."
+    original_request: "After approving the weekly manual release specification and plan and merging the safety freeze, prepare the next step."
+    interpreted_outcome: "Use the planning PR as the post-freeze documentation canary, then implement the approved deterministic planning and identity engine from a fresh post-canary main snapshot."
     input_shape: existing_plan
     audience: "BugDrop maintainers and release implementers"
-    authority: requested
-    proof_type: artifact
-    completion_proof: "Reviewed specification and implementation plan exist under notes/, cover all known risks and decisions, include observable verification and rollback, and leave implementation untouched."
-    likely_misfire: "Change only the Actions trigger or produce a generic plan while leaving automatic deployment, partial-stack, branch, concurrency, idempotency, notification, asset-retention, and failure-ordering hazards unresolved."
+    authority: approved
+    proof_type: test
+    completion_proof: "PR #262 has a merge SHA with no production-release workflow run; WP1 focused tests and repository gates pass from a fresh post-canary main worktree; final review finds no production mutation."
+    likely_misfire: "Skip the documentation-only canary, implement only happy-path SemVer logic, trust mutable/candidate-controlled identity, or begin workflow/deployment wiring before WP1 is proven."
     blind_spots_considered:
       - "Manual dispatch still permits an operator to select a non-main branch unless guarded."
       - "Manual timing does not prove a partially merged stack is release-ready."
@@ -39,6 +39,9 @@ goal:
       - "Discord notification should be invoked explicitly after successful publication rather than assumed from a GITHUB_TOKEN release event."
       - "Exact-version asset retention is a current contract defect that must be repaired or explicitly re-specified."
       - "The planning sequence is evidence validation, specification, specification review, detailed implementation plan, plan review, final audit."
+      - "WP0 merged through the queue as PR #263 at 57317afd387f057706ca8e36383957a774218bba; its full merge-group CI passed and no Production Release run was created."
+      - "PR #262 is documentation-only, open, green, and is the exact post-freeze canary required before WP1."
+      - "WP1 is read-only engine work with an approved file scope and no production workflow, credentials, or Cloudflare mutation."
 
 rules:
   pm_owns_state: true
@@ -46,7 +49,7 @@ rules:
   max_write_workers: 1
   no_implementation_without_worker_or_pm_task: true
   no_completion_without_judge_or_pm_audit: true
-  planning_is_not_completion: false
+  planning_is_not_completion: true
   queued_required_worker_blocks_completion: true
   continuous_until_full_outcome: true
   missing_input_or_credentials_do_not_stop_goal: true
@@ -73,7 +76,7 @@ visual_board:
     url: "http://goalbuddy.localhost:41737/weekly-manual-release-cadence/"
     command: "node /Users/neonwatty/.codex/plugins/cache/goalbuddy/goalbuddy/0.4.2/skills/goal-prep/surfaces/local-goal-board/scripts/local-goal-board.mjs --goal docs/goals/weekly-manual-release-cadence"
 
-active_task: null
+active_task: T016
 
 tasks:
   - id: T001
@@ -925,6 +928,168 @@ tasks:
       required_board_updates:
         - "Mark the planning goal done with no active task."
         - "Use Work Package 0 as the starter scope for a later implementation goal; keep implementation and external mutations out of this goal."
+  - id: T016
+    type: pm
+    assignee: PM
+    status: active
+    reasoning_hint: medium
+    objective: "Land planning PR #262 through the merge queue as the required documentation-only canary, prove no production-release workflow starts, and create the fresh post-canary WP1 worktree."
+    inputs:
+      - "Merged WP0 PR #263 and merge SHA 57317afd387f057706ca8e36383957a774218bba"
+      - "Open documentation-only planning PR #262"
+      - "Approved Work Package 0 exit proof in notes/T004-implementation-plan.md"
+    constraints:
+      - "Before queueing, commit and push only this prep turn's tracked goal.md/state.yaml changes to the existing planning branch; never add .goalbuddy-board/."
+      - "After the push, verify every remote PR #262 path is under docs/goals/weekly-manual-release-cadence/."
+      - "External mutation is limited to updating the goal-only PR #262 branch and enrolling that PR in the merge queue."
+      - "Do not dispatch the Production Release freeze workflow."
+      - "Monitor merge-group CI through merge or a concrete blocker."
+      - "After merge, query the Production Release workflow by merge SHA and require zero runs."
+      - "Verify origin/main still contains the dispatch-only read-only freeze."
+      - "Create /Users/neonwatty/Desktop/bugdrop-weekly-release-engine-wp1 from the exact post-canary origin/main on branch codex/weekly-release-engine-wp1."
+      - "If any production-release run starts, cancel it if possible, preserve evidence, and stop before creating or editing WP1 files."
+    expected_output:
+      - "Goal-only prep commit on PR #262 with generated .goalbuddy-board/ excluded"
+      - "PR #262 merge SHA and successful merge-group run URL"
+      - "GitHub API evidence of zero Production Release runs for the canary merge SHA"
+      - "Direct inspection evidence that main retains workflow_dispatch-only and contents: read"
+      - "Fresh WP1 worktree path, branch, clean status, and exact base SHA"
+      - "Receipt that activates T017 only after every canary gate passes"
+    receipt: null
+  - id: T017
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: high
+    objective: "Revalidate the approved Work Package 1 Worker package against the exact post-canary main snapshot and approve the largest safe bounded implementation slice."
+    inputs:
+      - "T016 canary and fresh-worktree receipt"
+      - "T015 approved planning receipt"
+      - "notes/T002-release-cadence-spec.md"
+      - "notes/T004-implementation-plan.md Work Package 1"
+      - "Fresh WP1 worktree repository guidance and verification inventory"
+    constraints:
+      - "Read-only; do not implement or repair."
+      - "Preserve the approved WP1 boundary and production freeze."
+      - "Try to disprove that controller/candidate identity, tag/Release state, retries, and canonical identities can be implemented in one safe slice."
+      - "Reject any need for workflow wiring, credentials, production state, or files outside the approved scope."
+    expected_output:
+      - "approved | revise | blocked"
+      - "Exact Worker objective, allowed_files, verify, and stop_if"
+      - "Required adversarial fixture matrix mapped to AC-03, AC-04, AC-05, AC-06, AC-10, AC-14 planning cases, AC-26, AC-30, AC-31, and AC-32"
+      - "Any pre-existing red checks distinguished from tranche-owned failures"
+    receipt: null
+  - id: T018
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: medium
+    objective: "Implement the deterministic planning and identity engine defined by Work Package 1 as one coherent, read-only release-engine slice."
+    inputs:
+      - "T017 approved Worker package"
+      - "notes/T002-release-cadence-spec.md"
+      - "notes/T004-implementation-plan.md Work Package 1"
+      - "Fresh post-canary main worktree from T016"
+    constraints:
+      - "Work only in /Users/neonwatty/Desktop/bugdrop-weekly-release-engine-wp1."
+      - "Keep production disabled and do not edit any workflow except the approved .github/release.yml metadata file."
+      - "Use full immutable main-history SHAs and separate controller/candidate provenance."
+      - "Never run candidate release scripts or expose credentials."
+      - "Identity primitives must not read Date.now(), run IDs, artifact IDs, or ambient environment directly."
+      - "Network/API ambiguity must fail closed as a typed non-mutating result."
+      - "Do not add a dependency or modify package-lock.json without stopping for PM/Judge scope review."
+    expected_output:
+      - "Versioned normalized-input, request-plan, release-content, final-plan, audit-envelope, and publication-marker schemas"
+      - "Canonical JSON and SHA-256 identity primitives"
+      - "Immutable ref/controller validation, published-frontier and GitHub tag/Release/draft modeling"
+      - "Complete/partial/conflicting/no-op plan recognition and stale revalidation"
+      - "Explicit patch/minor/major calculation and complete categorized release provenance"
+      - "Adversarial fixtures and tests for every approved WP1 case"
+    allowed_files:
+      - "scripts/release/canonical-json.mjs"
+      - "scripts/release/plan.mjs"
+      - "test/release/canonical-json.test.ts"
+      - "test/release/plan.test.ts"
+      - "test/fixtures/release/"
+      - ".github/release.yml"
+      - "package.json"
+      - "Makefile"
+      - "knip.json"
+    verify:
+      - "npx vitest run test/release/canonical-json.test.ts test/release/plan.test.ts"
+      - "node scripts/release/plan.mjs --help"
+      - "npm run typecheck"
+      - "npm run lint"
+      - "npm run knip"
+      - "bash test/release-workflow-contract.test.sh"
+      - "git diff --check"
+    stop_if:
+      - "Need any file outside allowed_files."
+      - "Need workflow wiring, GitHub write access, production credentials, or Cloudflare state."
+      - "Need a new dependency or package-lock.json change."
+      - "An approved older-main-ancestor, partial-plan, or controller-separation case cannot be modeled without changing the specification."
+      - "Verification fails twice for the same tranche-owned reason."
+    receipt: null
+  - id: T019
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: high
+    objective: "Skeptically review the complete WP1 implementation for deterministic identity, fail-closed state modeling, scope fidelity, and adversarial test completeness."
+    inputs:
+      - "T017 approved package"
+      - "T018 Worker receipt and diff"
+      - "Approved specification and Work Package 1 plan"
+    constraints:
+      - "Read-only; do not repair."
+      - "Try to create identity collisions, mutable-SHA acceptance, tag/Release divergence, partial-plan corruption, nondeterministic output, and stale-winner errors."
+      - "Reject happy-path-only coverage or any hidden dependency on production credentials/state."
+      - "Reject changes outside T018 allowed_files."
+    expected_output:
+      - "approved | rejected"
+      - "Acceptance-criterion and adversarial-case traceability"
+      - "Strongest realistic failure mode and disproof evidence"
+      - "Exact bounded revision package if rejected"
+    receipt: null
+  - id: T020
+    type: pm
+    assignee: PM
+    status: queued
+    reasoning_hint: medium
+    objective: "Run the full tranche verification and prepare a clean, reviewable WP1 handoff without expanding into Work Package 2."
+    inputs:
+      - "T019 approved WP1 review"
+      - "Fresh WP1 worktree and complete diff"
+    constraints:
+      - "Do not implement fixes during this task; any failure returns to a bounded Worker revision."
+      - "Do not begin static assets, retention, deployment, publication, or workflow wiring."
+      - "Do not push or create a partial PR B unless the owner separately requests it; PR B is defined to include Work Packages 1–4."
+    expected_output:
+      - "Focused WP1 verification results"
+      - "Repository-wide gate results with pre-existing findings identified"
+      - "Clean scope/diff inventory and rollback statement"
+      - "Evidence package for T021 final tranche audit"
+    receipt: null
+  - id: T021
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: high
+    objective: "Audit whether the documentation canary and deterministic WP1 engine fully satisfy this execution tranche's oracle."
+    inputs:
+      - "T016 through T020 receipts"
+      - "Approved specification and implementation plan"
+      - "GitHub canary evidence and final WP1 diff/tests"
+    constraints:
+      - "Read-only; do not repair or continue into WP2."
+      - "Reject completion if the canary lacks zero-run proof, the freeze changed, WP1 scope expanded, an approved adversarial case is missing, or any production/publication side effect occurred."
+    expected_output:
+      - "complete | not_complete"
+      - "full_outcome_complete: true | false for this tranche"
+      - "Oracle and acceptance-criterion traceability"
+      - "Strongest realistic failure mode and direct disproof evidence"
+      - "Exact next task if incomplete, or WP2 starter boundary if complete"
+    receipt: null
 checks:
   dirty_fingerprint: unknown
   last_verification:
