@@ -1,0 +1,28 @@
+{
+  "apiComplete": true,
+  "activeDeployments": [
+    {
+      "deploymentId": "deployment-identified",
+      "versionId": "version-identified",
+      "trafficPercent": 100
+    }
+  ],
+  "health": {
+    "status": "ok",
+    "environment": "production",
+    "buildSha": "cccccccccccccccccccccccccccccccccccccccc"
+  },
+  "priorTag": "v1.56.0",
+  "assets": {
+    "widgetSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "manifestSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "aliases": {
+      "widget.js": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "widget.v1.js": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "widget.v1.56.js": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "retained": {
+      "widget.v1.55.0.js": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    }
+  }
+}

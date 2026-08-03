@@ -1,0 +1,15 @@
+[
+  "lightweight-tag",
+  "wrong-tag-target",
+  "wrong-tag-annotation",
+  "tag-object-mismatch",
+  "release-without-tag",
+  "duplicate-release",
+  "wrong-release-marker",
+  "wrong-body-marker",
+  "wrong-full-body",
+  "duplicate-asset",
+  "unexpected-asset",
+  "corrupt-asset",
+  "published-incomplete"
+]

@@ -1,185 +1,134 @@
 name: Discord Release Notification
 
 on:
-  release:
-    types:
-      - published
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      release_plan_identity:
+        required: true
+        type: string
+      automatic:
+        required: false
+        default: true
+        type: boolean
+      message:
+        required: false
+        type: string
+      image_url:
+        required: false
+        type: string
+      mention_user_id:
+        required: false
+        type: string
+      dry_run:
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      DISCORD_RELEASE_WEBHOOK_URL:
+        required: false
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to post, such as v1.49.0
+        description: Published release tag to inspect or retry, such as v1.56.0
         required: true
         type: string
+      release_plan_identity:
+        description: Optional release-plan identity for audit correlation
+        required: false
+        type: string
+      automatic:
+        description: Use automatic deduplication; leave off for an operator-authorized retry
+        required: false
+        default: false
+        type: boolean
       message:
         description: Optional custom message above the release embed
         required: false
         type: string
       image_url:
-        description: Optional public image URL to include in the embed
+        description: Optional public HTTPS image URL
         required: false
         type: string
       mention_user_id:
-        description: Optional Discord user ID allowed for a real mention; use {mention} in message
+        description: Optional Discord user ID allow-listed for {mention}
         required: false
         type: string
       dry_run:
-        description: Print the Discord payload without posting
+        description: Print the payload without posting
         required: false
-        default: false
+        default: true
         type: boolean
 
 permissions:
   contents: read
+
+concurrency:
+  group: discord-release-${{ inputs.release_plan_identity || inputs.tag }}
+  cancel-in-progress: false
+  queue: max
 
 jobs:
   notify-discord:
     name: Notify Discord
     runs-on: ubuntu-latest
     steps:
-      - name: Send release notification
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Compute identity-bound notification key
+        id: identity
         env:
+          BUGDROP_NOTIFICATION_AUTOMATIC: ${{ inputs.automatic }}
+          BUGDROP_NOTIFICATION_DRY_RUN: ${{ inputs.dry_run }}
+          BUGDROP_NOTIFICATION_IMAGE_URL: ${{ inputs.image_url }}
+          BUGDROP_NOTIFICATION_MENTION_USER_ID: ${{ inputs.mention_user_id }}
+          BUGDROP_NOTIFICATION_MESSAGE: ${{ inputs.message }}
+          BUGDROP_RELEASE_PLAN_IDENTITY: ${{ inputs.release_plan_identity }}
+          BUGDROP_RELEASE_TAG: ${{ inputs.tag }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/discord-release.mjs key >> "$GITHUB_OUTPUT"
+
+      - name: Restore successful automatic notification marker
+        if: inputs.automatic && !inputs.dry_run
+        id: dedupe
+        uses: actions/cache/restore@v5
+        with:
+          path: .discord-release-dedup/${{ steps.identity.outputs.notification_key }}
+          key: discord-release-${{ steps.identity.outputs.notification_key }}
+
+      - name: Send, retry, inspect, or skip notification
+        if: steps.dedupe.outputs.cache-hit != 'true' || !inputs.automatic || inputs.dry_run
+        env:
+          BUGDROP_NOTIFICATION_ALREADY_SENT: ${{ steps.dedupe.outputs.cache-hit }}
+          BUGDROP_NOTIFICATION_AUTOMATIC: ${{ inputs.automatic }}
+          BUGDROP_NOTIFICATION_DRY_RUN: ${{ inputs.dry_run }}
+          BUGDROP_NOTIFICATION_IMAGE_URL: ${{ inputs.image_url }}
+          BUGDROP_NOTIFICATION_MENTION_USER_ID: ${{ inputs.mention_user_id }}
+          BUGDROP_NOTIFICATION_MESSAGE: ${{ inputs.message }}
+          BUGDROP_RELEASE_PLAN_IDENTITY: ${{ inputs.release_plan_identity }}
+          BUGDROP_RELEASE_TAG: ${{ inputs.tag }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/discord-release.mjs notify
+
+      - name: Record successful automatic notification
+        if: inputs.automatic && !inputs.dry_run && steps.dedupe.outputs.cache-hit != 'true'
+        shell: bash
         run: |
-          node <<'NODE'
-          const fs = require('node:fs');
+          marker_dir=".discord-release-dedup/${{ steps.identity.outputs.notification_key }}"
+          mkdir -p "$marker_dir"
+          echo "${{ inputs.tag }}" > "$marker_dir/tag"
 
-          const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
-          const repository = process.env.GITHUB_REPOSITORY;
-          const inputs = event.inputs || {};
-          const isManualRun = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch';
-
-          async function fetchReleaseByTag(tag) {
-            const headers = {
-              Accept: 'application/vnd.github+json',
-              'User-Agent': 'bugdrop-discord-release-workflow',
-            };
-
-            if (process.env.GITHUB_TOKEN) {
-              headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-            }
-
-            const response = await fetch(
-              `https://api.github.com/repos/${repository}/releases/tags/${encodeURIComponent(tag)}`,
-              { headers },
-            );
-
-            if (!response.ok) {
-              const responseBody = await response.text();
-              throw new Error(
-                `GitHub release lookup failed for ${tag} with ${response.status}: ${responseBody}`,
-              );
-            }
-
-            return response.json();
-          }
-
-          async function getRelease() {
-            if (!isManualRun) {
-              return event.release;
-            }
-
-            const tag = (inputs.tag || '').trim();
-            if (!tag) {
-              throw new Error('Manual runs require a release tag.');
-            }
-
-            return fetchReleaseByTag(tag);
-          }
-
-          function buildPayload(release) {
-            const releaseName = release.name || release.tag_name;
-            const body = (release.body || '').trim();
-            const maxDescriptionLength = 3500;
-            const description =
-              body.length > maxDescriptionLength
-                ? `${body.slice(0, maxDescriptionLength - 20).trimEnd()}...`
-                : body || 'Release notes are available on GitHub.';
-            const imageUrl = (inputs.image_url || '').trim();
-            const mentionUserId = (inputs.mention_user_id || '').trim();
-            const mentionText = mentionUserId ? `<@${mentionUserId}>` : '';
-            const content =
-              ((inputs.message || '').trim() || `BugDrop ${release.tag_name} is out.`).replaceAll(
-                '{mention}',
-                mentionText,
-              );
-
-            const embed = {
-              title: releaseName,
-              url: release.html_url,
-              description,
-              color: 0x238636,
-              fields: [
-                {
-                  name: 'Repository',
-                  value: repository,
-                  inline: true,
-                },
-                {
-                  name: 'Tag',
-                  value: `\`${release.tag_name}\``,
-                  inline: true,
-                },
-              ],
-              footer: {
-                text: `Published by ${release.author?.login || 'GitHub'}`,
-              },
-              timestamp: release.published_at,
-            };
-
-            if (imageUrl) {
-              embed.image = {
-                url: imageUrl,
-              };
-            }
-
-            return {
-              username: 'GitHub Releases',
-              allowed_mentions: {
-                parse: [],
-                users: mentionUserId ? [mentionUserId] : [],
-              },
-              content,
-              embeds: [embed],
-            };
-          }
-
-          function isDryRun() {
-            return String(inputs.dry_run || '').toLowerCase() === 'true';
-          }
-
-          async function main() {
-            const release = await getRelease();
-            const payload = buildPayload(release);
-
-            if (isDryRun()) {
-              console.log(JSON.stringify(payload, null, 2));
-              return;
-            }
-
-            if (!process.env.DISCORD_WEBHOOK_URL) {
-              console.log('DISCORD_RELEASE_WEBHOOK_URL is not set; skipping Discord notification.');
-              return;
-            }
-
-            const response = await fetch(process.env.DISCORD_WEBHOOK_URL, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify(payload),
-            });
-
-            if (!response.ok) {
-              const responseBody = await response.text();
-              throw new Error(
-                `Discord webhook failed with ${response.status}: ${responseBody}`,
-              );
-            }
-          }
-
-          main().catch((error) => {
-            console.error(error.message);
-            process.exit(1);
-          });
-          NODE
+      - name: Save successful automatic notification marker
+        if: inputs.automatic && !inputs.dry_run && steps.dedupe.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: .discord-release-dedup/${{ steps.identity.outputs.notification_key }}
+          key: discord-release-${{ steps.identity.outputs.notification_key }}

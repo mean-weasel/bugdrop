@@ -1,21 +1,759 @@
-name: Production Release (Migration Freeze)
-
-# Automatic production releases are intentionally frozen while the guarded
-# weekly manual release workflow is implemented. This workflow is a visible,
-# read-only placeholder: dispatching it cannot publish or deploy anything.
+name: Production Release
 
 on:
   workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact 40-character lowercase commit SHA from main
+        required: true
+        type: string
+      bump:
+        description: Explicit semantic version increment
+        required: true
+        type: choice
+        options: [patch, minor, major]
+      release_reason:
+        description: Normal weekly window or emergency release
+        required: true
+        type: choice
+        options: [weekly, emergency]
+      rationale:
+        description: Required for emergency releases
+        required: false
+        type: string
+      operator_notes:
+        description: Optional bounded notes appended to generated provenance
+        required: false
+        type: string
+      dry_run:
+        description: Verify and assemble immutable artifacts without production access
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
 
+concurrency:
+  group: bugdrop-production-release
+  cancel-in-progress: false
+  queue: max
+
 jobs:
-  release-migration-freeze:
-    name: Production release migration is frozen
+  guard-and-plan:
+    name: Guard immutable request and plan
+    runs-on: ubuntu-latest
+    outputs:
+      completed: ${{ steps.plan.outputs.completed }}
+      controller_sha: ${{ steps.guard.outputs.controller_sha }}
+      plan_identity: ${{ steps.plan.outputs.plan_identity }}
+      request_key: ${{ steps.plan.outputs.request_key }}
+      request_identity: ${{ steps.plan.outputs.request_identity }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - name: Reject non-main or malformed dispatch before checkout
+        id: guard
+        shell: bash
+        env:
+          CONTROLLER_SHA: ${{ github.workflow_sha }}
+          DISPATCH_REF: ${{ github.ref }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          test "$DISPATCH_REF" = 'refs/heads/main' || {
+            echo 'Production releases must be dispatched from main.' >&2
+            exit 1
+          }
+          [[ "$CONTROLLER_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo 'github.workflow_sha is not an immutable full SHA.' >&2
+            exit 1
+          }
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo 'target_sha must be exactly 40 lowercase hexadecimal characters.' >&2
+            exit 1
+          }
+          echo "controller_sha=$CONTROLLER_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout immutable controller
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.guard.outputs.controller_sha }}
+          path: controller
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: controller/package-lock.json
+
+      - name: Install controller without lifecycle scripts
+        working-directory: controller
+        run: npm ci --ignore-scripts
+
+      - name: Build authenticated request plan
+        id: plan
+        shell: bash
+        env:
+          BUGDROP_GITHUB_TOKEN: ${{ github.token }}
+          BUMP: ${{ inputs.bump }}
+          CONTROLLER_SHA: ${{ steps.guard.outputs.controller_sha }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          OPERATOR_NOTES: ${{ inputs.operator_notes }}
+          RATIONALE: ${{ inputs.rationale }}
+          RELEASE_REASON: ${{ inputs.release_reason }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          jq -n \
+            --arg repositoryDir "$GITHUB_WORKSPACE/controller" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg workflowRef '.github/workflows/deploy.yml@refs/heads/main' \
+            --arg targetSha "$TARGET_SHA" \
+            --arg controllerSha "$CONTROLLER_SHA" \
+            --arg bump "$BUMP" \
+            --arg releaseReason "$RELEASE_REASON" \
+            --arg rationale "$RATIONALE" \
+            --arg operatorNotes "$OPERATOR_NOTES" \
+            --argjson dryRun "$DRY_RUN" \
+            '{$repositoryDir, dispatch: {$repository, $workflowRef, $targetSha, $controllerSha, $bump, $releaseReason, $rationale, $operatorNotes, $dryRun}}' \
+            > request-context.json
+          node controller/scripts/release/workflow.mjs guard request-context.json > guard.json
+          node controller/scripts/release/github-adapter.mjs plan request-context.json > request-plan.json
+          if [ "$(jq -r '.status // "planned"' request-plan.json)" = 'completed' ]; then
+            {
+              echo 'completed=true'
+              echo "request_identity=$(jq -er '.planIdentity' request-plan.json)"
+              echo "request_key=$(jq -er '.planIdentity | ltrimstr(\"sha256:\")' request-plan.json)"
+              echo "plan_identity=$(jq -er '.planIdentity' request-plan.json)"
+              echo "version=$(jq -er '.tag | ltrimstr(\"v\")' request-plan.json)"
+            } >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo 'completed=false'
+              echo "request_identity=$(jq -er '.requestIdentity' request-plan.json)"
+              echo "request_key=$(jq -er '.requestIdentity | ltrimstr(\"sha256:\")' request-plan.json)"
+              echo "version=$(jq -er '.request.nextTag | ltrimstr(\"v\")' request-plan.json)"
+            } >> "$GITHUB_OUTPUT"
+            jq -r '"### Request plan `\(.requestIdentity)`\n\nTarget: `\(.request.targetSha)`  \nVersion: `\(.request.nextTag)`"' request-plan.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload immutable request plan
+        uses: actions/upload-artifact@v5
+        with:
+          name: request-plan-${{ steps.plan.outputs.request_key }}
+          path: |
+            request-context.json
+            request-plan.json
+          if-no-files-found: error
+          retention-days: 14
+
+  verify-candidate:
+    name: Verify candidate and finalize State 2
+    needs: guard-and-plan
+    if: needs.guard-and-plan.outputs.completed != 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      plan_identity: ${{ steps.bundle.outputs.plan_identity }}
+      plan_key: ${{ steps.bundle.outputs.plan_key }}
+      tag: ${{ steps.bundle.outputs.tag }}
+    steps:
+      - name: Checkout immutable controller
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
+          path: controller
+          persist-credentials: false
+
+      - name: Checkout immutable candidate
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.target_sha }}
+          path: candidate
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install controller toolchain without lifecycle scripts
+        working-directory: controller
+        run: npm ci --ignore-scripts
+
+      - name: Verify candidate without credentials
+        working-directory: candidate
+        run: |
+          npm ci --ignore-scripts
+          npm run validate
+          npm run build
+
+      - name: Download authenticated request plan
+        uses: actions/download-artifact@v5
+        with:
+          name: request-plan-${{ needs.guard-and-plan.outputs.request_key }}
+          path: request
+
+      - name: Build static release package once with controller tooling
+        shell: bash
+        run: >-
+          node controller/scripts/build-widget.js
+          --mode release
+          --source-dir candidate
+          --output-dir "$RUNNER_TEMP/static-package"
+          --version '${{ needs.guard-and-plan.outputs.version }}'
+          --timestamp "$(git -C candidate show -s --format=%cI '${{ inputs.target_sha }}' | sed 's/+00:00/Z/')"
+          --target-sha '${{ inputs.target_sha }}'
+          --repository "$GITHUB_REPOSITORY"
+          --cutover-version '${{ needs.guard-and-plan.outputs.version }}'
+
+      - name: Finalize canonical State 2 bundle
+        id: bundle
+        shell: bash
+        run: |
+          exact_name='widget.v${{ needs.guard-and-plan.outputs.version }}.js'
+          worker_digest=$(git -C candidate archive '${{ inputs.target_sha }}' src | sha256sum | awk '{print $1}')
+          lock_digest=$(sha256sum candidate/package-lock.json | awk '{print $1}')
+          config_digest=$(sha256sum controller/wrangler.toml | awk '{print $1}')
+          esbuild_version=$(node -p "require('./controller/node_modules/esbuild/package.json').version")
+          wrangler_version=$(node -p "require('./controller/node_modules/wrangler/package.json').version")
+          jq -n \
+            --slurpfile requestPlan request/request-plan.json \
+            --arg name "$exact_name" \
+            --arg base64 "$(base64 -w 0 "$RUNNER_TEMP/static-package/$exact_name")" \
+            --arg versionsBase64 "$(base64 -w 0 "$RUNNER_TEMP/static-package/versions.json")" \
+            --arg worker "$worker_digest" \
+            --arg lockfile "$lock_digest" \
+            --arg esbuild "$esbuild_version" \
+            --arg wrangler "$wrangler_version" \
+            --arg config "$config_digest" \
+            '{$requestPlan: $requestPlan[0], candidateAssets: {($name): {$base64}, "versions.json": {base64: $versionsBase64}}, sourceDigests: {$worker, $lockfile}, toolchain: {$esbuild, $wrangler}, deploymentConfigDigest: $config, verification: {contract: "release-verification/v1", result: "passed"}}' \
+            > bundle-input.json
+          node controller/scripts/release/workflow.mjs bundle bundle-input.json > state2-bundle.json
+          {
+            echo "plan_identity=$(jq -er '.finalPlan.planIdentity' state2-bundle.json)"
+            echo "plan_key=$(jq -er '.finalPlan.planIdentity | ltrimstr(\"sha256:\")' state2-bundle.json)"
+            echo "tag=$(jq -er '.finalPlan.tag' state2-bundle.json)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable candidate and State 2 evidence
+        id: upload
+        uses: actions/upload-artifact@v5
+        with:
+          name: release-plan-${{ steps.bundle.outputs.plan_key }}
+          path: |
+            state2-bundle.json
+            ${{ runner.temp }}/static-package/
+          if-no-files-found: error
+          retention-days: 14
+
+  dry-run-summary:
+    name: Complete mutation-free dry run
+    if: inputs.dry_run && needs.guard-and-plan.outputs.completed != 'true'
+    needs: [guard-and-plan, verify-candidate]
     runs-on: ubuntu-latest
     steps:
-      - name: Explain the production freeze
+      - name: Checkout immutable controller
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
+          path: controller
+          persist-credentials: false
+
+      - name: Download exact State 2 artifact
+        uses: actions/download-artifact@v5
+        with:
+          artifact-ids: ${{ needs.verify-candidate.outputs.artifact_id }}
+          path: approved
+
+      - name: Revalidate the canonical dry-run handoff
+        shell: bash
+        env:
+          ARTIFACT_ID: ${{ needs.verify-candidate.outputs.artifact_id }}
+          CONTROLLER_SHA: ${{ needs.guard-and-plan.outputs.controller_sha }}
         run: |
-          echo "::notice title=Production release frozen::Automatic production releases are disabled while the guarded weekly manual release workflow is implemented."
-          echo "No tag, GitHub Release, Cloudflare deployment, live production test, or Discord notification was performed."
+          jq -n \
+            --slurpfile bundle approved/state2-bundle.json \
+            --arg artifactId "$ARTIFACT_ID" \
+            --arg controllerSha "$CONTROLLER_SHA" \
+            '{context: {eventName: "workflow_dispatch", ref: "refs/heads/main", workflowSha: $controllerSha, candidateReachableFromMain: true, dispatch: ($bundle[0].requestPlan.request + {controllerSha: $controllerSha, dryRun: true})}, bundle: $bundle[0], artifact: {artifactId: $artifactId, available: true, planIdentity: $bundle[0].finalPlan.planIdentity, contentIdentity: $bundle[0].releaseContent.contentIdentity, requestIdentity: $bundle[0].requestPlan.requestIdentity, verifiedAssetNames: $bundle[0].finalPlan.requiredAssets}, completed: {kind: "none"}, productionEnabled: false}' \
+            > state2-input.json
+          node controller/scripts/release/workflow.mjs state2 state2-input.json > state2-decision.json
+          test "$(jq -er '.status' state2-decision.json)" = 'dry-run-complete'
+
+      - name: Report verified State 2
+        env:
+          PLAN_IDENTITY: ${{ needs.verify-candidate.outputs.plan_identity }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+          TAG: ${{ needs.verify-candidate.outputs.tag }}
+        run: |
+          {
+            echo "### Dry run complete — State 2"
+            echo "Plan: \`$PLAN_IDENTITY\`  "
+            echo "Candidate: \`$TARGET_SHA\`  "
+            echo "Release: \`$TAG\`"
+            echo 'No production environment, secret, deployment, tag, Release, or notification was accessed.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  completed-summary:
+    name: Report authenticated completed-plan no-op
+    if: needs.guard-and-plan.outputs.completed == 'true'
+    needs: guard-and-plan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report core no-op without notification
+        env:
+          PLAN_IDENTITY: ${{ needs.guard-and-plan.outputs.plan_identity }}
+        run: |
+          {
+            echo "### Exact completed plan — core no-op"
+            echo "Plan: \`$PLAN_IDENTITY\`"
+            echo 'No build, approval, production environment, mutation, or automatic notification was performed.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  capability-gate:
+    name: Require explicit operator capability proof
+    if: ${{ !inputs.dry_run && needs.guard-and-plan.outputs.completed != 'true' }}
+    needs: [guard-and-plan, verify-candidate]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail closed unless both external gates are enabled
+        env:
+          CAPABILITY_VALIDATED: ${{ vars.RELEASE_CLOUDFLARE_CAPABILITY_VALIDATED }}
+          PRODUCTION_ENABLED: ${{ vars.RELEASE_PRODUCTION_ENABLED }}
+        run: |
+          test "$PRODUCTION_ENABLED" = 'true' || {
+            echo 'RELEASE_PRODUCTION_ENABLED is not true; production remains disabled.' >&2
+            exit 1
+          }
+          test "$CAPABILITY_VALIDATED" = 'true' || {
+            echo 'RELEASE_CLOUDFLARE_CAPABILITY_VALIDATED is not true; WP7 proof is required.' >&2
+            exit 1
+          }
+
+  approval-baseline:
+    name: Approve, revalidate, and capture exact baseline
+    if: ${{ !inputs.dry_run && needs.guard-and-plan.outputs.completed != 'true' }}
+    needs: [guard-and-plan, verify-candidate, capability-gate]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      proceed: ${{ steps.revalidate.outputs.proceed }}
+      alias_filenames_json: ${{ steps.expected.outputs.alias_filenames_json }}
+      exact_filename: ${{ steps.expected.outputs.exact_filename }}
+      manifest_sha256: ${{ steps.expected.outputs.manifest_sha256 }}
+      retained_assets_json: ${{ steps.expected.outputs.retained_assets_json }}
+      widget_origin: ${{ steps.expected.outputs.widget_origin }}
+      widget_sha256: ${{ steps.expected.outputs.widget_sha256 }}
+    steps:
+      - name: Checkout immutable controller
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
+          path: controller
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Checkout immutable candidate source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.target_sha }}
+          path: candidate
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install immutable controller and candidate dependencies
+        run: |
+          npm --prefix controller ci --ignore-scripts
+          npm --prefix candidate ci --ignore-scripts
+
+      - name: Download exact approved State 2 artifact
+        uses: actions/download-artifact@v5
+        with:
+          artifact-ids: ${{ needs.verify-candidate.outputs.artifact_id }}
+          path: approved
+
+      - name: Revalidate exact plan after protected approval
+        id: revalidate
+        shell: bash
+        env:
+          BUGDROP_GITHUB_TOKEN: ${{ github.token }}
+          BUMP: ${{ inputs.bump }}
+          CONTROLLER_SHA: ${{ needs.guard-and-plan.outputs.controller_sha }}
+          OPERATOR_NOTES: ${{ inputs.operator_notes }}
+          RATIONALE: ${{ inputs.rationale }}
+          RELEASE_REASON: ${{ inputs.release_reason }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          jq -n \
+            --arg repositoryDir "$GITHUB_WORKSPACE/controller" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg workflowRef '.github/workflows/deploy.yml@refs/heads/main' \
+            --arg targetSha "$TARGET_SHA" \
+            --arg controllerSha "$CONTROLLER_SHA" \
+            --arg bump "$BUMP" \
+            --arg releaseReason "$RELEASE_REASON" \
+            --arg rationale "$RATIONALE" \
+            --arg operatorNotes "$OPERATOR_NOTES" \
+            '{repositoryDir: $repositoryDir, dispatch: {$repository, $workflowRef, $targetSha, $controllerSha, $bump, $releaseReason, $rationale, $operatorNotes, dryRun: false}}' \
+            > revalidation-context.json
+          node controller/scripts/release/github-adapter.mjs plan revalidation-context.json > revalidated-plan.json
+          expected_plan=$(jq -er '.finalPlan.planIdentity' approved/state2-bundle.json)
+          expected_request=$(jq -er '.requestPlan.requestIdentity' approved/state2-bundle.json)
+          if [ "$(jq -r '.status // "planned"' revalidated-plan.json)" = 'completed' ]; then
+            test "$(jq -er '.planIdentity' revalidated-plan.json)" = "$expected_plan"
+            completed='{"kind":"completed","planIdentity":"'"$expected_plan"'"}'
+          else
+            test "$(jq -er '.requestIdentity' revalidated-plan.json)" = "$expected_request"
+            completed='{"kind":"none"}'
+          fi
+          jq -n \
+            --slurpfile bundle approved/state2-bundle.json \
+            --arg artifactId '${{ needs.verify-candidate.outputs.artifact_id }}' \
+            --arg controllerSha "$CONTROLLER_SHA" \
+            --argjson completed "$completed" \
+            '{context: {eventName: "workflow_dispatch", ref: "refs/heads/main", workflowSha: $controllerSha, candidateReachableFromMain: true, dispatch: ($bundle[0].requestPlan.request + {workflowRef: ".github/workflows/deploy.yml@refs/heads/main", controllerSha: $controllerSha, dryRun: false})}, bundle: $bundle[0], artifact: {artifactId: $artifactId, available: true, planIdentity: $bundle[0].finalPlan.planIdentity, contentIdentity: $bundle[0].releaseContent.contentIdentity, requestIdentity: $bundle[0].requestPlan.requestIdentity, verifiedAssetNames: $bundle[0].finalPlan.requiredAssets}, completed: $completed, productionEnabled: true}' \
+            > state2-live-input.json
+          node controller/scripts/release/workflow.mjs state2 state2-live-input.json > state2-live.json
+          if [ "$(jq -er '.status' state2-live.json)" = 'core-noop' ]; then
+            echo 'proceed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          test "$(jq -er '.status' state2-live.json)" = 'approval-required'
+          jq -n \
+            --slurpfile state2 state2-live.json \
+            --arg planIdentity "$expected_plan" \
+            '{state2: $state2[0], productionEnabled: true, capabilityValidated: true, approval: {status: "approved", planIdentity: $planIdentity}, revalidation: {kind: "current", planIdentity: $planIdentity}}' \
+            > authorization-input.json
+          node controller/scripts/release/workflow.mjs authorize authorization-input.json > authorization.json
+          test "$(jq -er '.status' authorization.json)" = 'mutation-authorized'
+          echo 'proceed=true' >> "$GITHUB_OUTPUT"
+
+      - name: Derive authenticated live identity
+        if: steps.revalidate.outputs.proceed == 'true'
+        id: expected
+        shell: bash
+        run: |
+          jq -n \
+            --arg bundlePath "$GITHUB_WORKSPACE/approved/state2-bundle.json" \
+            --arg origin 'https://bugdrop.neonwatty.workers.dev' \
+            --arg staticPackageDir "$GITHUB_WORKSPACE/approved/static-package" \
+            '{$bundlePath, $origin, $staticPackageDir}' > expected-input.json
+          node controller/scripts/release/live-release.mjs expected expected-input.json > expected.json
+          {
+            echo "alias_filenames_json=$(jq -c '.aliasFilenames' expected.json)"
+            echo "exact_filename=$(jq -er '.exactFilename' expected.json)"
+            echo "manifest_sha256=$(jq -er '.manifestSha256' expected.json)"
+            echo "retained_assets_json=$(jq -c '.retainedAssets' expected.json)"
+            echo "widget_origin=$(jq -er '.origin' expected.json)"
+            echo "widget_sha256=$(jq -er '.widgetSha256' expected.json)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Capture exact production baseline before mutation
+        if: steps.revalidate.outputs.proceed == 'true'
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          jq -n \
+            --arg controllerRoot "$GITHUB_WORKSPACE/controller" \
+            --arg candidateRoot "$GITHUB_WORKSPACE/candidate" \
+            --arg controllerConfig "$GITHUB_WORKSPACE/controller/wrangler.toml" \
+            --arg controllerLock "$GITHUB_WORKSPACE/controller/package-lock.json" \
+            --arg candidateEntrypoint "$GITHUB_WORKSPACE/candidate/src/index.ts" \
+            --arg candidateAssets "$GITHUB_WORKSPACE/approved/static-package" \
+            --arg targetSha '${{ inputs.target_sha }}' \
+            --arg expectedPath "$GITHUB_WORKSPACE/expected.json" \
+            '{$controllerRoot, $candidateRoot, $controllerConfig, $controllerLock, $candidateEntrypoint, $candidateAssets, $targetSha, $expectedPath}' \
+            > baseline-input.json
+          node controller/scripts/release/live-release.mjs baseline baseline-input.json > baseline.json
+          test "$(jq -er '.status' baseline.json)" = 'baseline-captured'
+
+      - name: Upload exact approval and baseline evidence
+        if: steps.revalidate.outputs.proceed == 'true'
+        id: upload
+        uses: actions/upload-artifact@v5
+        with:
+          name: release-baseline-${{ needs.verify-candidate.outputs.plan_key }}
+          path: |
+            authorization.json
+            baseline.json
+            expected.json
+          if-no-files-found: error
+          retention-days: 14
+
+  deploy-candidate:
+    name: Deploy and authoritatively reconcile candidate
+    if: ${{ needs.approval-baseline.outputs.proceed == 'true' }}
+    needs: [guard-and-plan, verify-candidate, approval-baseline]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - name: Checkout immutable controller
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
+          path: controller
+          persist-credentials: false
+
+      - name: Checkout immutable candidate source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.target_sha }}
+          path: candidate
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install immutable controller and candidate dependencies
+        run: |
+          npm --prefix controller ci --ignore-scripts
+          npm --prefix candidate ci --ignore-scripts
+
+      - name: Download exact State 2 and approved baseline artifacts
+        uses: actions/download-artifact@v5
+        with:
+          artifact-ids: ${{ needs.verify-candidate.outputs.artifact_id }},${{ needs.approval-baseline.outputs.artifact_id }}
+          path: release-state
+          merge-multiple: true
+
+      - name: Deploy once and reconcile every command outcome
+        id: deploy
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          jq -n \
+            --arg controllerRoot "$GITHUB_WORKSPACE/controller" \
+            --arg candidateRoot "$GITHUB_WORKSPACE/candidate" \
+            --arg controllerConfig "$GITHUB_WORKSPACE/controller/wrangler.toml" \
+            --arg controllerLock "$GITHUB_WORKSPACE/controller/package-lock.json" \
+            --arg candidateEntrypoint "$GITHUB_WORKSPACE/candidate/src/index.ts" \
+            --arg candidateAssets "$GITHUB_WORKSPACE/release-state/static-package" \
+            --arg targetSha '${{ inputs.target_sha }}' \
+            --arg expectedPath "$GITHUB_WORKSPACE/release-state/expected.json" \
+            --arg authorizationPath "$GITHUB_WORKSPACE/release-state/authorization.json" \
+            --arg baselinePath "$GITHUB_WORKSPACE/release-state/baseline.json" \
+            '{$controllerRoot, $candidateRoot, $controllerConfig, $controllerLock, $candidateEntrypoint, $candidateAssets, $targetSha, $expectedPath, $authorizationPath, $baselinePath}' \
+            > deploy-input.json
+          node controller/scripts/release/live-release.mjs deploy deploy-input.json > deployment.json
+          echo "status=$(jq -er '.status' deployment.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload authoritative deployment outcome
+        if: always()
+        id: upload
+        uses: actions/upload-artifact@v5
+        with:
+          name: release-deployment-${{ needs.verify-candidate.outputs.plan_key }}
+          path: deployment.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Require exact candidate deployment
+        run: test '${{ steps.deploy.outputs.status }}' = 'candidate-active'
+
+  live-e2e:
+    name: Verify production behavior before publication
+    needs: [guard-and-plan, verify-candidate, approval-baseline, deploy-candidate]
+    uses: ./.github/workflows/live-tests.yml
+    with:
+      target: production
+      target_sha: ${{ inputs.target_sha }}
+      version: ${{ needs.guard-and-plan.outputs.version }}
+      widget_origin: ${{ needs.approval-baseline.outputs.widget_origin }}
+      widget_sha256: ${{ needs.approval-baseline.outputs.widget_sha256 }}
+      manifest_sha256: ${{ needs.approval-baseline.outputs.manifest_sha256 }}
+      exact_filename: ${{ needs.approval-baseline.outputs.exact_filename }}
+      alias_filenames_json: ${{ needs.approval-baseline.outputs.alias_filenames_json }}
+      retained_assets_json: ${{ needs.approval-baseline.outputs.retained_assets_json }}
+    secrets:
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+  publish-release:
+    name: Publish exact authenticated GitHub Release
+    needs: [guard-and-plan, verify-candidate, approval-baseline, deploy-candidate, live-e2e]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: write
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      notify: ${{ steps.publish.outputs.notify }}
+    steps:
+      - name: Checkout immutable controller
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
+          path: controller
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install immutable controller without lifecycle scripts
+        run: npm --prefix controller ci --ignore-scripts
+
+      - name: Download exact State 2 and approved authorization
+        uses: actions/download-artifact@v5
+        with:
+          artifact-ids: ${{ needs.verify-candidate.outputs.artifact_id }},${{ needs.approval-baseline.outputs.artifact_id }}
+          path: release-state
+          merge-multiple: true
+
+      - name: Resume exact publication through authoritative inspection
+        id: publish
+        shell: bash
+        env:
+          BUGDROP_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          jq -n \
+            --arg bundlePath "$GITHUB_WORKSPACE/release-state/state2-bundle.json" \
+            --arg authorizationPath "$GITHUB_WORKSPACE/release-state/authorization.json" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            '{$bundlePath, $authorizationPath, $repository}' > publication-input.json
+          node controller/scripts/release/live-release.mjs publish publication-input.json > publication.json
+          status=$(jq -er '.status' publication.json)
+          if [ "$status" = 'published' ]; then
+            echo 'notify=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'notify=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload authoritative publication outcome
+        if: always()
+        id: upload
+        uses: actions/upload-artifact@v5
+        with:
+          name: release-publication-${{ needs.verify-candidate.outputs.plan_key }}
+          path: publication.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Require exact publication or authenticated no-op
+        run: |
+          status=$(jq -er '.status' publication.json)
+          test "$status" = 'published' || test "$status" = 'already-published'
+
+  notify:
+    name: Notify only a newly published exact plan
+    if: ${{ needs.publish-release.result == 'success' && needs.publish-release.outputs.notify == 'true' }}
+    needs: [verify-candidate, publish-release]
+    uses: ./.github/workflows/discord-release.yml
+    with:
+      tag: ${{ needs.verify-candidate.outputs.tag }}
+      release_plan_identity: ${{ needs.verify-candidate.outputs.plan_identity }}
+      automatic: true
+      dry_run: false
+    secrets:
+      DISCORD_RELEASE_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+
+  finalize-cancelled:
+    name: Reinspect and finalize every attempted mutation
+    if: ${{ always() && needs.approval-baseline.outputs.proceed == 'true' }}
+    needs:
+      [
+        guard-and-plan,
+        verify-candidate,
+        approval-baseline,
+        deploy-candidate,
+        live-e2e,
+        publish-release,
+        notify,
+      ]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout immutable controller
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
+          path: controller
+          persist-credentials: false
+
+      - name: Checkout immutable candidate source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.target_sha }}
+          path: candidate
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install immutable controller and candidate dependencies
+        run: |
+          npm --prefix controller ci --ignore-scripts
+          npm --prefix candidate ci --ignore-scripts
+
+      - name: Download exact State 2 and baseline evidence
+        uses: actions/download-artifact@v5
+        with:
+          artifact-ids: ${{ needs.verify-candidate.outputs.artifact_id }},${{ needs.approval-baseline.outputs.artifact_id }}
+          path: release-state
+          merge-multiple: true
+
+      - name: Download deployment evidence when available
+        continue-on-error: true
+        uses: actions/download-artifact@v5
+        with:
+          name: release-deployment-${{ needs.verify-candidate.outputs.plan_key }}
+          path: release-state
+
+      - name: Reinspect publication and restore only the exact baseline when required
+        id: finalize
+        shell: bash
+        env:
+          BUGDROP_GITHUB_TOKEN: ${{ github.token }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ ! -s release-state/deployment.json ]; then
+            jq -n --arg planIdentity '${{ needs.verify-candidate.outputs.plan_identity }}' \
+              '{status: "ambiguous-critical", mutationAttempted: true, planIdentity: $planIdentity}' \
+              > release-state/deployment.json
+          fi
+          jq -n \
+            --arg controllerRoot "$GITHUB_WORKSPACE/controller" \
+            --arg candidateRoot "$GITHUB_WORKSPACE/candidate" \
+            --arg controllerConfig "$GITHUB_WORKSPACE/controller/wrangler.toml" \
+            --arg controllerLock "$GITHUB_WORKSPACE/controller/package-lock.json" \
+            --arg candidateEntrypoint "$GITHUB_WORKSPACE/candidate/src/index.ts" \
+            --arg candidateAssets "$GITHUB_WORKSPACE/release-state/static-package" \
+            --arg targetSha '${{ inputs.target_sha }}' \
+            --arg expectedPath "$GITHUB_WORKSPACE/release-state/expected.json" \
+            --arg baselinePath "$GITHUB_WORKSPACE/release-state/baseline.json" \
+            --arg deploymentPath "$GITHUB_WORKSPACE/release-state/deployment.json" \
+            --arg bundlePath "$GITHUB_WORKSPACE/release-state/state2-bundle.json" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            '{$controllerRoot, $candidateRoot, $controllerConfig, $controllerLock, $candidateEntrypoint, $candidateAssets, $targetSha, $expectedPath, $baselinePath, $deploymentPath, $bundlePath, $repository}' \
+            > finalize-input.json
+          node controller/scripts/release/live-release.mjs finalize finalize-input.json > finalization.json
+          status=$(jq -er '.status' finalization.json)
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          jq -r '"### Finalization — \(.status)\n\nRollback attempted: `\(.rollbackAttempted)`"' finalization.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Require verified stable or restored production
+        run: |
+          status='${{ steps.finalize.outputs.status }}'
+          test "$status" = 'published-stable' || \
+            test "$status" = 'baseline-restored' || \
+            test "$status" = 'rollback-verified'

@@ -1,0 +1,42 @@
+[
+  {
+    "name": "new publication",
+    "deployment": "candidate-active",
+    "live": "passed",
+    "publication": "published",
+    "expected": "core-published",
+    "notify": true
+  },
+  {
+    "name": "initial published no-op",
+    "deployment": "candidate-active",
+    "live": "passed",
+    "publication": "already-published",
+    "expected": "core-noop",
+    "notify": false
+  },
+  {
+    "name": "live mismatch",
+    "deployment": "candidate-active",
+    "live": "failed",
+    "publication": "not-attempted",
+    "expected": "recovery-required",
+    "notify": false
+  },
+  {
+    "name": "ambiguous deploy",
+    "deployment": "ambiguous-critical",
+    "live": "not-run",
+    "publication": "not-attempted",
+    "expected": "unknown-critical",
+    "notify": false
+  },
+  {
+    "name": "partial publication",
+    "deployment": "candidate-active",
+    "live": "passed",
+    "publication": "partial-resumable",
+    "expected": "recovery-required",
+    "notify": false
+  }
+]

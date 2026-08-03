@@ -1,0 +1,25 @@
+changelog:
+  exclude:
+    labels:
+      - release-notes/exclude
+      - dependencies
+    authors:
+      - dependabot[bot]
+  categories:
+    - title: Breaking changes
+      labels:
+        - release-notes/major
+    - title: Features
+      labels:
+        - enhancement
+        - release-notes/minor
+    - title: Fixes
+      labels:
+        - bug
+        - release-notes/patch
+    - title: Documentation
+      labels:
+        - documentation
+    - title: Other changes
+      labels:
+        - '*'

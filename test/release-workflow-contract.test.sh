@@ -3,7 +3,7 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-release_workflow="$repo_root/.github/workflows/deploy.yml"
+workflow="$repo_root/.github/workflows/deploy.yml"
 workflows_dir="$repo_root/.github/workflows"
 
 fail() {
@@ -12,77 +12,246 @@ fail() {
 }
 
 require_literal() {
-  local value=$1
-  grep -Fq -- "$value" "$release_workflow" || fail "deploy.yml lacks: $value"
+  grep -Fq -- "$1" "$workflow" || fail "deploy.yml lacks: $1"
 }
 
 require_absent() {
-  local value=$1
-  if grep -Fq -- "$value" "$release_workflow"; then
-    fail "deploy.yml must not contain: $value"
+  if grep -Fq -- "$1" "$workflow"; then
+    fail "deploy.yml must not contain: $1"
   fi
 }
 
-on_block=$(
-  awk '
-    /^on:$/ { found = 1 }
-    found && /^permissions:$/ { exit }
-    found && $0 !~ /^[[:space:]]*#/ && $0 !~ /^[[:space:]]*$/ { print }
-  ' "$release_workflow"
-)
+job_block() {
+  local job=$1
+  awk -v job="$job" '
+    $0 == "  " job ":" { found = 1 }
+    found && $0 ~ /^  [[:alnum:]_-]+:$/ && $0 != "  " job ":" { exit }
+    found { print }
+  ' "$workflow"
+}
 
-expected_on_block=$'on:\n  workflow_dispatch:'
-[[ "$on_block" == "$expected_on_block" ]] ||
-  fail "production must be workflow_dispatch-only; found: ${on_block//$'\n'/, }"
+line_of() {
+  grep -nF -- "$1" "$workflow" | head -1 | cut -d: -f1
+}
 
-require_literal 'name: Production Release (Migration Freeze)'
-require_literal '  contents: read'
-require_literal '  release-migration-freeze:'
-require_literal 'name: Production release migration is frozen'
-require_literal 'Automatic production releases are disabled'
-require_literal 'No tag, GitHub Release, Cloudflare deployment, live production test, or Discord notification was performed.'
+[[ -s "$workflow" ]] || fail 'deploy.yml is missing'
+require_literal 'name: Production Release'
+
+top_level_events=$(awk '
+  /^on:$/ { found = 1; next }
+  found && /^[^[:space:]]/ { exit }
+  found && /^  [[:alnum:]_-]+:$/ { print $1 }
+' "$workflow")
+[[ "$top_level_events" == 'workflow_dispatch:' ]] ||
+  fail "workflow_dispatch must be the only trigger; found: $top_level_events"
+
+for input in target_sha bump release_reason rationale operator_notes dry_run; do
+  require_literal "      $input:"
+done
+for literal in \
+  'options: [patch, minor, major]' \
+  'options: [weekly, emergency]' \
+  'default: true' \
+  'type: boolean' \
+  'group: bugdrop-production-release' \
+  'cancel-in-progress: false' \
+  'queue: max' \
+  '  contents: read'; do
+  require_literal "$literal"
+done
 
 for forbidden in \
   'push:' \
   'pull_request:' \
   'merge_group:' \
-  'release:' \
   'schedule:' \
   'workflow_call:' \
-  'contents: write' \
   'issues: write' \
   'pull-requests: write' \
-  'environment:' \
-  'secrets.' \
-  'actions/checkout' \
-  'actions/setup-node' \
+  'git describe' \
   'semantic-release' \
-  'wrangler' \
-  'CLOUDFLARE_' \
-  'git tag' \
-  'gh release'; do
+  'release.published'; do
   require_absent "$forbidden"
 done
 
-job_count=$(awk '/^jobs:$/ { found = 1; next } found && /^  [[:alnum:]_-]+:$/ { count += 1 } END { print count + 0 }' "$release_workflow")
-[[ "$job_count" -eq 1 ]] || fail "freeze workflow must have exactly one job; found $job_count"
+for job in \
+  guard-and-plan \
+  verify-candidate \
+  dry-run-summary \
+  completed-summary \
+  capability-gate \
+  approval-baseline \
+  deploy-candidate \
+  live-e2e \
+  publish-release \
+  notify \
+  finalize-cancelled; do
+  require_literal "  $job:"
+done
+
+guard_block=$(job_block guard-and-plan)
+first_checkout_line=$(line_of 'uses: actions/checkout@v5')
+guard_line=$(line_of 'Reject non-main or malformed dispatch before checkout')
+[[ "$guard_line" -lt "$first_checkout_line" ]] || fail 'main/SHA guard must run before checkout'
+for literal in \
+  "test \"\$DISPATCH_REF\" = 'refs/heads/main'" \
+  '[[ "$CONTROLLER_SHA" =~ ^[0-9a-f]{40}$ ]]' \
+  '[[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]' \
+  'CONTROLLER_SHA: ${{ github.workflow_sha }}' \
+  'node controller/scripts/release/workflow.mjs guard' \
+  'node controller/scripts/release/github-adapter.mjs plan' \
+  '--arg repositoryDir "$GITHUB_WORKSPACE/controller"' \
+  'fetch-depth: 0' \
+  "echo 'completed=true'"; do
+  grep -Fq -- "$literal" <<< "$guard_block" || fail "guard-and-plan lacks: $literal"
+done
+
+checkout_count=$(grep -Fc 'uses: actions/checkout@v5' "$workflow")
+persist_count=$(grep -Fc 'persist-credentials: false' "$workflow")
+[[ "$checkout_count" -ge 6 ]] || fail "expected immutable controller/candidate checkouts; found $checkout_count"
+[[ "$persist_count" -eq "$checkout_count" ]] || fail 'every checkout must discard credentials'
+require_absent 'ref: main'
+require_absent 'ref: ${{ github.ref }}'
+require_literal 'ref: ${{ steps.guard.outputs.controller_sha }}'
+require_literal 'ref: ${{ needs.guard-and-plan.outputs.controller_sha }}'
+require_literal 'ref: ${{ inputs.target_sha }}'
+
+verify_block=$(job_block verify-candidate)
+for literal in \
+  'needs: guard-and-plan' \
+  'path: controller' \
+  'path: candidate' \
+  'npm ci --ignore-scripts' \
+  'npm run validate' \
+  'npm run build' \
+  'node controller/scripts/build-widget.js' \
+  '--mode release' \
+  'node controller/scripts/release/workflow.mjs bundle' \
+  'static-package/versions.json' \
+  'retention-days: 14'; do
+  grep -Fq -- "$literal" <<< "$verify_block" || fail "verify-candidate lacks: $literal"
+done
+if grep -Eq 'secrets\.|environment:' <<< "$verify_block"; then
+  fail 'candidate verification must not reference secrets or an environment'
+fi
+
+completed_block=$(job_block completed-summary)
+for literal in \
+  "needs.guard-and-plan.outputs.completed == 'true'" \
+  'core no-op' \
+  'No build, approval, production environment, mutation, or automatic notification was performed.'; do
+  grep -Fq -- "$literal" <<< "$completed_block" || fail "completed-summary lacks: $literal"
+done
+if grep -Eq 'secrets\.|environment:|wrangler|gh release|git tag|DISCORD_' <<< "$completed_block"; then
+  fail 'completed-plan no-op references mutation or notification authority'
+fi
+
+dry_block=$(job_block dry-run-summary)
+grep -Fq 'if: inputs.dry_run' <<< "$dry_block" || fail 'dry-run job is not boolean-gated'
+grep -Fq 'node controller/scripts/release/workflow.mjs state2' <<< "$dry_block" ||
+  fail 'dry-run job does not authenticate the State 2 handoff'
+if grep -Eq 'secrets\.|environment:|wrangler|gh release|git tag|DISCORD_' <<< "$dry_block"; then
+  fail 'dry-run summary references mutation authority'
+fi
+
+capability_block=$(job_block capability-gate)
+for literal in \
+  "vars.RELEASE_PRODUCTION_ENABLED" \
+  "vars.RELEASE_CLOUDFLARE_CAPABILITY_VALIDATED" \
+  "test \"\$PRODUCTION_ENABLED\" = 'true'" \
+  "test \"\$CAPABILITY_VALIDATED\" = 'true'"; do
+  grep -Fq -- "$literal" <<< "$capability_block" || fail "capability gate lacks: $literal"
+done
+if grep -Eq 'environment:|secrets\.' <<< "$capability_block"; then
+  fail 'external gates must be checked before protected environment or secrets'
+fi
+
+approval_block=$(job_block approval-baseline)
+for literal in \
+  'needs: [guard-and-plan, verify-candidate, capability-gate]' \
+  'environment: production' \
+  'artifact-ids: ${{ needs.verify-candidate.outputs.artifact_id }}' \
+  'Revalidate exact plan after protected approval' \
+  'node controller/scripts/release/workflow.mjs authorize' \
+  'Capture exact production baseline before mutation' \
+  'node controller/scripts/release/live-release.mjs baseline'; do
+  grep -Fq -- "$literal" <<< "$approval_block" || fail "approval-baseline lacks: $literal"
+done
+for secret in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN; do
+  grep -Fq "secrets.$secret" <<< "$approval_block" || fail "baseline lacks named $secret"
+done
+
+deploy_block=$(job_block deploy-candidate)
+for literal in \
+  "needs.approval-baseline.outputs.proceed == 'true'" \
+  'environment: production' \
+  'node controller/scripts/release/live-release.mjs deploy' \
+  'Require exact candidate deployment' \
+  "test '\${{ steps.deploy.outputs.status }}' = 'candidate-active'"; do
+  grep -Fq -- "$literal" <<< "$deploy_block" || fail "deploy-candidate lacks: $literal"
+done
+if grep -Eq 'BUGDROP_GITHUB_TOKEN|contents: write|DISCORD_' <<< "$deploy_block"; then
+  fail 'deployment job must not receive publication or notification authority'
+fi
+
+live_block=$(job_block live-e2e)
+for literal in \
+  'uses: ./.github/workflows/live-tests.yml' \
+  'target: production' \
+  'target_sha: ${{ inputs.target_sha }}' \
+  'widget_sha256: ${{ needs.approval-baseline.outputs.widget_sha256 }}'; do
+  grep -Fq -- "$literal" <<< "$live_block" || fail "live-e2e lacks: $literal"
+done
+
+publish_block=$(job_block publish-release)
+for literal in \
+  'needs: [guard-and-plan, verify-candidate, approval-baseline, deploy-candidate, live-e2e]' \
+  'environment: production' \
+  'contents: write' \
+  'node controller/scripts/release/live-release.mjs publish' \
+  'BUGDROP_GITHUB_TOKEN: ${{ github.token }}'; do
+  grep -Fq -- "$literal" <<< "$publish_block" || fail "publish-release lacks: $literal"
+done
+if grep -Eq 'CLOUDFLARE_|DISCORD_' <<< "$publish_block"; then
+  fail 'publication job must not receive deployment or notification credentials'
+fi
+[[ $(grep -Fc 'contents: write' "$workflow") -eq 1 ]] || fail 'write permission must exist only on publish-release'
+
+notify_block=$(job_block notify)
+for literal in \
+  "needs: [verify-candidate, publish-release]" \
+  "needs.publish-release.result == 'success'" \
+  "needs.publish-release.outputs.notify == 'true'" \
+  'uses: ./.github/workflows/discord-release.yml'; do
+  grep -Fq -- "$literal" <<< "$notify_block" || fail "notify lacks: $literal"
+done
+grep -Fq 'DISCORD_RELEASE_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}' <<< "$notify_block" ||
+  fail 'notification must receive only the named Discord credential'
+
+final_block=$(job_block finalize-cancelled)
+for literal in \
+  'always()' \
+  'environment: production' \
+  'contents: read' \
+  'node controller/scripts/release/live-release.mjs finalize' \
+  'Require verified stable or restored production'; do
+  grep -Fq -- "$literal" <<< "$final_block" || fail "finalizer lacks: $literal"
+done
+
+require_absent 'CAPABILITY_NOT_INSTALLED'
+
+for command in 'wrangler deploy' 'wrangler rollback' 'gh release' 'git tag'; do
+  require_absent "$command"
+done
 
 semantic_release_matches=$(grep -RInF --include='*.yml' --include='*.yaml' -- 'semantic-release' "$workflows_dir" || true)
 [[ -z "$semantic_release_matches" ]] ||
   fail "semantic-release remains executable in a workflow: $semantic_release_matches"
 
-for production_command in 'npm run deploy' 'make deploy' 'cloudflare/wrangler-action'; do
-  matches=$(grep -RInF --include='*.yml' --include='*.yaml' -- "$production_command" "$workflows_dir" || true)
-  [[ -z "$matches" ]] || fail "production-capable workflow command remains: $matches"
-done
-
 wrangler_deploy_matches=$(grep -RInF --include='*.yml' --include='*.yaml' -- 'wrangler deploy' "$workflows_dir" || true)
-wrangler_deploy_count=$(printf '%s\n' "$wrangler_deploy_matches" | awk 'NF { count += 1 } END { print count + 0 }')
-[[ "$wrangler_deploy_count" -eq 1 ]] ||
-  fail "expected exactly one preview Wrangler deploy; found: $wrangler_deploy_matches"
-[[ "$wrangler_deploy_matches" == *'.github/workflows/ci.yml:'* ]] ||
-  fail "Wrangler deploy is not owned by preview CI: $wrangler_deploy_matches"
-[[ "$wrangler_deploy_matches" == *'wrangler deploy --env preview'* ]] ||
-  fail "remaining Wrangler deploy is not explicitly preview-only: $wrangler_deploy_matches"
+[[ $(printf '%s\n' "$wrangler_deploy_matches" | awk 'NF { count += 1 } END { print count + 0 }') -eq 1 ]] ||
+  fail "only preview CI may deploy before WP7: $wrangler_deploy_matches"
+[[ "$wrangler_deploy_matches" == *'.github/workflows/ci.yml:'*'wrangler deploy --env preview'* ]] ||
+  fail "remaining Wrangler deploy is not preview-only: $wrangler_deploy_matches"
 
-echo 'Release workflow freeze contract checks passed'
+echo 'Guarded manual release workflow contract checks passed'

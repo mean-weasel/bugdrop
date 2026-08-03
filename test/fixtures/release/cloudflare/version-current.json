@@ -1,0 +1,22 @@
+{
+  "id": "version-current",
+  "number": 2,
+  "metadata": {
+    "created_on": "2026-08-03T12:00:00.000Z",
+    "source": "wrangler"
+  },
+  "resources": {
+    "bindings": [
+      { "name": "ASSETS", "type": "assets" },
+      {
+        "name": "BUILD_SHA",
+        "type": "plain_text",
+        "text": "1111111111111111111111111111111111111111"
+      }
+    ],
+    "script": { "etag": "script-etag-current" },
+    "script_runtime": {
+      "assets": { "raw_run_worker_first": true, "serve_directly": false }
+    }
+  }
+}
