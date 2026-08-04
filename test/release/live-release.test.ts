@@ -110,6 +110,19 @@ describe('live release production orchestration', () => {
     });
   });
 
+  it('accepts a bootstrap baseline when metadata and live health both omit the build SHA', async () => {
+    const cloudflare = client();
+    const { buildSha: _missing, ...bootstrapLive } = state('baseline', null).live;
+
+    await expect(
+      captureBaseline({ client: cloudflare, expected, observe: async () => bootstrapLive })
+    ).resolves.toMatchObject({
+      status: 'baseline-captured',
+      version: { buildSha: null },
+      live: bootstrapLive,
+    });
+  });
+
   it('rejects a baseline whose live build differs from the inspected version', async () => {
     const cloudflare = client();
     cloudflare.observe.mockResolvedValue({

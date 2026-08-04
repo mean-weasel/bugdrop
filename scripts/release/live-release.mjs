@@ -184,7 +184,7 @@ async function inspectAuthoritative(client, origin, observe = collectRecoveryIde
   if (
     canonicalize(before.deployment) !== canonicalize(after.deployment) ||
     canonicalize(before.version) !== canonicalize(after.version) ||
-    before.version.buildSha !== live.buildSha
+    (before.version.buildSha ?? null) !== (live.buildSha ?? null)
   ) {
     fail(
       'UNSTABLE_PRODUCTION_BASELINE',
