@@ -6,6 +6,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ci_workflow="$repo_root/.github/workflows/ci.yml"
 live_workflow="$repo_root/.github/workflows/live-tests.yml"
 canary_spec="$repo_root/e2e/widget.issue-canary.spec.ts"
+canary_engine="$repo_root/e2e/widget.issue-canary.ts"
 live_spec="$repo_root/e2e/widget.live.spec.ts"
 variant_live_spec="$repo_root/e2e/variant.live.spec.ts"
 variant_accessibility_spec="$repo_root/e2e/variant-accessibility.radix.spec.ts"
@@ -145,6 +146,8 @@ for token_step in \
     grep -Fq 'BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}' ||
     fail "the token is not scoped to its intended step: $token_step"
 done
+[[ $(grep -Fc -- '--profile preview' <<< "$critical") -eq 4 ]] ||
+  fail 'every preview Issue operation must select the preview profile explicitly'
 if grep -Eq '^    env:|^env:' <<< "$critical"; then
   fail 'the critical job must not have job- or workflow-scoped environment values'
 fi
@@ -193,7 +196,7 @@ for live_input in \
   require_literal "$live_workflow" "$live_input"
 done
 require_literal "$live_workflow" 'node scripts/release/verify-live.mjs verify'
-require_literal "$live_workflow" 'node scripts/release/verify-live.mjs observe'
+require_literal "$live_workflow" 'node scripts/release/verify-live.mjs preview-observe'
 require_literal "$live_workflow" 'EXPECTED_TARGET_SHA:'
 require_literal "$live_workflow" 'EXPECTED_VERSION:'
 require_literal "$live_workflow" 'EXPECTED_WIDGET_ORIGIN='
@@ -205,23 +208,27 @@ require_literal "$live_workflow" 'curl --max-time 30 -sSf "$EXPECTED_WIDGET_ORIG
 require_absent "$live_workflow" 'git describe'
 require_literal "$live_workflow" "if: always() && github.event_name == 'schedule'"
 require_literal "$live_workflow" 'node scripts/github-issue-canary.mjs sweep'
+require_literal "$live_workflow" '--profile preview'
+require_literal "$live_workflow" "LIVE_TARGET: \${{ github.event_name == 'schedule' && 'preview'"
+require_literal "$live_workflow" 'persist-credentials: false'
 [[ $(grep -Fc 'BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}' "$live_workflow") -eq 1 ]] ||
   fail 'the janitor token must exist only on its sweep step'
 require_absent "$live_workflow" 'widget.issue-canary.spec.ts'
 require_absent "$live_workflow" 'chromium-issue-canary'
 require_absent "$live_workflow" 'BUGDROP_CANARY_MARKER'
 
-require_literal "$canary_spec" 'expect(outgoingUrl.origin).toBe(environment.expectedWidgetOrigin)'
 require_literal "$canary_spec" "from './live-preview-widget'"
-require_literal "$canary_spec" "response.request().method() === 'POST'"
-require_literal "$canary_spec" 'responseUrl.origin === environment.expectedWidgetOrigin'
-require_literal "$canary_spec" "responseUrl.pathname === '/api/feedback'"
-require_literal "$canary_spec" 'expect(feedbackUrl.origin).toBe(environment.expectedWidgetOrigin)'
-require_literal "$canary_spec" "presentation: { kind: 'modal', size: 'compact' }"
-require_literal "$canary_spec" 'const opened = handle.open('
-require_literal "$canary_spec" 'await markerInput.fill(environment.marker)'
-require_literal "$canary_spec" "getByRole('button', { name: 'Create canary Issue' }).click()"
-require_absent "$canary_spec" 'return handle.submit('
+require_literal "$canary_spec" 'runIssueCanary(page)'
+require_literal "$canary_engine" 'expect(outgoingUrl.origin).toBe(environment.expectedWidgetOrigin)'
+require_literal "$canary_engine" "response.request().method() === 'POST'"
+require_literal "$canary_engine" 'responseUrl.origin === environment.expectedWidgetOrigin'
+require_literal "$canary_engine" "responseUrl.pathname === '/api/feedback'"
+require_literal "$canary_engine" 'expect(feedbackUrl.origin).toBe(environment.expectedWidgetOrigin)'
+require_literal "$canary_engine" "presentation: { kind: 'modal', size: 'compact' }"
+require_literal "$canary_engine" 'const opened = handle.open('
+require_literal "$canary_engine" 'await markerInput.fill(environment.marker)'
+require_literal "$canary_engine" "getByRole('button', { name: 'Create canary Issue' }).click()"
+require_absent "$canary_engine" 'return handle.submit('
 require_literal "$live_spec" "page.route('**/feedback'"
 require_literal "$live_spec" 'installExactPreviewWidgetFromEnvironment(context)'
 require_literal "$variant_live_spec" "from './live-preview-widget'"

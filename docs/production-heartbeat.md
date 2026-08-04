@@ -1,0 +1,76 @@
+# Production Heartbeat Operations
+
+The `Production Heartbeat` workflow exercises the real production widget, creates one synthetic
+Issue in `mean-weasel/bugdrop-widget-test`, independently verifies it, closes every run-marker match,
+proves zero open production-prefix Issues, and reconciles one incident in `mean-weasel/bugdrop`.
+
+Scheduled events are inert unless `BUGDROP_PRODUCTION_HEARTBEAT_MODE` is exactly `daily` or
+`four-hour`. An unset value, `manual`, or an unknown value skips both cron entries. GitHub cron
+timing is approximate.
+
+## Prerequisites
+
+- Protect the `production` GitHub environment with required reviewers for release jobs. The heartbeat
+  deliberately does not enter that approval-gated environment, because scheduled monitoring must run
+  unattended; it uses only the narrowly scoped repository secrets listed below.
+- Configure `BUGDROP_CANARY_GITHUB_TOKEN` as a fine-grained token limited to
+  `mean-weasel/bugdrop-widget-test` with Issues read/write only.
+- Configure `VERCEL_AUTOMATION_BYPASS_SECRET` only if the fixed production venue requires it.
+- Confirm production health reports `environment=production` and a full lowercase 40-character
+  `buildSha` before authorization.
+- Leave `GITHUB_TOKEN` at declared job permissions. Only the incident job receives `issues: write`,
+  and that token is step-scoped and never reaches Playwright.
+
+Record token ownership and expiry privately. Rotate before expiry, validate replacement read access,
+then use an explicitly authorized disposable Issue to validate write/close access. Never print a
+token or place it in an artifact.
+
+## Staged activation
+
+Publication, dispatch, Issue mutation, and repository-variable changes require explicit operator
+authorization.
+
+1. Keep the mode unset or `manual`. Dispatch with `controlled_failure=false`. Retain the run URL,
+   production environment/build SHA, widget hash, synthetic Issue, independent verification, marker
+   cleanup, zero-open sweep, incident result, artifact result, and final conclusion.
+2. Dispatch with `controlled_failure=true`. This fails only after cleanup and sweep. Confirm exactly
+   one incident opens. Repeat to confirm a recurrence comment. Close it manually only for the
+   authorized reopen exercise, repeat the controlled failure, then run normally and confirm a
+   recovery comment plus closure.
+3. Set the mode to `daily`; observe the staggered `17 2 * * *` UTC trigger through the agreed soak.
+4. Replace the mode with `four-hour`; this disables the daily trigger and enables only
+   `47 1/4 * * *` UTC, for approximately six runs per day.
+
+Do not rerun merely to obtain green status. Diagnose the first failing stage and confirm both cleanup
+passes and the incident transition before another run.
+
+## Failure, rollback, and recovery
+
+To disable schedules, unset the mode or set it to `manual`; this does not cancel an active run. The
+production-only lock never cancels active work. If a run is interrupted, the next authorized run
+begins with a production-prefix preflight and ends with another production sweep. Preview uses a
+different prefix, marker namespace, workflow owner, and lock.
+
+The conclusion fails unless transaction stages, marker cleanup, prefix sweep, artifact handling, and
+incident reconciliation succeed. Before upload, the summary writes a fixed-schema, token-free JSON
+file containing only run identifiers, stage outcomes, and the aggregate boolean. It writes to a
+run-specific temporary file, validates the exact schema and allowed outcome values, then atomically
+renames it before publishing summary outputs. Artifact staging independently requires non-empty,
+schema-valid diagnostics before copying optional Playwright directories; upload uses
+`if-no-files-found: error`. Summary, staging, and upload outcomes independently feed incident
+selection and the final conclusion. Cleanup never trusts the browser result. A missing attempt
+sentinel skips marker cleanup safely, while the final prefix sweep remains mandatory.
+
+The incident channel is GitHub itself. A GitHub outage can affect both the monitored transaction and
+incident delivery, so this is deduplicated visibility, not independent paging. External paging is a
+separate future control.
+
+## Local, nonmutating checks
+
+```bash
+bash test/production-heartbeat-workflow-contract.test.sh
+npx vitest run test/githubHeartbeatIncident.test.ts test/githubIssueCanaryProfiles.test.ts
+npx playwright test e2e/widget.issue-canary.spec.ts --project=chromium-issue-canary --list
+```
+
+Never run the Issue canary locally: listing it is nonmutating; executing it is not.

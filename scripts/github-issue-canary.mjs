@@ -3,7 +3,13 @@
 import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
-export const CANARY_TITLE_PREFIX = '[BugDrop CI canary]';
+import {
+  PREVIEW_CANARY_PROFILE,
+  getCanaryProfile,
+  validateCanarySelector,
+} from './github-issue-canary-profiles.mjs';
+
+export const CANARY_TITLE_PREFIX = PREVIEW_CANARY_PROFILE.titlePrefix;
 
 const DEFAULT_API_BASE_URL = 'https://api.github.com';
 const DEFAULT_LABELS = ['bug', 'bugdrop'];
@@ -14,9 +20,14 @@ const DEFAULT_CONSISTENCY_DELAY_MS = 2_000;
 const MAX_CONSISTENCY_ATTEMPTS = 20;
 const MAX_CONSISTENCY_DELAY_MS = 10_000;
 
-export function canaryTitle(marker) {
+export function canaryTitle(marker, profileName = 'preview') {
   requireNonempty(marker, 'marker');
-  return `${CANARY_TITLE_PREFIX} ${marker}`;
+  const { profile } = validateCanarySelector({
+    profile: profileName,
+    repo: getCanaryProfile(profileName).repo,
+    marker,
+  });
+  return `${profile.titlePrefix} ${marker}`;
 }
 
 export async function listMatchingIssues({
@@ -26,8 +37,9 @@ export async function listMatchingIssues({
   token,
   marker,
   prefix,
+  profile = 'preview',
 }) {
-  const selector = validateSelector({ marker, prefix });
+  const selector = validateCanarySelector({ profile, repo, marker, prefix });
   const issues = await listRepositoryIssues({ fetchImpl, apiBaseUrl, repo, token });
   return issues.filter(candidate => {
     if (candidate.pull_request) return false;
@@ -53,8 +65,14 @@ export async function verifyCanaryIssue({
   consistencyAttempts = DEFAULT_CONSISTENCY_ATTEMPTS,
   consistencyDelayMs = DEFAULT_CONSISTENCY_DELAY_MS,
   sleepImpl = sleep,
+  profile = 'preview',
 }) {
-  requireNonempty(marker, 'marker');
+  const target = validateCanarySelector({
+    profile,
+    repo,
+    marker,
+    expectedWorkerSha: expectedSha,
+  });
   requireNonempty(expectedSha, 'expectedSha');
   const consistency = validateConsistencyOptions({
     consistencyAttempts,
@@ -86,6 +104,7 @@ export async function verifyCanaryIssue({
     repo,
     token,
     marker,
+    profile,
     consistency,
   });
   const numbers = matches.map(candidate => candidate.number);
@@ -106,7 +125,9 @@ export async function verifyCanaryIssue({
     failures.push('Issue number is not a positive integer');
   }
   if (candidate.html_url !== canonicalUrl) failures.push('Issue URL is not canonical');
-  if (candidate.title !== canaryTitle(marker)) failures.push('Issue title does not match exactly');
+  if (candidate.title !== `${target.profile.titlePrefix} ${marker}`) {
+    failures.push('Issue title does not match exactly');
+  }
   if (!candidate.body?.includes(`## Canary marker\n\n${marker}\n`)) {
     failures.push('Issue body lacks the exact structured Canary marker section and value');
   }
@@ -150,8 +171,14 @@ export async function closeMatchingIssues({
   consistencyAttempts = DEFAULT_CONSISTENCY_ATTEMPTS,
   consistencyDelayMs = DEFAULT_CONSISTENCY_DELAY_MS,
   sleepImpl = sleep,
+  profile = 'preview',
 }) {
-  const selector = validateSelector({ marker, prefix });
+  const selector = validateCanarySelector({ profile, repo, marker, prefix });
+  const boundSelector = {
+    marker: selector.marker,
+    prefix: selector.prefix,
+    profile: selector.profile.id,
+  };
   const consistency = validateConsistencyOptions({
     consistencyAttempts,
     consistencyDelayMs,
@@ -162,7 +189,7 @@ export async function closeMatchingIssues({
     apiBaseUrl,
     repo,
     token,
-    ...selector,
+    ...boundSelector,
     consistency,
   });
   if (marker && matches.length === 0) {
@@ -192,7 +219,7 @@ export async function closeMatchingIssues({
     apiBaseUrl,
     repo,
     token,
-    ...selector,
+    ...boundSelector,
     consistency,
   });
   const openNumbers = finalMatches
@@ -231,8 +258,14 @@ export async function runCli(
   const token = env.BUGDROP_CANARY_GITHUB_TOKEN;
   try {
     const { command, options } = parseCliArguments(argv);
+    const profile = options.profile ?? 'preview';
+    const selector = validateCanarySelector({
+      profile,
+      repo: options.repo,
+      marker: command === 'verify' || command === 'cleanup' ? options.marker : undefined,
+      prefix: command === 'preflight' || command === 'sweep' ? options.prefix : undefined,
+    });
     requireNonempty(token, 'BUGDROP_CANARY_GITHUB_TOKEN');
-    requireNonempty(options.repo, '--repo');
     let output;
     if (command === 'verify') {
       requireNonempty(options.marker, '--marker');
@@ -246,6 +279,7 @@ export async function runCli(
         marker: options.marker,
         expectedSha: options.expectedSha,
         result,
+        profile: selector.profile.id,
         consistencyAttempts,
         consistencyDelayMs,
         sleepImpl,
@@ -258,6 +292,7 @@ export async function runCli(
         repo: options.repo,
         token,
         marker: options.marker,
+        profile: selector.profile.id,
         consistencyAttempts,
         consistencyDelayMs,
         sleepImpl,
@@ -269,6 +304,7 @@ export async function runCli(
         repo: options.repo,
         token,
         prefix: options.prefix,
+        profile: selector.profile.id,
         consistencyAttempts,
         consistencyDelayMs,
         sleepImpl,
@@ -538,14 +574,6 @@ function parseNextLink(value) {
   return '';
 }
 
-function validateSelector({ marker, prefix }) {
-  if (Boolean(marker) === Boolean(prefix)) {
-    throw new Error('Exactly one of marker or prefix is required');
-  }
-  if (marker) return { marker: requireNonempty(marker, 'marker') };
-  return { prefix: requireNonempty(prefix, 'prefix') };
-}
-
 function parseRepo(repo) {
   requireNonempty(repo, 'repo');
   const parts = repo.split('/');
@@ -619,6 +647,7 @@ function parseCliArguments(argv) {
     '--prefix': 'prefix',
     '--result-file': 'resultFile',
     '--expected-sha': 'expectedSha',
+    '--profile': 'profile',
   };
   for (let index = 1; index < argv.length; index += 1) {
     const key = argv[index];

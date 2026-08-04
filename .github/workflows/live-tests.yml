@@ -87,10 +87,12 @@ jobs:
     name: Live E2E Tests
     runs-on: ubuntu-latest
     env:
-      LIVE_TARGET: ${{ github.event_name == 'schedule' && 'production' || inputs.target || 'preview' }}
-      PLAYWRIGHT_BASE_URL: ${{ (github.event_name == 'schedule' || inputs.target == 'production') && 'https://bugdrop-widget-test.vercel.app' || 'https://bugdrop-widget-test-git-preview-jermwatts-projects.vercel.app' }}
+      LIVE_TARGET: ${{ github.event_name == 'schedule' && 'preview' || inputs.target || 'preview' }}
+      PLAYWRIGHT_BASE_URL: ${{ inputs.target == 'production' && 'https://bugdrop-widget-test.vercel.app' || 'https://bugdrop-widget-test-git-preview-jermwatts-projects.vercel.app' }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v5
         with:
@@ -147,7 +149,7 @@ jobs:
           done
 
           if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
-            identity_json=$(node scripts/release/verify-live.mjs observe)
+            identity_json=$(node scripts/release/verify-live.mjs preview-observe)
           elif [ "$present" -eq "${#identity_values[@]}" ]; then
             identity_json=$(node scripts/release/verify-live.mjs verify)
           else
@@ -194,6 +196,7 @@ jobs:
         if: always() && github.event_name == 'schedule'
         run: >-
           node scripts/github-issue-canary.mjs sweep
+          --profile preview
           --repo mean-weasel/bugdrop-widget-test
           --prefix "[BugDrop CI canary]"
         env:

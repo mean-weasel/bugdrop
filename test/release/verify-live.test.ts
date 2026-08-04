@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   LiveVerificationError,
   observeLiveSnapshot,
+  observePreviewSnapshot,
   pollLiveVerification,
   verifyLiveSnapshot,
 } from '../../scripts/release/verify-live.mjs';
@@ -86,6 +87,18 @@ describe('explicit live verification', () => {
       /INVALID_SHA/
     );
   });
+
+  it('observes a fixed preview identity without accepting production', () => {
+    const preview = snapshot();
+    preview.health.environment = 'preview';
+    expect(observePreviewSnapshot('https://bugdrop.example.com', preview)).toMatchObject({
+      environment: 'preview',
+      buildSha: SHA,
+    });
+    expect(() => observePreviewSnapshot('https://bugdrop.example.com', snapshot())).toThrow(
+      /expected preview/
+    );
+  });
 });
 
 describe('polling and scheduled observation', () => {
@@ -144,5 +157,18 @@ describe('polling and scheduled observation', () => {
       currentVersion: '1.56.0',
       verifiedAgainstPlan: false,
     });
+  });
+
+  it.each([
+    ['development environment', { environment: 'development', buildSha: SHA }],
+    ['missing build SHA', { environment: 'production', buildSha: undefined }],
+    ['abbreviated build SHA', { environment: 'production', buildSha: 'a'.repeat(7) }],
+    ['uppercase build SHA', { environment: 'production', buildSha: 'A'.repeat(40) }],
+  ])('rejects production observation with %s', (_name, healthIdentity) => {
+    const observed = snapshot();
+    Object.assign(observed.health, healthIdentity);
+    expect(() => observeLiveSnapshot('https://bugdrop.example.com', observed)).toThrow(
+      LiveVerificationError
+    );
   });
 });
