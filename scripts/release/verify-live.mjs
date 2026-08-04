@@ -13,6 +13,7 @@ const MAX_HEALTH_BYTES = 64 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_WIDGET_BYTES = 16 * 1024 * 1024;
 const MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024;
+const MAX_BASELINE_OBSERVATION_MS = 2 * 60 * 1000;
 
 export class LiveVerificationError extends Error {
   constructor(code, message, details = {}) {
@@ -203,11 +204,28 @@ async function readBoundedBytes(response, url, maxBytes, budget) {
   budget.used += total;
   return Buffer.concat(chunks, total);
 }
-async function collectSnapshot(origin, filenames, fetchImpl, timeoutMs, manifestErrorCode) {
+async function collectSnapshot(
+  origin,
+  filenames,
+  fetchImpl,
+  timeoutMs,
+  manifestErrorCode,
+  manifestFilenames = () => [],
+  totalTimeoutMs = null
+) {
   const budget = { used: 0 };
+  const deadline = totalTimeoutMs === null ? null : Date.now() + totalTimeoutMs;
+  const requestTimeout = () => {
+    if (deadline === null) return timeoutMs;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      fail('LIVE_FETCH_TIMEOUT', `${origin} snapshot exceeded ${totalTimeoutMs}ms`);
+    }
+    return Math.min(timeoutMs, remaining);
+  };
   const healthUrl = `${origin}/api/health`;
   const healthBytes = await readBoundedBytes(
-    await fetchOk(healthUrl, fetchImpl, timeoutMs),
+    await fetchOk(healthUrl, fetchImpl, requestTimeout()),
     healthUrl,
     MAX_HEALTH_BYTES,
     budget
@@ -220,9 +238,12 @@ async function collectSnapshot(origin, filenames, fetchImpl, timeoutMs, manifest
   }
   const assetHashes = {};
   let manifest;
-  for (const filename of [...new Set(filenames)]) {
+  const queue = [...new Set(filenames)];
+  const seen = new Set(queue);
+  for (let index = 0; index < queue.length; index += 1) {
+    const filename = queue[index];
     const url = `${origin}/${filename}`;
-    const response = await fetchOk(url, fetchImpl, timeoutMs);
+    const response = await fetchOk(url, fetchImpl, requestTimeout());
     const payload = await readBoundedBytes(
       response,
       url,
@@ -236,9 +257,46 @@ async function collectSnapshot(origin, filenames, fetchImpl, timeoutMs, manifest
       } catch {
         fail(manifestErrorCode, 'versions.json is not valid JSON');
       }
+      for (const additional of manifestFilenames(manifest)) {
+        if (!seen.has(additional)) {
+          seen.add(additional);
+          queue.push(additional);
+        }
+      }
     }
   }
   return { assetHashes, health, manifest };
+}
+
+function baselineManifestFilenames(manifest) {
+  if (
+    !manifest ||
+    typeof manifest !== 'object' ||
+    Array.isArray(manifest) ||
+    manifest.latest !== 'widget.js' ||
+    !manifest.versions ||
+    typeof manifest.versions !== 'object' ||
+    Array.isArray(manifest.versions)
+  ) {
+    fail('LIVE_OBSERVATION_FAILED', 'baseline manifest structure is invalid');
+  }
+  const current = match(
+    manifest.current,
+    VERSION_PATTERN,
+    'baseline current version',
+    'LIVE_OBSERVATION_FAILED'
+  );
+  const filenames = Object.values(manifest.versions);
+  if (filenames.length === 0) {
+    fail('LIVE_OBSERVATION_FAILED', 'baseline manifest asset list is empty');
+  }
+  filenames.forEach(filename =>
+    match(filename, ASSET_PATTERN, 'baseline asset filename', 'LIVE_OBSERVATION_FAILED')
+  );
+  if (manifest.versions[`v${current}`] !== `widget.v${current}.js`) {
+    fail('LIVE_OBSERVATION_FAILED', 'baseline exact asset is inconsistent');
+  }
+  return ['widget.js', ...filenames];
 }
 async function collectLiveSnapshot(expectedInput, fetchImpl = fetch, timeoutMs = 10000) {
   const expected = normalizeExpected(expectedInput);
@@ -319,6 +377,39 @@ export function observeLiveSnapshot(origin, snapshot) {
 export function observePreviewSnapshot(origin, snapshot) {
   return observeSnapshotForEnvironment(origin, snapshot, 'preview');
 }
+export function observeBaselineSnapshot(origin, snapshot) {
+  normalizeOrigin(origin);
+  if (snapshot?.health?.status !== 'ok' || typeof snapshot.health.environment !== 'string') {
+    fail('LIVE_OBSERVATION_FAILED', 'health observation is incomplete');
+  }
+  const environment = snapshot.health.environment;
+  const buildSha = snapshot.health.buildSha;
+  if (environment === 'production') {
+    match(buildSha, SHA_PATTERN, 'observed buildSha', 'LIVE_BUILD_SHA_MISMATCH');
+  } else if (environment !== 'development' || (buildSha !== undefined && buildSha !== null)) {
+    fail('LIVE_ENVIRONMENT_MISMATCH', 'baseline identity is neither bootstrap nor production');
+  }
+  const currentVersion = snapshot.manifest?.current;
+  if (typeof currentVersion !== 'string' || !currentVersion) {
+    fail('LIVE_OBSERVATION_FAILED', 'manifest current identity is missing');
+  }
+  const assetHashes = Object.fromEntries(
+    Object.entries(normalizeHashMap(snapshot.assetHashes, 'baseline asset hashes')).sort(
+      ([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)
+    )
+  );
+  return {
+    ...(typeof buildSha === 'string' ? { buildSha } : {}),
+    assetHashes,
+    currentVersion,
+    environment,
+    manifestSha256: observedHash(snapshot, 'versions.json'),
+    origin,
+    status: 'observed',
+    verifiedAgainstPlan: false,
+    widgetSha256: observedHash(snapshot, 'widget.js'),
+  };
+}
 async function collectObservation(origin, fetchImpl = fetch) {
   normalizeOrigin(origin);
   return collectSnapshot(
@@ -351,6 +442,33 @@ export async function collectRecoveryIdentity(origin, fetchImpl = fetch, timeout
       manifestSha256: observed.manifestSha256,
       widgetSha256: observed.widgetSha256,
     }),
+  };
+}
+export async function collectBaselineIdentity(
+  origin,
+  fetchImpl = fetch,
+  timeoutMs = 10000,
+  totalTimeoutMs = MAX_BASELINE_OBSERVATION_MS
+) {
+  normalizeOrigin(origin);
+  const snapshot = await collectSnapshot(
+    origin,
+    ['widget.js', 'versions.json'],
+    fetchImpl,
+    timeoutMs,
+    'LIVE_OBSERVATION_FAILED',
+    baselineManifestFilenames,
+    totalTimeoutMs
+  );
+  const observed = observeBaselineSnapshot(origin, snapshot);
+  return {
+    ...observed,
+    sourceIdentity: canonicalHash({
+      buildSha: observed.buildSha ?? null,
+      currentVersion: observed.currentVersion,
+      environment: observed.environment,
+    }),
+    assetIdentity: canonicalHash({ assetHashes: observed.assetHashes }),
   };
 }
 function expectedFromEnvironment() {

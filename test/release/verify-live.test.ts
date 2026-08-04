@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  collectBaselineIdentity,
   collectRecoveryIdentity,
   LiveVerificationError,
+  observeBaselineSnapshot,
   observeLiveSnapshot,
   observePreviewSnapshot,
   pollLiveVerification,
@@ -208,6 +210,125 @@ describe('polling and scheduled observation', () => {
       currentVersion: '1.56.0',
       verifiedAgainstPlan: false,
     });
+  });
+
+  it('captures the healthy unidentified deployment as a bootstrap baseline', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/api/health') {
+        return Response.json({ status: 'ok', environment: 'development', buildSha: null });
+      }
+      if (
+        ['/widget.js', '/widget.v1.js', '/widget.v1.55.js', '/widget.v1.55.0.js'].includes(path)
+      ) {
+        return new Response('legacy widget');
+      }
+      if (path === '/versions.json') {
+        return Response.json({
+          current: '1.55.0',
+          latest: 'widget.js',
+          versions: {
+            v1: 'widget.v1.js',
+            'v1.55': 'widget.v1.55.js',
+            'v1.55.0': 'widget.v1.55.0.js',
+          },
+        });
+      }
+      throw new Error(`unexpected request ${path}`);
+    });
+
+    await expect(
+      collectBaselineIdentity(expected().origin, fetchImpl as typeof fetch)
+    ).resolves.toMatchObject({
+      status: 'observed',
+      environment: 'development',
+      currentVersion: '1.55.0',
+      verifiedAgainstPlan: false,
+      assetHashes: {
+        'widget.js': expect.stringMatching(/^[0-9a-f]{64}$/),
+        'widget.v1.js': expect.stringMatching(/^[0-9a-f]{64}$/),
+        'widget.v1.55.js': expect.stringMatching(/^[0-9a-f]{64}$/),
+        'widget.v1.55.0.js': expect.stringMatching(/^[0-9a-f]{64}$/),
+        'versions.json': expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
+      sourceIdentity: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+      assetIdentity: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+    });
+  });
+
+  it('accepts a retained history bounded by the manifest and snapshot byte limits', async () => {
+    const retained = Object.fromEntries(
+      Array.from({ length: 98 }, (_, index) => [`v1.0.${index}`, `widget.v1.0.${index}.js`])
+    );
+    const versions = {
+      ...retained,
+      v200: 'widget.v200.js',
+      'v200.0': 'widget.v200.0.js',
+      'v200.0.0': 'widget.v200.0.0.js',
+    };
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/api/health') {
+        return Response.json({ status: 'ok', environment: 'development' });
+      }
+      if (path === '/versions.json') {
+        return Response.json({ current: '200.0.0', latest: 'widget.js', versions });
+      }
+      if (path.startsWith('/widget')) return new Response('retained widget');
+      throw new Error(`unexpected request ${path}`);
+    });
+
+    await expect(
+      collectBaselineIdentity(expected().origin, fetchImpl as typeof fetch)
+    ).resolves.toMatchObject({
+      environment: 'development',
+      assetHashes: expect.objectContaining({
+        'widget.v1.0.97.js': expect.stringMatching(/^[0-9a-f]{64}$/),
+        'widget.v200.0.0.js': expect.stringMatching(/^[0-9a-f]{64}$/),
+      }),
+    });
+  });
+
+  it('bounds the total time spent fetching a manifest-driven retained history', async () => {
+    const now = vi.spyOn(Date, 'now');
+    let tick = 0;
+    now.mockImplementation(() => tick++);
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/api/health') {
+        return Response.json({ status: 'ok', environment: 'development' });
+      }
+      if (path === '/versions.json') {
+        return Response.json({
+          current: '1.55.0',
+          latest: 'widget.js',
+          versions: { 'v1.55.0': 'widget.v1.55.0.js' },
+        });
+      }
+      return new Response('legacy widget');
+    });
+
+    try {
+      await expect(
+        collectBaselineIdentity(expected().origin, fetchImpl as typeof fetch, 10_000, 2)
+      ).rejects.toMatchObject({ code: 'LIVE_FETCH_TIMEOUT' });
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it.each([
+    ['identified development', { environment: 'development', buildSha: SHA }],
+    ['empty development SHA', { environment: 'development', buildSha: '' }],
+    ['malformed development SHA', { environment: 'development', buildSha: 42 }],
+    ['unidentified production', { environment: 'production', buildSha: undefined }],
+    ['unknown environment', { environment: 'staging', buildSha: undefined }],
+  ])('rejects %s as a restorable baseline', (_name, healthIdentity) => {
+    const observed = snapshot();
+    Object.assign(observed.health, healthIdentity);
+    expect(() => observeBaselineSnapshot('https://bugdrop.example.com', observed)).toThrow(
+      LiveVerificationError
+    );
   });
 
   it.each([
