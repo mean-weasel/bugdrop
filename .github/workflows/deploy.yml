@@ -631,9 +631,10 @@ jobs:
             --arg controllerLock "$GITHUB_WORKSPACE/controller/package-lock.json" \
             --arg candidateEntrypoint "$GITHUB_WORKSPACE/candidate/src/index.ts" \
             --arg candidateAssets "$GITHUB_WORKSPACE/candidate/.release-static-package" \
+            --arg bundlePath "$GITHUB_WORKSPACE/approved/state2-bundle.json" \
             --arg targetSha '${{ inputs.target_sha }}' \
             --arg expectedPath "$GITHUB_WORKSPACE/expected.json" \
-            '{$controllerRoot, $candidateRoot, $controllerConfig, $controllerLock, $candidateEntrypoint, $candidateAssets, $targetSha, $expectedPath}' \
+            '{$controllerRoot, $candidateRoot, $controllerConfig, $controllerLock, $candidateEntrypoint, $candidateAssets, $bundlePath, $targetSha, $expectedPath}' \
             > baseline-input.json
           node controller/scripts/release/live-release.mjs baseline baseline-input.json > baseline.json
           test "$(jq -er '.status' baseline.json)" = 'baseline-captured'
@@ -713,11 +714,12 @@ jobs:
             --arg controllerLock "$GITHUB_WORKSPACE/controller/package-lock.json" \
             --arg candidateEntrypoint "$GITHUB_WORKSPACE/candidate/src/index.ts" \
             --arg candidateAssets "$GITHUB_WORKSPACE/candidate/.release-static-package" \
+            --arg bundlePath "$GITHUB_WORKSPACE/release-state/state2-bundle.json" \
             --arg targetSha '${{ inputs.target_sha }}' \
             --arg expectedPath "$GITHUB_WORKSPACE/release-state/expected.json" \
             --arg authorizationPath "$GITHUB_WORKSPACE/release-state/authorization.json" \
             --arg baselinePath "$GITHUB_WORKSPACE/release-state/baseline.json" \
-            '{$controllerRoot, $candidateRoot, $controllerConfig, $controllerLock, $candidateEntrypoint, $candidateAssets, $targetSha, $expectedPath, $authorizationPath, $baselinePath}' \
+            '{$controllerRoot, $candidateRoot, $controllerConfig, $controllerLock, $candidateEntrypoint, $candidateAssets, $bundlePath, $targetSha, $expectedPath, $authorizationPath, $baselinePath}' \
             > deploy-input.json
           node controller/scripts/release/live-release.mjs deploy deploy-input.json > deployment.json
           deployment_status=$(jq -er '.status' deployment.json)

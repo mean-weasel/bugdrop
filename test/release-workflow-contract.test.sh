@@ -6,12 +6,16 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 workflow="$repo_root/.github/workflows/deploy.yml"
 capability_workflow="$repo_root/.github/workflows/cloudflare-capability.yml"
 ci_workflow="$repo_root/.github/workflows/ci.yml"
+live_workflow="$repo_root/.github/workflows/live-tests.yml"
 workflows_dir="$repo_root/.github/workflows"
 
 fail() {
   echo "Release workflow contract failed: $*" >&2
   exit 1
 }
+
+grep -Fq 'timeout-minutes:' "$live_workflow" ||
+  fail 'live verification job lacks an overall timeout'
 
 for controller_context in \
   '--arg eventName "$GITHUB_EVENT_NAME"' \
@@ -257,6 +261,7 @@ for literal in \
   'Revalidate exact plan after protected approval' \
   'node controller/scripts/release/workflow.mjs authorize' \
   'Capture exact production baseline before mutation' \
+  '--arg bundlePath "$GITHUB_WORKSPACE/approved/state2-bundle.json"' \
   'node controller/scripts/release/live-release.mjs baseline'; do
   grep -Fq -- "$literal" <<< "$approval_block" || fail "approval-baseline lacks: $literal"
 done
@@ -274,6 +279,7 @@ for literal in \
   'environment: production' \
   'diff -qr release-state/static-package candidate/.release-static-package' \
   '--arg candidateAssets "$GITHUB_WORKSPACE/candidate/.release-static-package"' \
+  '--arg bundlePath "$GITHUB_WORKSPACE/release-state/state2-bundle.json"' \
   'node controller/scripts/release/live-release.mjs deploy' \
   'Require exact candidate deployment' \
   "test '\${{ steps.deploy.outputs.status }}' = 'candidate-active'"; do
@@ -329,6 +335,7 @@ for literal in \
   'test -s release-state/expected.json' \
   'diff -qr release-state/static-package candidate/.release-static-package' \
   '--arg candidateAssets "$GITHUB_WORKSPACE/candidate/.release-static-package"' \
+  '--arg bundlePath "$GITHUB_WORKSPACE/release-state/state2-bundle.json"' \
   'node controller/scripts/release/live-release.mjs finalize' \
   'Require verified stable or restored production' \
   'test "$status" = '\''no-mutation'\'''; do

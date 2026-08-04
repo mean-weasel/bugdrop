@@ -86,6 +86,7 @@ jobs:
   live-tests:
     name: Live E2E Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       LIVE_TARGET: ${{ github.event_name == 'schedule' && 'preview' || inputs.target || 'preview' }}
       PLAYWRIGHT_BASE_URL: ${{ inputs.target == 'production' && 'https://bugdrop-widget-test.vercel.app' || 'https://bugdrop-widget-test-git-preview-jermwatts-projects.vercel.app' }}

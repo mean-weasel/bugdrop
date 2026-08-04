@@ -170,6 +170,19 @@ export function disabledV2WorkflowBundle({
       },
     ])
   );
+  const aliasTargets = new Map<string, { digest: string; version: string }>();
+  for (const artifact of [
+    ...retention.releases.map(prior => ({
+      digest: prior.asset.sha256,
+      version: prior.version,
+    })),
+    { digest: sha256(widget), version },
+  ]) {
+    const [artifactMajor, artifactMinor] = artifact.version.split('.');
+    for (const line of [artifactMajor, `${artifactMajor}.${artifactMinor}`]) {
+      aliasTargets.set(line, artifact);
+    }
+  }
   const manifestRecord = manifestTransform({
     artifacts: {
       ...priorArtifacts,
@@ -205,14 +218,19 @@ export function disabledV2WorkflowBundle({
         retention.releases.map(prior => [`v${prior.version}`, prior.asset.name])
       ),
       [`v${version}`]: exactName,
-      [`v${major}`]: `widget.v${major}.js`,
-      [`v${major}.${minor}`]: `widget.v${major}.${minor}.js`,
+      ...Object.fromEntries(
+        [...aliasTargets.keys()].map(line => [`v${line}`, `widget.v${line}.js`])
+      ),
     },
     ...manifestChanges,
   });
   const manifest = Buffer.from(`${canonicalize(manifestRecord)}\n`);
   const fileHashes = {
     ...Object.fromEntries(retention.releases.map(prior => [prior.asset.name, prior.asset.sha256])),
+    'widget.js': sha256(widget),
+    ...Object.fromEntries(
+      [...aliasTargets].map(([line, artifact]) => [`widget.v${line}.js`, artifact.digest])
+    ),
     [exactName]: sha256(widget),
     'versions.json': staticManifestHashOverride ?? sha256(manifest),
   };

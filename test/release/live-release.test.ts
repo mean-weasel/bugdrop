@@ -110,6 +110,34 @@ describe('live release production orchestration', () => {
     });
   });
 
+  it('rejects a baseline whose live build differs from the inspected version', async () => {
+    const cloudflare = client();
+    cloudflare.observe.mockResolvedValue({
+      ...state('baseline', null).live,
+      buildSha: 'f'.repeat(40),
+    });
+
+    await expect(
+      captureBaseline({ client: cloudflare, expected, observe: cloudflare.observe })
+    ).rejects.toMatchObject({ code: 'UNSTABLE_PRODUCTION_BASELINE' });
+  });
+
+  it('rejects a deployment change during baseline observation', async () => {
+    const before = state('baseline', SHA);
+    const after = state('other', SHA);
+    const cloudflare = client(before);
+    cloudflare.inspectStatus
+      .mockReturnValueOnce({ status: 'succeeded', value: before.deployment })
+      .mockReturnValueOnce({ status: 'succeeded', value: after.deployment });
+    cloudflare.inspectVersion
+      .mockReturnValueOnce({ status: 'succeeded', value: before.version })
+      .mockReturnValueOnce({ status: 'succeeded', value: after.version });
+
+    await expect(
+      captureBaseline({ client: cloudflare, expected, observe: cloudflare.observe })
+    ).rejects.toMatchObject({ code: 'UNSTABLE_PRODUCTION_BASELINE' });
+  });
+
   it('authoritatively reinspects publication before finalization', async () => {
     const bundle = workflowBundle();
     const publication = validatePublicationBundle(bundle);

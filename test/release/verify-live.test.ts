@@ -67,6 +67,16 @@ describe('explicit live verification', () => {
     });
   });
 
+  it('verifies a retained major/minor alias against the authenticated manifest', () => {
+    const input = expected();
+    input.retainedAssets['widget.v1.55.js'] = RETAINED_HASH;
+    const observed = snapshot();
+    observed.assetHashes['widget.v1.55.js'] = RETAINED_HASH;
+    observed.manifest.versions['v1.55'] = 'widget.v1.55.js';
+
+    expect(verifyLiveSnapshot(input, observed)).toMatchObject({ status: 'verified' });
+  });
+
   it.each([
     ['environment', observed => (observed.health.environment = 'preview')],
     ['build SHA', observed => (observed.health.buildSha = '0'.repeat(40))],
@@ -150,6 +160,20 @@ describe('polling and scheduled observation', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it('enforces one overall live-verification deadline', async () => {
+    await expect(
+      pollLiveVerification({
+        expected: expected(),
+        snapshotProvider: () => new Promise(() => {}),
+        maxAttempts: 1,
+        overallTimeoutMs: 5,
+      })
+    ).rejects.toMatchObject({
+      code: 'LIVE_VERIFICATION_TIMEOUT',
+      details: { lastCode: 'LIVE_OVERALL_TIMEOUT' },
+    });
   });
 
   it('rejects an oversized live widget before buffering its response body', async () => {

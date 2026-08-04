@@ -3,6 +3,7 @@ import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 
 import { canonicalize, compareUtf8 } from './canonical-json.mjs';
+import { MAX_RETAINED_BYTES, MAX_WIDGET_BYTES } from './limits.mjs';
 
 const RETENTION_REQUEST_SCHEMA = 'bugdrop.retention-request/v1';
 const RETENTION_INPUT_SCHEMA = 'bugdrop.retention-input/v1';
@@ -11,8 +12,6 @@ const SHA = /^[0-9a-f]{40}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
 const IDENTITY = /^sha256:[0-9a-f]{64}$/;
 const DECIMAL = /^(0|[1-9]\d*)$/;
-const MAX_ASSET = 16 * 1024 * 1024;
-const MAX_TOTAL = 512 * 1024 * 1024;
 
 class RetentionError extends Error {
   constructor(code, message) {
@@ -208,10 +207,11 @@ export async function writeRetentionInput({ root, requestIdentity, retention, as
   const retainedReleases = [];
   for (const record of retention.releases) {
     const bytes = assets[record.version];
-    if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > MAX_ASSET)
+    if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > MAX_WIDGET_BYTES)
       fail('RETENTION_SIZE_LIMIT', `invalid size for v${record.version}`);
     total += bytes.length;
-    if (total > MAX_TOTAL) fail('RETENTION_SIZE_LIMIT', 'cumulative retained bytes exceed limit');
+    if (total > MAX_RETAINED_BYTES)
+      fail('RETENTION_SIZE_LIMIT', 'cumulative retained bytes exceed limit');
     if (hash(bytes) !== record.asset.sha256) fail('RETAINED_HASH_MISMATCH', `v${record.version}`);
     const assetPath = record.asset.name;
     await writeFile(confined(root, assetPath), bytes, { flag: 'wx' });
@@ -289,12 +289,12 @@ export async function loadRetentionInput(path, requestIdentity, expectedRetentio
       !details.isFile() ||
       details.isSymbolicLink() ||
       details.size < 1 ||
-      details.size > MAX_ASSET
+      details.size > MAX_WIDGET_BYTES
     ) {
       fail('RETENTION_SIZE_LIMIT', `invalid retained file for v${item.version}`);
     }
     totalBytes += details.size;
-    if (totalBytes > MAX_TOTAL)
+    if (totalBytes > MAX_RETAINED_BYTES)
       fail('RETENTION_SIZE_LIMIT', 'cumulative retained bytes exceed limit');
     const bytes = await readFile(assetPath);
     if (hash(bytes) !== item.sha256) fail('RETAINED_HASH_MISMATCH', `v${item.version}`);
