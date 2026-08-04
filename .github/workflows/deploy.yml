@@ -245,6 +245,9 @@ jobs:
             '{requestPlan: $requestPlan[0], candidateAssets: {($name): {base64: ($widget | @base64)}, "versions.json": {base64: ($versions | @base64)}}, sourceDigests: {$worker, $lockfile}, toolchain: {$esbuild, $wrangler}, deploymentConfigDigest: $config, verification: {contract: "release-verification/v1", result: "passed"}}' \
             > bundle-input.json
           node controller/scripts/release/workflow.mjs bundle bundle-input.json > state2-bundle.json
+          install -d "$RUNNER_TEMP/release-plan/static-package"
+          cp state2-bundle.json "$RUNNER_TEMP/release-plan/state2-bundle.json"
+          cp -R "$RUNNER_TEMP/static-package/." "$RUNNER_TEMP/release-plan/static-package/"
           plan_identity=$(jq -er '.finalPlan.planIdentity' state2-bundle.json)
           plan_key=$(jq -er '.finalPlan.planIdentity[7:]' state2-bundle.json)
           tag=$(jq -er '.finalPlan.tag' state2-bundle.json)
@@ -259,9 +262,7 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: release-plan-${{ steps.bundle.outputs.plan_key }}
-          path: |
-            state2-bundle.json
-            ${{ runner.temp }}/static-package/
+          path: ${{ runner.temp }}/release-plan/
           if-no-files-found: error
           retention-days: 14
 
