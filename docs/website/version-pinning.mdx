@@ -66,11 +66,16 @@ This loads the latest `1.1.x` release. You only get patch updates (bug fixes and
 ```
 
 This requests version `1.1.0` from the current deployment. Confirm that its filename and digest appear
-in the live `versions.json` before using it. That manifest authenticates what is deployed now; it does
-not promise that the file will survive the next release. The installed workflow supplies neither a
-prior-release retention plan nor a durable archive input, so no durable retention boundary exists.
+in the live `versions.json` before using it. The repository supports prospective retention from an
+explicitly bootstrapped boundary, but no production boundary or live N/N+1 durability has yet been
+proved. Until that separate operator proof, the manifest authenticates only what is deployed now.
 Historical bytes that are absent from the current deployment and GitHub Release assets are
 unavailable and must not be reconstructed or promised.
+
+After a future authenticated bootstrap publication, a v2 manifest will declare the immutable
+boundary and supported exact set. Code rollback after that point must remain retention-aware; it may
+not discard the boundary or supported files. The repository's offline N/N+1 tests do not themselves
+prove that any production exact URL is durable.
 
 ## How Versioned URLs Work
 
@@ -114,9 +119,9 @@ Here is a decision guide:
 - You have verified its filename and digest against the live `versions.json`
 - You do not depend on that URL remaining available after another release
 
-Production cutover is blocked until a separately reviewed retention wiring package establishes a
-durable boundary and a later authorized operator phase proves N/N+1 behavior. Until then, use a
-separately controlled archive if your application requires cross-release reproducibility.
+Production cutover is blocked until a separately authorized operator phase establishes the boundary
+and proves live N/N+1 behavior. Until then, use a separately controlled archive if your application
+requires cross-release reproducibility.
 
 ## Upgrading Versions
 

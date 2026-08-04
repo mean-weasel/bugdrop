@@ -29,12 +29,17 @@ export function normalizeCanonicalValue(value, ancestors = new Set()) {
     }
     return Object.fromEntries(
       normalizedEntries
-        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+        .sort(([left], [right]) => compareUtf8(left, right))
         .map(([key, item]) => [key, normalizeCanonicalValue(item, ancestors)])
     );
   } finally {
     ancestors.delete(value);
   }
+}
+
+/** Locale-independent ordering for protocol strings and normalized POSIX paths. */
+export function compareUtf8(left, right) {
+  return Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'));
 }
 
 export function canonicalize(value) {

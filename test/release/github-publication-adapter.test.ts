@@ -45,16 +45,23 @@ describe('GitHub publication inspection', () => {
           draft: false,
           prerelease: false,
           published_at: '2026-08-03T12:00:00Z',
-          assets: [{ name: 'widget.v1.2.3.js', url: `${API}/assets/7` }],
+          assets: [
+            {
+              id: 7,
+              name: 'widget.v1.2.3.js',
+              url: `${API}/repos/mean-weasel/bugdrop/releases/assets/7`,
+              size: Buffer.byteLength('widget-bytes'),
+            },
+          ],
         });
       }
-      if (url.pathname === '/assets/7') {
+      if (url.pathname === '/repos/mean-weasel/bugdrop/releases/assets/7') {
         return new Response(null, {
           status: 302,
-          headers: { location: 'https://objects.example.test/widget' },
+          headers: { location: 'https://objects.githubusercontent.com/widget' },
         });
       }
-      if (url.origin === 'https://objects.example.test') {
+      if (url.origin === 'https://objects.githubusercontent.com') {
         return new Response(Buffer.from('widget-bytes'));
       }
       throw new Error(`unexpected ${url.pathname}`);

@@ -65,7 +65,7 @@ top_level_events=$(awk '
 [[ "$top_level_events" == 'workflow_dispatch:' ]] ||
   fail "workflow_dispatch must be the only trigger; found: $top_level_events"
 
-for input in target_sha bump release_reason rationale operator_notes dry_run; do
+for input in target_sha bump release_reason rationale operator_notes dry_run retention_bootstrap; do
   require_literal "      $input:"
 done
 for literal in \
@@ -159,13 +159,14 @@ for literal in \
   'npm run build' \
   'node controller/scripts/build-widget.js' \
   '--mode release' \
-  '--rawfile widget "$RUNNER_TEMP/static-package/$exact_name"' \
-  '--rawfile versions "$RUNNER_TEMP/static-package/versions.json"' \
+  '--retention-plan request/retention-input/retention-plan.json' \
+  '--request-plan request/request-plan.json' \
+  '--result-path "$RUNNER_TEMP/builder-result.json"' \
+  'node controller/scripts/release/workflow.mjs bundle-static' \
   'requestPlan: $requestPlan[0]' \
-  'base64: ($widget | @base64)' \
-  'base64: ($versions | @base64)' \
-  'node controller/scripts/release/workflow.mjs bundle' \
-  'static-package/versions.json' \
+  'builderResultPath' \
+  'request/retention-input/retention-plan.json' \
+  'staticPackageDir' \
   'retention-days: 14'; do
   grep -Fq -- "$literal" <<< "$verify_block" || fail "verify-candidate lacks: $literal"
 done
@@ -179,15 +180,14 @@ fi
 
 bundle_shape=$(jq -n \
   --argjson requestPlan '[{"schema":"proof"}]' \
-  --arg name 'widget.v1.2.3.js' \
-  --arg widget 'widget bytes' \
-  --arg versions 'manifest bytes' \
-  '{requestPlan: $requestPlan[0], candidateAssets: {($name): {base64: ($widget | @base64)}, "versions.json": {base64: ($versions | @base64)}}}')
+  --arg staticPackageDir '/tmp/static-package' \
+  --arg builderResultPath '/tmp/builder-result.json' \
+  '{requestPlan: $requestPlan[0], $staticPackageDir, $builderResultPath}')
 jq -e '
   .requestPlan.schema == "proof" and
-  (.candidateAssets["widget.v1.2.3.js"].base64 | @base64d) == "widget bytes" and
-  (.candidateAssets["versions.json"].base64 | @base64d) == "manifest bytes"
-' <<< "$bundle_shape" >/dev/null || fail 'bundle-input jq shape is not executable or byte-safe'
+  .staticPackageDir == "/tmp/static-package" and
+  .builderResultPath == "/tmp/builder-result.json"
+' <<< "$bundle_shape" >/dev/null || fail 'bundle-input jq shape is not executable or path-safe'
 if grep -Eq 'secrets\.|environment:' <<< "$verify_block"; then
   fail 'candidate verification must not reference secrets or an environment'
 fi
@@ -234,6 +234,10 @@ for literal in \
   'node controller/scripts/release/live-release.mjs baseline'; do
   grep -Fq -- "$literal" <<< "$approval_block" || fail "approval-baseline lacks: $literal"
 done
+[[ $(grep -Fc 'RETENTION_BOOTSTRAP: ${{ inputs.retention_bootstrap }}' "$workflow") -eq 2 ]] ||
+  fail 'bootstrap authority must be identical during planning and protected revalidation'
+grep -Fq 'RETENTION_BOOTSTRAP: ${{ inputs.retention_bootstrap }}' <<< "$approval_block" ||
+  fail 'protected revalidation omits bootstrap authority'
 for secret in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN; do
   grep -Fq "secrets.$secret" <<< "$approval_block" || fail "baseline lacks named $secret"
 done
@@ -310,5 +314,19 @@ wrangler_deploy_matches=$(grep -RInF --include='*.yml' --include='*.yaml' -- 'wr
   fail "only preview CI may deploy before WP7: $wrangler_deploy_matches"
 [[ "$wrangler_deploy_matches" == *'.github/workflows/ci.yml:'*'wrangler deploy --env preview'* ]] ||
   fail "remaining Wrangler deploy is not preview-only: $wrangler_deploy_matches"
+
+(
+  cd "$repo_root"
+  npx vitest run test/release/retention-integration.test.ts \
+    -t 'authenticates published v2 N through createGithubTransport, handoff, CLI, and real State 2' \
+    >/dev/null
+) || fail 'installed builder-result to bundle-static boundary did not execute successfully'
+
+(
+  cd "$repo_root"
+  npx vitest run test/release/github-adapter.test.ts \
+    -t 'reproduces protected bootstrap history revalidation exactly' \
+    >/dev/null
+) || fail 'protected bootstrap/history revalidation did not execute successfully'
 
 echo 'Guarded manual release workflow contract checks passed'

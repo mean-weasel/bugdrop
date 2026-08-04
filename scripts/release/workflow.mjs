@@ -2,13 +2,15 @@
 
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { canonicalize } from './canonical-json.mjs';
+import { canonicalize, compareUtf8 } from './canonical-json.mjs';
 import { buildFinalPlan, buildReleaseContent, normalizeDispatch } from './plan.mjs';
 import { createRecoveryEvidence } from './production-state.mjs';
 import { validatePublicationBundle } from './publication.mjs';
+import { hashStaticTree, validateStaticTreeRecord } from './static-tree.mjs';
 
 const WORKFLOW_PROTOCOL = 'bugdrop.release-workflow/v1';
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
@@ -58,6 +60,9 @@ export function createState2Bundle(input) {
     toolchain: input.toolchain,
     deploymentConfigDigest: input.deploymentConfigDigest,
     verification: input.verification,
+    ...(input.staticPackage
+      ? { publicationAssetHashes: artifactHashes, staticPackage: input.staticPackage }
+      : {}),
   });
   const finalPlan = buildFinalPlan({ requestPlan: input.requestPlan, releaseContent });
   const assets = {
@@ -67,7 +72,7 @@ export function createState2Bundle(input) {
     'final-release-plan.json': Buffer.from(`${canonicalize(finalPlan)}\n`),
   };
   const checksums = Object.entries(assets)
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => compareUtf8(left, right))
     .map(([name, bytes]) => `${sha256(bytes)}  ${name}`)
     .join('\n');
   assets['checksums.sha256'] = Buffer.from(`${checksums}\n`);
@@ -78,6 +83,191 @@ export function createState2Bundle(input) {
     assets,
   });
   return { requestPlan: input.requestPlan, releaseContent, finalPlan, assets };
+}
+
+async function readCanonicalJson(path, field) {
+  const bytes = await readFile(path);
+  let value;
+  try {
+    value = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    fail('INVALID_STATIC_PACKAGE', `${field} is not JSON`);
+  }
+  if (!bytes.equals(Buffer.from(`${canonicalize(value)}\n`))) {
+    fail('INVALID_STATIC_PACKAGE', `${field} is not canonical`);
+  }
+  return value;
+}
+
+function expectedChecksums(fileHashes) {
+  return `${Object.entries(fileHashes)
+    .filter(([path]) => path !== 'checksums.sha256')
+    .sort(([left], [right]) => compareUtf8(left, right))
+    .map(([path, digest]) => `${digest}  ${path}`)
+    .join('\n')}\n`;
+}
+
+async function validateStaticPackageSemantics(input, staticPackage) {
+  const root = input.staticPackageDir;
+  const requestPlan = input.requestPlan;
+  const retention = requestPlan.retention;
+  const version = requestPlan.request.nextTag.slice(1);
+  const exactFilename = `widget.v${version}.js`;
+  const hashes = staticPackage.fileHashes;
+  const manifest = await readCanonicalJson(join(root, 'versions.json'), 'versions.json');
+  const metadata = await readCanonicalJson(
+    join(root, 'static-package.json'),
+    'static-package.json'
+  );
+  const checksumBytes = await readFile(join(root, 'checksums.sha256'), 'utf8');
+  if (checksumBytes !== expectedChecksums(hashes)) {
+    fail('STATIC_CHECKSUM_MISMATCH', 'checksums.sha256 does not bind the exact static tree');
+  }
+  const publicationNames = [...requestPlan.attestation.expectedAssetNames].sort(compareUtf8);
+  if (!same(publicationNames, [exactFilename, 'versions.json'].sort(compareUtf8))) {
+    fail('INVALID_STATIC_PACKAGE', 'publication asset names do not match the candidate version');
+  }
+  const currentHash = hashes[exactFilename];
+  if (
+    !currentHash ||
+    manifest.current !== version ||
+    manifest.repository !== requestPlan.request.repository ||
+    manifest.authoritative !== true ||
+    manifest.mode !== 'release' ||
+    manifest.latest !== 'widget.js' ||
+    manifest.generatedAt !== requestPlan.attestation.candidateCommitTimestamp ||
+    metadata.schema !== 'bugdrop.static-package/v1' ||
+    metadata.mode !== 'release' ||
+    metadata.version !== version ||
+    metadata.targetSha !== requestPlan.request.targetSha ||
+    metadata.timestamp !== requestPlan.attestation.candidateCommitTimestamp
+  ) {
+    fail('INVALID_STATIC_PACKAGE', 'manifest current identity differs from the request');
+  }
+  const aliases = requestPlan.attestation.expectedAliases;
+  if (!Array.isArray(aliases) || aliases.some(alias => hashes[alias] !== currentHash)) {
+    fail('STATIC_ALIAS_MISMATCH', 'every approved alias must contain exact current bytes');
+  }
+  const exactPaths = Object.keys(hashes)
+    .filter(path => /^widget\.v\d+\.\d+\.\d+\.js$/.test(path))
+    .sort(compareUtf8);
+  const expectedRetained = retention?.expectedRetainedVersions ?? [];
+  const expectedExactPaths = [
+    ...expectedRetained.map(item => `widget.v${item}.js`),
+    exactFilename,
+  ].sort(compareUtf8);
+  if (!same(exactPaths, expectedExactPaths)) {
+    fail('RETAINED_SET_MISMATCH', 'static exact-version paths differ from the approved set');
+  }
+  const [major, minor] = version.split('.');
+  const expectedVersions = Object.fromEntries(
+    [
+      ...expectedExactPaths.map(path => [`v${path.slice(8, -3)}`, path]),
+      [`v${major}`, `widget.v${major}.js`],
+      [`v${major}.${minor}`, `widget.v${major}.${minor}.js`],
+    ].sort(([left], [right]) => compareUtf8(left, right))
+  );
+  if (!same(manifest.versions, expectedVersions)) {
+    fail('RETENTION_MANIFEST_MISMATCH', 'manifest version map differs from approved paths');
+  }
+  if (retention?.mode === 'bootstrap' || retention?.mode === 'continue') {
+    if (
+      manifest.schema !== 'bugdrop.versions-manifest/v2' ||
+      manifest.cutoverVersion !== retention.cutoverVersion ||
+      !same(
+        Object.keys(manifest.artifacts ?? {}).sort(compareUtf8),
+        [...expectedRetained.map(item => `v${item}`), `v${version}`].sort(compareUtf8)
+      )
+    ) {
+      fail(
+        'RETENTION_MANIFEST_MISMATCH',
+        'v2 manifest does not project the approved retention set'
+      );
+    }
+    for (const record of retention.releases) {
+      const expected = {
+        downloadUrl: record.asset.downloadUrl,
+        filename: record.asset.name,
+        sha256: record.asset.sha256,
+        tag: record.tag,
+        targetSha: record.targetSha,
+        version: record.version,
+      };
+      if (
+        !same(manifest.artifacts[`v${record.version}`], expected) ||
+        hashes[record.asset.name] !== record.asset.sha256
+      ) {
+        fail('RETAINED_BYTE_MISMATCH', `retained v${record.version} differs from its authority`);
+      }
+    }
+    const current = manifest.artifacts[`v${version}`];
+    const expectedCurrent = {
+      downloadUrl: `https://github.com/${requestPlan.request.repository}/releases/download/${requestPlan.request.nextTag}/${exactFilename}`,
+      filename: exactFilename,
+      sha256: currentHash,
+      tag: requestPlan.request.nextTag,
+      targetSha: requestPlan.request.targetSha,
+      version,
+    };
+    if (!same(current, expectedCurrent)) {
+      fail('INVALID_STATIC_PACKAGE', 'current manifest record differs from current bytes');
+    }
+  } else {
+    const expectedCurrent = {
+      archiveUrl: `https://github.com/${requestPlan.request.repository}/releases/download/${requestPlan.request.nextTag}/${exactFilename}`,
+      filename: exactFilename,
+      publishedAt: requestPlan.attestation.candidateCommitTimestamp,
+      sha256: currentHash,
+      targetSha: requestPlan.request.targetSha,
+    };
+    if (
+      retention?.mode !== 'disabled' ||
+      manifest.schema !== 'bugdrop.versions-manifest/v1' ||
+      manifest.cutoverVersion !== version ||
+      expectedRetained.length !== 0 ||
+      exactPaths.length !== 1 ||
+      !same(Object.keys(manifest.artifacts ?? {}), [`v${version}`]) ||
+      !same(manifest.artifacts[`v${version}`], expectedCurrent)
+    ) {
+      fail(
+        'RETENTION_MANIFEST_MISMATCH',
+        'disabled retention must preserve v1 current-only output'
+      );
+    }
+  }
+  return manifest;
+}
+
+/** Installed State-2 boundary: enumerate the deployment tree independently of the builder. */
+export async function createState2BundleFromStaticPackage(input) {
+  if (!input.builderResultPath) {
+    fail('INVALID_STATE2_INPUT', 'installed State 2 requires the controller builder result');
+  }
+  const builderResult = await readCanonicalJson(input.builderResultPath, 'builder result');
+  if (
+    builderResult?.schema !== 'bugdrop.builder-result/v1' ||
+    builderResult.requestIdentity !== input.requestPlan.requestIdentity ||
+    !same(Object.keys(builderResult).sort(compareUtf8), [
+      'requestIdentity',
+      'schema',
+      'staticPackage',
+    ])
+  ) {
+    fail('BUILDER_RESULT_MISMATCH', 'builder result does not bind the approved request');
+  }
+  const builtStaticPackage = validateStaticTreeRecord(builderResult.staticPackage);
+  const staticPackage = await hashStaticTree(input.staticPackageDir);
+  if (staticPackage.contentIdentity !== builtStaticPackage.contentIdentity) {
+    fail('BUILDER_RESULT_MISMATCH', 'static tree changed after controller package generation');
+  }
+  await validateStaticPackageSemantics(input, staticPackage);
+  const names = input.requestPlan.attestation.expectedAssetNames;
+  const candidateAssets = Object.fromEntries(
+    await Promise.all(
+      names.map(async name => [name, await readFile(join(input.staticPackageDir, name))])
+    )
+  );
+  return createState2Bundle({ ...input, candidateAssets, staticPackage });
 }
 
 export function validateControllerContext(input) {
@@ -111,8 +301,10 @@ function verifyArtifact(expected, artifact) {
     artifact.planIdentity !== expected.planIdentity ||
     artifact.contentIdentity !== expected.marker.contentIdentity ||
     artifact.requestIdentity !== expected.marker.requestIdentity ||
+    (expected.protocol === 'release-plan/v2' &&
+      artifact.staticPackageIdentity !== expected.staticPackageIdentity) ||
     !Array.isArray(artifact.verifiedAssetNames) ||
-    !same([...artifact.verifiedAssetNames].sort(), expected.requiredAssets)
+    !same([...artifact.verifiedAssetNames].sort(compareUtf8), expected.requiredAssets)
   ) {
     fail('ARTIFACT_IDENTITY_MISMATCH', 'immutable State 2 artifact does not match the plan');
   }
@@ -299,11 +491,13 @@ async function runCli() {
           ),
         })
       ),
+    'bundle-static': async value =>
+      dehydrateBundle(await createState2BundleFromStaticPackage(value)),
     core: classifyCoreOutcome,
     finalize: createFinalizationDecision,
   };
   if (!operations[mode]) fail('INVALID_CLI', `unsupported mode ${mode ?? '<missing>'}`);
-  process.stdout.write(`${canonicalize(operations[mode](input))}\n`);
+  process.stdout.write(`${canonicalize(await operations[mode](input))}\n`);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {

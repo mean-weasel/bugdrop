@@ -2,10 +2,12 @@ import { createHash } from 'node:crypto';
 import { copyFile, lstat, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 
-import { canonicalHash, canonicalize } from './canonical-json.mjs';
+import { canonicalize, compareUtf8 } from './canonical-json.mjs';
+import { hashStaticTree } from './static-tree.mjs';
 
 const STATIC_PACKAGE_SCHEMA = 'bugdrop.static-package/v1';
 const VERSIONS_SCHEMA = 'bugdrop.versions-manifest/v1';
+const VERSIONS_SCHEMA_V2 = 'bugdrop.versions-manifest/v2';
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
@@ -13,9 +15,7 @@ const IDENTITY_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const GENERATED_PATTERN =
   /^(?:widget\.js|widget\.v[^/]+\.js|versions\.json|checksums\.sha256|static-package\.json)$/;
 
-function compareText(left, right) {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
+const compareText = compareUtf8;
 
 export class ReleaseStaticError extends Error {
   constructor(code, message, details = {}) {
@@ -179,7 +179,10 @@ async function stageRetainedAssets(input, outputDir) {
     if (seen.has(record.version)) fail('DUPLICATE_RETAINED_ASSET', `duplicate v${record.version}`);
     seen.add(record.version);
   }
-  if (canonicalize([...seen].sort()) !== canonicalize([...expected].sort())) {
+  if (
+    canonicalize([...seen].sort(compareVersions)) !==
+    canonicalize([...expected].sort(compareVersions))
+  ) {
     fail('RETAINED_SET_MISMATCH', 'retained archives do not match the declared complete set');
   }
   const artifacts = {};
@@ -200,9 +203,10 @@ async function stageRetainedAssets(input, outputDir) {
     const filename = `widget.v${record.version}.js`;
     await writeFile(join(outputDir, filename), bytes, { flag: 'wx' });
     artifacts[`v${record.version}`] = {
-      archiveUrl: record.archiveUrl,
+      ...(input.retentionMode
+        ? { downloadUrl: record.archiveUrl, tag: `v${record.version}`, version: record.version }
+        : { archiveUrl: record.archiveUrl, publishedAt: record.publishedAt }),
       filename,
-      publishedAt: record.publishedAt,
       sha256: actual,
       targetSha: record.targetSha,
     };
@@ -212,8 +216,11 @@ async function stageRetainedAssets(input, outputDir) {
 
 function validatePackageInput(input) {
   parseVersion(input.version);
-  parseVersion(input.cutoverVersion, 'cutoverVersion');
-  if (compareVersions(input.cutoverVersion, input.version) > 0) {
+  if (input.retentionMode !== 'disabled') parseVersion(input.cutoverVersion, 'cutoverVersion');
+  if (
+    input.retentionMode !== 'disabled' &&
+    compareVersions(input.cutoverVersion, input.version) > 0
+  ) {
     fail('INVALID_RETENTION_CUTOVER', 'cutover cannot be newer than the current version');
   }
   timestamp(input.timestamp);
@@ -245,12 +252,14 @@ export async function createReleaseStaticPackage(input) {
   ];
   for (const filename of aliases)
     await writeFile(join(input.outputDir, filename), input.bundleBytes, { flag: 'wx' });
-  const artifacts = await stageRetainedAssets(input, input.outputDir);
+  const artifacts =
+    input.retentionMode === 'disabled' ? {} : await stageRetainedAssets(input, input.outputDir);
   const bundleHash = sha256(input.bundleBytes);
   artifacts[`v${input.version}`] = {
-    archiveUrl: input.currentArchiveUrl,
+    ...(input.retentionMode && input.retentionMode !== 'disabled'
+      ? { downloadUrl: input.currentArchiveUrl, tag: `v${input.version}`, version: input.version }
+      : { archiveUrl: input.currentArchiveUrl, publishedAt: input.timestamp }),
     filename: exactFilename,
-    publishedAt: input.timestamp,
     sha256: bundleHash,
     targetSha: input.targetSha,
   };
@@ -268,12 +277,15 @@ export async function createReleaseStaticPackage(input) {
     artifacts,
     authoritative: true,
     current: input.version,
-    cutoverVersion: input.cutoverVersion,
+    cutoverVersion: input.retentionMode === 'disabled' ? input.version : input.cutoverVersion,
     generatedAt: input.timestamp,
     latest: 'widget.js',
     mode: 'release',
     repository: input.repository,
-    schema: VERSIONS_SCHEMA,
+    schema:
+      input.retentionMode && input.retentionMode !== 'disabled'
+        ? VERSIONS_SCHEMA_V2
+        : VERSIONS_SCHEMA,
     versions,
   };
   await writeFile(join(input.outputDir, 'versions.json'), `${canonicalize(manifest)}\n`, {
@@ -297,10 +309,11 @@ export async function createReleaseStaticPackage(input) {
     .map(([path, hash]) => `${hash}  ${path}`)
     .join('\n');
   await writeFile(join(input.outputDir, 'checksums.sha256'), `${checksums}\n`, { flag: 'wx' });
-  const fileHashes = await hashTree(input.outputDir);
+  const staticTree = await hashStaticTree(input.outputDir);
   return {
-    contentIdentity: canonicalHash({ schema: STATIC_PACKAGE_SCHEMA, fileHashes }),
-    fileHashes,
+    contentIdentity: staticTree.contentIdentity,
+    fileHashes: staticTree.fileHashes,
+    staticPackage: staticTree,
     outputDir: input.outputDir,
   };
 }
@@ -331,8 +344,19 @@ export async function createDevelopmentStaticPackage(input) {
 
 export function resolveStaticArtifactRetry(input) {
   assertMatch(input.expectedContentIdentity, IDENTITY_PATTERN, 'expectedContentIdentity');
+  const identityFields = ['RequestIdentity', 'StaticPackageIdentity', 'PlanIdentity'];
+  for (const suffix of identityFields) {
+    const expected = input[`expected${suffix}`];
+    if (expected !== undefined) assertMatch(expected, IDENTITY_PATTERN, `expected${suffix}`);
+  }
+  const identitiesMatch = prefix =>
+    input[`${prefix}ContentIdentity`] === input.expectedContentIdentity &&
+    identityFields.every(suffix => {
+      const expected = input[`expected${suffix}`];
+      return expected === undefined || input[`${prefix}${suffix}`] === expected;
+    });
   if (input.artifactStatus === 'available') {
-    if (!input.artifactId || input.storedContentIdentity !== input.expectedContentIdentity) {
+    if (!input.artifactId || !identitiesMatch('stored')) {
       fail(
         'ARTIFACT_IDENTITY_MISMATCH',
         'available artifact is not the planned immutable artifact'
@@ -341,10 +365,26 @@ export function resolveStaticArtifactRetry(input) {
     return { kind: 'reuse-artifact', artifactId: input.artifactId };
   }
   if (input.artifactStatus === 'expired') {
-    if (input.rebuiltContentIdentity === input.expectedContentIdentity) {
-      return { kind: 'rebuilt-exact', contentIdentity: input.rebuiltContentIdentity };
+    if (identitiesMatch('rebuilt')) {
+      return {
+        kind: 'rebuilt-exact',
+        contentIdentity: input.rebuiltContentIdentity,
+        ...Object.fromEntries(
+          identityFields
+            .filter(suffix => input[`expected${suffix}`] !== undefined)
+            .map(suffix => [
+              `${suffix[0].toLowerCase()}${suffix.slice(1)}`,
+              input[`rebuilt${suffix}`],
+            ])
+        ),
+      };
     }
-    return { kind: 'new-plan-required', reason: 'content-identity-mismatch' };
+    return {
+      kind: 'new-plan-required',
+      reason: identityFields.some(suffix => input[`expected${suffix}`] !== undefined)
+        ? 'total-identity-mismatch'
+        : 'content-identity-mismatch',
+    };
   }
   fail('ARTIFACT_STATE_UNCERTAIN', `unsupported artifact status ${input.artifactStatus}`);
 }

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { canonicalize } from './canonical-json.mjs';
+import { canonicalize, compareUtf8 } from './canonical-json.mjs';
 import { observeGitRange } from './git-observer.mjs';
 import {
   buildReleaseInventory,
@@ -17,11 +18,16 @@ import {
   validateSourceContext,
 } from './plan.mjs';
 import { validatePublicationBundle } from './publication.mjs';
+import { deriveRetentionRequest, writeRetentionInput } from './retention.mjs';
 
 const API_VERSION = '2022-11-28';
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const TAG_PATTERN = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+const MAX_ASSET_BYTES = 16 * 1024 * 1024;
+const MAX_RETAINED_BYTES = 512 * 1024 * 1024;
+const ASSET_TIMEOUT_MS = 30_000;
+const sha256Bytes = bytes => createHash('sha256').update(bytes).digest('hex');
 
 export class GithubAdapterError extends Error {
   constructor(code, message, details = {}) {
@@ -47,12 +53,54 @@ function assertInput(repository, targetSha) {
   }
 }
 
+function compareReleaseTags(left, right) {
+  const a = left.tag.slice(1).split('.').map(BigInt);
+  const b = right.tag.slice(1).split('.').map(BigInt);
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1;
+  }
+  return 0;
+}
+
 export function createGithubTransport({
   token,
   fetchImpl = fetch,
   apiUrl = 'https://api.github.com',
 }) {
   if (typeof token !== 'string' || !token) fail('TOKEN_REQUIRED', 'an explicit token is required');
+  const apiOrigin = new URL(apiUrl).origin;
+  const storageOrigins = new Set([
+    'https://objects.githubusercontent.com',
+    'https://release-assets.githubusercontent.com',
+    'https://github-releases.githubusercontent.com',
+  ]);
+  async function boundedBytes(response, { expectedSize, maxBytes }) {
+    const declared = response.headers.get('content-length');
+    if (declared !== null) {
+      const length = Number(declared);
+      if (!Number.isSafeInteger(length) || length < 0 || length > maxBytes)
+        fail('GITHUB_ASSET_FAILED', 'asset Content-Length exceeds its bound');
+      if (expectedSize !== undefined && length !== expectedSize)
+        fail('GITHUB_ASSET_FAILED', 'asset Content-Length differs from GitHub metadata');
+    }
+    if (!response.body) fail('GITHUB_ASSET_FAILED', 'asset response body is unavailable');
+    const chunks = [];
+    let total = 0;
+    const reader = response.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        fail('GITHUB_ASSET_FAILED', 'asset exceeds its streamed byte bound');
+      }
+      chunks.push(Buffer.from(value));
+    }
+    if (expectedSize !== undefined && total !== expectedSize)
+      fail('GITHUB_ASSET_FAILED', 'asset response is truncated or oversized');
+    return Buffer.concat(chunks, total);
+  }
   return {
     async request(path) {
       const response = await fetchImpl(new URL(path, `${apiUrl.replace(/\/$/, '')}/`), {
@@ -77,31 +125,66 @@ export function createGithubTransport({
       }
       return { data, hasNext: /<[^>]+>;\s*rel="next"/.test(response.headers.get('link') ?? '') };
     },
-    async requestBytes(path) {
-      let response = await fetchImpl(new URL(path, `${apiUrl.replace(/\/$/, '')}/`), {
-        headers: {
-          accept: 'application/octet-stream',
-          authorization: `Bearer ${token}`,
-          'x-github-api-version': API_VERSION,
-        },
-        redirect: 'manual',
-      });
-      if ([301, 302, 303, 307, 308].includes(response.status)) {
-        const location = response.headers.get('location');
-        if (!location?.startsWith('https://')) {
-          fail('GITHUB_ASSET_FAILED', 'GitHub asset redirect is not trusted HTTPS');
+    async requestBytes(path, options = {}) {
+      const assetUrl = new URL(path, `${apiUrl.replace(/\/$/, '')}/`);
+      const expectedPath =
+        options.repository && options.assetId
+          ? `/repos/${options.repository}/releases/assets/${options.assetId}`
+          : null;
+      if (
+        assetUrl.origin !== apiOrigin ||
+        !/^\/repos\/[^/]+\/[^/]+\/releases\/assets\/\d+$/.test(assetUrl.pathname) ||
+        (expectedPath && assetUrl.pathname !== expectedPath)
+      ) {
+        fail('GITHUB_ASSET_FAILED', 'asset API identity is outside the selected repository path');
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), ASSET_TIMEOUT_MS);
+      try {
+        let response = await fetchImpl(assetUrl, {
+          headers: {
+            accept: 'application/octet-stream',
+            authorization: `Bearer ${token}`,
+            'x-github-api-version': API_VERSION,
+          },
+          redirect: 'manual',
+          signal: controller.signal,
+        });
+        if ([301, 302, 303, 307, 308].includes(response.status)) {
+          const location = response.headers.get('location');
+          let redirect;
+          try {
+            redirect = new URL(location);
+          } catch {
+            fail('GITHUB_ASSET_FAILED', 'GitHub asset redirect is malformed');
+          }
+          if (
+            redirect.protocol !== 'https:' ||
+            redirect.username ||
+            redirect.password ||
+            !storageOrigins.has(redirect.origin)
+          ) {
+            fail('GITHUB_ASSET_FAILED', 'GitHub asset redirect is not trusted HTTPS');
+          }
+          response = await fetchImpl(redirect, {
+            headers: { accept: 'application/octet-stream' },
+            redirect: 'error',
+            signal: controller.signal,
+          });
         }
-        response = await fetchImpl(location, {
-          headers: { accept: 'application/octet-stream' },
-          redirect: 'error',
-        });
+        if (!response.ok) {
+          fail('GITHUB_ASSET_FAILED', `GitHub asset returned ${response.status}`, {
+            status: response.status,
+          });
+        }
+        const maxBytes = Math.min(options.maxBytes ?? MAX_ASSET_BYTES, MAX_ASSET_BYTES);
+        return await boundedBytes(response, { expectedSize: options.expectedSize, maxBytes });
+      } catch (error) {
+        if (error instanceof GithubAdapterError) throw error;
+        fail('GITHUB_ASSET_FAILED', 'GitHub asset request failed or timed out');
+      } finally {
+        clearTimeout(timer);
       }
-      if (!response.ok) {
-        fail('GITHUB_ASSET_FAILED', `GitHub asset returned ${response.status}`, {
-          status: response.status,
-        });
-      }
-      return Buffer.from(await response.arrayBuffer());
     },
   };
 }
@@ -151,6 +234,130 @@ function canonicalAsset(assets, name) {
   return value;
 }
 
+function exactObjectKeys(value, keys) {
+  return (
+    value?.constructor === Object &&
+    canonicalize(Object.keys(value).sort(compareUtf8)) === canonicalize([...keys].sort(compareUtf8))
+  );
+}
+
+function validateDisabledManifest({
+  manifest,
+  release,
+  requestPlan,
+  releaseContent,
+  exact,
+  sha256,
+}) {
+  const version = release.tag.slice(1);
+  const [major, minor] = version.split('.');
+  const artifact = manifest?.artifacts?.[`v${version}`];
+  const expectedVersions = {
+    [`v${version}`]: exact.name,
+    [`v${major}`]: `widget.v${major}.js`,
+    [`v${major}.${minor}`]: `widget.v${major}.${minor}.js`,
+  };
+  if (
+    requestPlan.retention?.mode !== 'disabled' ||
+    !exactObjectKeys(manifest, [
+      'artifacts',
+      'authoritative',
+      'current',
+      'cutoverVersion',
+      'generatedAt',
+      'latest',
+      'mode',
+      'repository',
+      'schema',
+      'versions',
+    ]) ||
+    manifest.schema !== 'bugdrop.versions-manifest/v1' ||
+    manifest.authoritative !== true ||
+    manifest.mode !== 'release' ||
+    manifest.current !== version ||
+    manifest.cutoverVersion !== version ||
+    manifest.generatedAt !== requestPlan.attestation.candidateCommitTimestamp ||
+    manifest.latest !== 'widget.js' ||
+    manifest.repository !== requestPlan.request.repository ||
+    !exactObjectKeys(manifest.artifacts, [`v${version}`]) ||
+    !exactObjectKeys(artifact, ['archiveUrl', 'filename', 'publishedAt', 'sha256', 'targetSha']) ||
+    artifact.archiveUrl !== exact.downloadUrl ||
+    artifact.filename !== exact.name ||
+    artifact.publishedAt !== requestPlan.attestation.candidateCommitTimestamp ||
+    artifact.sha256 !== sha256 ||
+    artifact.targetSha !== release.targetSha ||
+    canonicalize(manifest.versions) !== canonicalize(expectedVersions) ||
+    releaseContent.staticPackage?.fileHashes?.[exact.name] !== sha256
+  ) {
+    fail('PUBLISHED_ASSET_INVALID', `${release.tag} disabled manifest is inconsistent`);
+  }
+}
+
+function validateActiveManifest({
+  manifest,
+  manifestBytes,
+  release,
+  requestPlan,
+  releaseContent,
+  exact,
+  exactSha256,
+}) {
+  const version = release.tag.slice(1);
+  const [major, minor] = version.split('.');
+  const retention = requestPlan.retention;
+  const artifacts = Object.fromEntries([
+    ...retention.releases.map(prior => [
+      `v${prior.version}`,
+      {
+        downloadUrl: prior.asset.downloadUrl,
+        filename: prior.asset.name,
+        sha256: prior.asset.sha256,
+        tag: prior.tag,
+        targetSha: prior.targetSha,
+        version: prior.version,
+      },
+    ]),
+    [
+      `v${version}`,
+      {
+        downloadUrl: exact.downloadUrl,
+        filename: exact.name,
+        sha256: exactSha256,
+        tag: release.tag,
+        targetSha: release.targetSha,
+        version,
+      },
+    ],
+  ]);
+  const versions = Object.fromEntries([
+    ...Object.values(artifacts).map(artifact => [`v${artifact.version}`, artifact.filename]),
+    [`v${major}`, `widget.v${major}.js`],
+    [`v${major}.${minor}`, `widget.v${major}.${minor}.js`],
+  ]);
+  const expected = {
+    artifacts,
+    authoritative: true,
+    current: version,
+    cutoverVersion: retention.cutoverVersion,
+    generatedAt: requestPlan.attestation.candidateCommitTimestamp,
+    latest: 'widget.js',
+    mode: 'release',
+    repository: requestPlan.request.repository,
+    schema: 'bugdrop.versions-manifest/v2',
+    versions,
+  };
+  const manifestSha256 = sha256Bytes(manifestBytes);
+  if (
+    !['bootstrap', 'continue'].includes(retention.mode) ||
+    canonicalize(manifest) !== canonicalize(expected) ||
+    releaseContent.publicationAssetHashes?.['versions.json'] !== manifestSha256 ||
+    releaseContent.staticPackage?.fileHashes?.['versions.json'] !== manifestSha256 ||
+    releaseContent.staticPackage?.fileHashes?.[exact.name] !== exactSha256
+  ) {
+    fail('PUBLISHED_ASSET_INVALID', `${release.tag} active manifest is inconsistent`);
+  }
+}
+
 export function authenticatePublishedAssets({ release, assets }) {
   if (release?.published !== true || release.draft !== false || release.prerelease !== false) {
     fail('PUBLISHED_RELEASE_INVALID', 'completed-plan assets must belong to a stable publication');
@@ -188,14 +395,20 @@ export function authenticatePublishedAssets({ release, assets }) {
       contentIdentity: expected.marker.contentIdentity,
       verifiedAssetNames: expected.requiredAssets,
     },
+    publishedAssets: assets,
   };
 }
 
-export async function loadPublishedReleaseAssets({ transport, release }) {
+export async function loadPublishedReleaseAssets({
+  transport,
+  release,
+  repository = release?.repository,
+}) {
   if (!Array.isArray(release?.assets) || release.assets.length === 0) {
     fail('PUBLISHED_ASSET_MISSING', 'published Release has no inspectable assets');
   }
   const assets = {};
+  const budget = { used: 0 };
   for (const asset of release.assets) {
     if (
       !/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(asset?.name ?? '') ||
@@ -205,7 +418,24 @@ export async function loadPublishedReleaseAssets({ transport, release }) {
     ) {
       fail('PUBLISHED_ASSET_INVALID', 'published Release asset metadata is invalid');
     }
-    assets[asset.name] = await transport.requestBytes(asset.apiUrl);
+    if (
+      !repository ||
+      !/^\d+$/.test(asset.id ?? '') ||
+      !Number.isSafeInteger(asset.size) ||
+      asset.size < 0
+    ) {
+      fail('PUBLISHED_ASSET_INVALID', 'published Release asset authority is incomplete');
+    }
+    if (budget.used + asset.size > MAX_RETAINED_BYTES) {
+      fail('PUBLISHED_ASSET_INVALID', 'published Release assets exceed the cumulative byte limit');
+    }
+    assets[asset.name] = await transport.requestBytes(asset.apiUrl, {
+      repository,
+      assetId: asset.id,
+      expectedSize: asset.size,
+      maxBytes: Math.min(MAX_ASSET_BYTES, MAX_RETAINED_BYTES - budget.used),
+    });
+    budget.used += assets[asset.name].length;
   }
   return authenticatePublishedAssets({ release, assets });
 }
@@ -275,15 +505,20 @@ export async function observeGithubState({ transport, repository, targetSha }) {
     const published = release.draft === false && release.published_at !== null;
     releases.push({
       id: String(release.id ?? ''),
+      repository,
       tag,
       targetSha: ref.sha,
       draft: release.draft,
       prerelease: release.prerelease === true,
       published,
       url: String(release.html_url ?? ''),
+      publishedAt: String(release.published_at ?? ''),
       assets: (release.assets ?? []).map(asset => ({
+        id: String(asset?.id ?? ''),
         name: String(asset?.name ?? ''),
         apiUrl: String(asset?.url ?? ''),
+        downloadUrl: String(asset?.browser_download_url ?? ''),
+        size: Number(asset?.size),
       })),
       marker: decodeMarker(release.body),
       relationToTarget:
@@ -358,7 +593,10 @@ export async function createRequestPlanFromGithub({
   context,
   gitObserver = observeGitRange,
 }) {
-  const dispatch = normalizeDispatch(context?.dispatch);
+  const dispatch = normalizeDispatch({
+    ...context?.dispatch,
+    retentionBootstrap: context?.retentionBootstrap,
+  });
   assertInput(dispatch.repository, dispatch.targetSha);
   const state = await observeGithubState({
     transport,
@@ -421,7 +659,130 @@ export async function createRequestPlanFromGithub({
   });
   const nextTag = calculateNextTag(frontier.tag, dispatch.bump);
   const [major, minor] = nextTag.slice(1).split('.');
-  return buildRequestPlan({
+  const retentionReleases = [];
+  const retainedBytes = {};
+  let retainedBytesUsed = 0;
+  for (const release of [...state.published].sort(compareReleaseTags)) {
+    const version = release.tag.slice(1);
+    if (release.marker?.protocol !== 'release-plan/v2') {
+      retentionReleases.push({
+        version,
+        published: true,
+        draft: false,
+        prerelease: false,
+        retention: null,
+        retentionRecord: null,
+      });
+      continue;
+    }
+    const hydrated = await loadPublishedReleaseAssets({
+      transport,
+      release,
+      repository: dispatch.repository,
+    });
+    if (hydrated.requestPlan.protocol !== 'release-plan/v2') {
+      fail('PUBLISHED_ASSET_INVALID', `${release.tag} v2 marker does not authenticate v2 assets`);
+    }
+    const exact = release.assets.find(asset => asset.name === `widget.v${version}.js`);
+    if (!exact || !/^\d+$/.test(release.id) || !/^\d+$/.test(exact.id)) {
+      fail('PUBLISHED_ASSET_INVALID', `${release.tag} lacks stable Release asset identity`);
+    }
+    const sha256 = hydrated.releaseContent.publicationAssetHashes?.[exact.name];
+    let sourceManifest;
+    try {
+      sourceManifest = JSON.parse(hydrated.publishedAssets['versions.json'].toString('utf8'));
+    } catch {
+      fail('PUBLISHED_ASSET_INVALID', `${release.tag} manifest is invalid`);
+    }
+    if (
+      !hydrated.publishedAssets['versions.json'].equals(
+        Buffer.from(`${canonicalize(sourceManifest)}\n`)
+      ) ||
+      exact.downloadUrl !==
+        `https://github.com/${dispatch.repository}/releases/download/${release.tag}/${exact.name}`
+    ) {
+      fail(
+        'PUBLISHED_ASSET_INVALID',
+        `${release.tag} manifest or download identity is not canonical`
+      );
+    }
+    if (!/^[0-9a-f]{64}$/.test(sha256 ?? '')) {
+      fail('PUBLISHED_ASSET_INVALID', `${release.tag} exact bytes lack four-way authority`);
+    }
+    const sourceRetention = hydrated.requestPlan.retention;
+    if (sourceRetention.mode === 'disabled') {
+      validateDisabledManifest({
+        manifest: sourceManifest,
+        release,
+        requestPlan: hydrated.requestPlan,
+        releaseContent: hydrated.releaseContent,
+        exact,
+        sha256,
+      });
+      retentionReleases.push({
+        version,
+        published: true,
+        draft: false,
+        prerelease: false,
+        retention: null,
+        retentionRecord: null,
+      });
+      continue;
+    }
+    const authenticatedPrefix = retentionReleases
+      .filter(item => ['bootstrap', 'continue'].includes(item.retention?.mode))
+      .map(item => item.retentionRecord);
+    if (canonicalize(sourceRetention.releases) !== canonicalize(authenticatedPrefix)) {
+      fail(
+        'PUBLISHED_ASSET_INVALID',
+        `${release.tag} cumulative retention differs from authenticated preceding Releases`
+      );
+    }
+    validateActiveManifest({
+      manifest: sourceManifest,
+      manifestBytes: hydrated.publishedAssets['versions.json'],
+      release,
+      requestPlan: hydrated.requestPlan,
+      releaseContent: hydrated.releaseContent,
+      exact,
+      exactSha256: sha256,
+    });
+    const exactBytes = hydrated.publishedAssets[exact.name];
+    if (retainedBytesUsed + exactBytes.length > MAX_RETAINED_BYTES) {
+      fail('PUBLISHED_ASSET_INVALID', 'retained exact assets exceed the cumulative byte limit');
+    }
+    retainedBytesUsed += exactBytes.length;
+    retentionReleases.push({
+      version,
+      published: true,
+      draft: false,
+      prerelease: false,
+      retention: hydrated.requestPlan.retention,
+      retentionRecord: {
+        version,
+        tag: release.tag,
+        releaseId: release.id,
+        targetSha: release.targetSha,
+        publishedAt: release.publishedAt,
+        sourcePlanIdentity: hydrated.finalPlan.planIdentity,
+        sourceContentIdentity: hydrated.releaseContent.contentIdentity,
+        asset: {
+          assetId: exact.id,
+          name: exact.name,
+          apiPath: `/repos/${dispatch.repository}/releases/assets/${exact.id}`,
+          downloadUrl: exact.downloadUrl,
+          sha256,
+        },
+      },
+    });
+    retainedBytes[version] = exactBytes;
+  }
+  const retention = deriveRetentionRequest({
+    candidateVersion: nextTag.slice(1),
+    retentionBootstrap: context.retentionBootstrap === true,
+    releases: retentionReleases,
+  });
+  const requestPlan = buildRequestPlan({
     dispatch,
     previousTag: frontier.tag,
     nextTag,
@@ -429,6 +790,8 @@ export async function createRequestPlanFromGithub({
     controllerSha: dispatch.controllerSha,
     remoteMainSha: remoteMain.sha,
     inventory,
+    retentionBootstrap: context.retentionBootstrap === true,
+    retention,
     attestation: {
       previousReleaseSha: frontier.targetSha,
       candidateCommitTimestamp: git.candidateCommitTimestamp,
@@ -438,6 +801,15 @@ export async function createRequestPlanFromGithub({
       verificationCommands: ['npm run validate', 'npm run build'],
     },
   });
+  if (context.retentionOutputDir) {
+    await writeRetentionInput({
+      root: context.retentionOutputDir,
+      requestIdentity: requestPlan.requestIdentity,
+      retention,
+      assets: retainedBytes,
+    });
+  }
+  return requestPlan;
 }
 
 async function runCli() {
