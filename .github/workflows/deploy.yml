@@ -416,6 +416,13 @@ jobs:
           artifact-ids: ${{ needs.verify-candidate.outputs.artifact_id }}
           path: approved
 
+      - name: Stage exact static package below candidate trust root
+        run: |
+          test ! -e candidate/.release-static-package
+          install -d candidate/.release-static-package
+          cp -R approved/static-package/. candidate/.release-static-package/
+          diff -qr approved/static-package candidate/.release-static-package
+
       - name: Revalidate exact plan after protected approval
         id: revalidate
         shell: bash
@@ -482,7 +489,7 @@ jobs:
           jq -n \
             --arg bundlePath "$GITHUB_WORKSPACE/approved/state2-bundle.json" \
             --arg origin 'https://bugdrop.neonwatty.workers.dev' \
-            --arg staticPackageDir "$GITHUB_WORKSPACE/approved/static-package" \
+            --arg staticPackageDir "$GITHUB_WORKSPACE/candidate/.release-static-package" \
             '{$bundlePath, $origin, $staticPackageDir}' > expected-input.json
           node controller/scripts/release/live-release.mjs expected expected-input.json > expected.json
           alias_filenames_json=$(jq -c '.aliasFilenames' expected.json)
@@ -513,7 +520,7 @@ jobs:
             --arg controllerConfig "$GITHUB_WORKSPACE/controller/wrangler.toml" \
             --arg controllerLock "$GITHUB_WORKSPACE/controller/package-lock.json" \
             --arg candidateEntrypoint "$GITHUB_WORKSPACE/candidate/src/index.ts" \
-            --arg candidateAssets "$GITHUB_WORKSPACE/approved/static-package" \
+            --arg candidateAssets "$GITHUB_WORKSPACE/candidate/.release-static-package" \
             --arg targetSha '${{ inputs.target_sha }}' \
             --arg expectedPath "$GITHUB_WORKSPACE/expected.json" \
             '{$controllerRoot, $candidateRoot, $controllerConfig, $controllerLock, $candidateEntrypoint, $candidateAssets, $targetSha, $expectedPath}' \
@@ -575,6 +582,13 @@ jobs:
           path: release-state
           merge-multiple: true
 
+      - name: Stage exact static package below candidate trust root
+        run: |
+          test ! -e candidate/.release-static-package
+          install -d candidate/.release-static-package
+          cp -R release-state/static-package/. candidate/.release-static-package/
+          diff -qr release-state/static-package candidate/.release-static-package
+
       - name: Deploy once and reconcile every command outcome
         id: deploy
         shell: bash
@@ -588,7 +602,7 @@ jobs:
             --arg controllerConfig "$GITHUB_WORKSPACE/controller/wrangler.toml" \
             --arg controllerLock "$GITHUB_WORKSPACE/controller/package-lock.json" \
             --arg candidateEntrypoint "$GITHUB_WORKSPACE/candidate/src/index.ts" \
-            --arg candidateAssets "$GITHUB_WORKSPACE/release-state/static-package" \
+            --arg candidateAssets "$GITHUB_WORKSPACE/candidate/.release-static-package" \
             --arg targetSha '${{ inputs.target_sha }}' \
             --arg expectedPath "$GITHUB_WORKSPACE/release-state/expected.json" \
             --arg authorizationPath "$GITHUB_WORKSPACE/release-state/authorization.json" \
@@ -769,6 +783,14 @@ jobs:
           name: release-deployment-${{ needs.verify-candidate.outputs.plan_key }}
           path: release-state
 
+      - name: Stage exact static package below candidate trust root
+        if: ${{ needs.deploy-candidate.result != 'skipped' }}
+        run: |
+          test ! -e candidate/.release-static-package
+          install -d candidate/.release-static-package
+          cp -R release-state/static-package/. candidate/.release-static-package/
+          diff -qr release-state/static-package candidate/.release-static-package
+
       - name: Reinspect publication and restore only the exact baseline when required
         id: finalize
         shell: bash
@@ -799,7 +821,7 @@ jobs:
             --arg controllerConfig "$GITHUB_WORKSPACE/controller/wrangler.toml" \
             --arg controllerLock "$GITHUB_WORKSPACE/controller/package-lock.json" \
             --arg candidateEntrypoint "$GITHUB_WORKSPACE/candidate/src/index.ts" \
-            --arg candidateAssets "$GITHUB_WORKSPACE/release-state/static-package" \
+            --arg candidateAssets "$GITHUB_WORKSPACE/candidate/.release-static-package" \
             --arg targetSha '${{ inputs.target_sha }}' \
             --arg expectedPath "$GITHUB_WORKSPACE/release-state/expected.json" \
             --arg baselinePath "$GITHUB_WORKSPACE/release-state/baseline.json" \
