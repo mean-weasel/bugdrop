@@ -355,6 +355,7 @@ describe('GitHub release-state observation', () => {
   });
 
   it('builds a deterministic request plan from complete authenticated observations', async () => {
+    const storedMain = 'd'.repeat(40);
     const entries = observationEntries();
     entries[`/repos/${REPOSITORY}/compare/${SHA.release}...${SHA.target}`] = {
       data: {
@@ -422,24 +423,28 @@ describe('GitHub release-state observation', () => {
         hasNext: false,
       },
     });
+    const gitObserver = vi.fn(() => ({
+      commits: [{ sha: SHA.target, subject: 'Ship guarded workflow' }],
+      changedPaths: ['src/index.ts'],
+      excludedNewerMainCommits: [],
+      candidateCommitTimestamp: '2026-08-03T00:00:00Z',
+      candidateBehindMainBy: 0,
+      facts: {
+        candidateRef: 'refs/heads/main',
+        targetExists: true,
+        targetReachableFromMain: true,
+        previousReleaseAncestor: true,
+        targetStrictlyLater: true,
+        controllerReachableFromMain: true,
+      },
+    }));
     const plan = await createRequestPlanFromGithub({
       transport: transportFor(entries),
-      gitObserver: () => ({
-        commits: [{ sha: SHA.target, subject: 'Ship guarded workflow' }],
-        changedPaths: ['src/index.ts'],
-        excludedNewerMainCommits: [],
-        candidateCommitTimestamp: '2026-08-03T00:00:00Z',
-        candidateBehindMainBy: 0,
-        facts: {
-          candidateRef: 'refs/heads/main',
-          targetExists: true,
-          targetReachableFromMain: true,
-          previousReleaseAncestor: true,
-          targetStrictlyLater: true,
-          controllerReachableFromMain: true,
-        },
-      }),
+      gitObserver,
       context: {
+        controllerReachableFromCurrent: true,
+        identityMainReachableFromCurrent: true,
+        identityMainSha: storedMain,
         repositoryDir: '/controller',
         dispatch: {
           repository: REPOSITORY,
@@ -456,12 +461,15 @@ describe('GitHub release-state observation', () => {
     });
     expect(plan).toMatchObject({
       request: { previousTag: 'v1.55.0', nextTag: 'v1.55.1', targetSha: SHA.target },
-      source: { controllerSha: SHA.release, remoteMainSha: SHA.target },
+      source: { controllerSha: SHA.release, remoteMainSha: storedMain },
       attestation: {
         expectedAliases: ['widget.js', 'widget.v1.js', 'widget.v1.55.js'],
         expectedAssetNames: ['widget.v1.55.1.js', 'versions.json'],
       },
     });
+    expect(gitObserver).toHaveBeenCalledWith(
+      expect.objectContaining({ mainSha: storedMain, controllerSha: SHA.release })
+    );
     expect(plan.inventory.pullRequests).toHaveLength(1);
   });
 

@@ -469,6 +469,14 @@ async function runCli() {
         token: process.env.BUGDROP_GITHUB_TOKEN,
       }),
     });
+  } else if (mode === 'inspect-publication') {
+    output = await inspectPublication({
+      bundle: await jsonFile(input.bundlePath),
+      adapter: createGithubPublicationAdapter({
+        repository: input.repository,
+        token: process.env.BUGDROP_GITHUB_TOKEN,
+      }),
+    });
   } else if (mode === 'finalize') {
     const bundle = await jsonFile(input.bundlePath);
     const publication = await inspectPublication({

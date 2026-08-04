@@ -636,11 +636,25 @@ export async function createRequestPlanFromGithub({
     requestRecord(transport, `/repos/${dispatch.repository}/commits/main`, 'remote main'),
     observeMergeQueuePreflight(transport, dispatch.repository, dispatch.targetSha),
   ]);
+  let identityMainSha = remoteMain.sha;
+  if (context.identityMainSha !== undefined) {
+    if (
+      !SHA_PATTERN.test(context.identityMainSha) ||
+      context.identityMainReachableFromCurrent !== true ||
+      context.controllerReachableFromCurrent !== true
+    ) {
+      fail(
+        'UNAUTHENTICATED_PARTIAL_SOURCE',
+        'stored controller and remote-main identities must remain reachable from current main'
+      );
+    }
+    identityMainSha = context.identityMainSha;
+  }
   const git = gitObserver({
     repositoryDir: context.repositoryDir,
     previousSha: frontier.targetSha,
     targetSha: dispatch.targetSha,
-    mainSha: remoteMain.sha,
+    mainSha: identityMainSha,
     controllerSha: dispatch.controllerSha,
   });
   const inventory = buildReleaseInventory({
@@ -788,7 +802,7 @@ export async function createRequestPlanFromGithub({
     nextTag,
     generatedNotes: inventory.generatedNotes,
     controllerSha: dispatch.controllerSha,
-    remoteMainSha: remoteMain.sha,
+    remoteMainSha: identityMainSha,
     inventory,
     retentionBootstrap: context.retentionBootstrap === true,
     retention,
