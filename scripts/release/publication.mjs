@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { canonicalHash, canonicalize } from './canonical-json.mjs';
+import { canonicalHash, canonicalize, compareUtf8 } from './canonical-json.mjs';
 import { buildPublicationMarker } from './plan.mjs';
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const TAG_PATTERN = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
@@ -39,7 +39,7 @@ const same = (left, right) => canonicalize(left) === canonicalize(right);
 function expectedChecksumBytes(hashes) {
   return Buffer.from(
     `${Object.entries(hashes)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => compareUtf8(left, right))
       .map(([name, digest]) => `${digest}  ${name}`)
       .join('\n')}\n`
   );
@@ -51,7 +51,17 @@ export function validatePublicationBundle(input) {
   }
   const validIdentity =
     requestPlan.requestIdentity ===
-      canonicalHash({ schema: requestPlan.schema, request: requestPlan.request }) &&
+      (requestPlan.protocol === 'release-plan/v2'
+        ? canonicalHash({
+            schema: requestPlan.schema,
+            protocol: requestPlan.protocol,
+            request: requestPlan.request,
+            source: requestPlan.source,
+            attestation: requestPlan.attestation,
+            inventory: requestPlan.inventory,
+            retention: requestPlan.retention,
+          })
+        : canonicalHash({ schema: requestPlan.schema, request: requestPlan.request })) &&
     releaseContent.contentIdentity === canonicalHash(without(releaseContent, 'contentIdentity')) &&
     finalPlan.planIdentity === canonicalHash(without(finalPlan, 'planIdentity')) &&
     finalPlan.requestPlanHash === canonicalHash(requestPlan) &&
@@ -60,8 +70,8 @@ export function validatePublicationBundle(input) {
     finalPlan.contentIdentity === releaseContent.contentIdentity;
   if (!validIdentity) fail('INVALID_BUNDLE', 'release identity records do not authenticate');
   if (
-    requestPlan.protocol !== 'release-plan/v1' ||
-    finalPlan.protocol !== 'release-plan/v1' ||
+    !['release-plan/v1', 'release-plan/v2'].includes(requestPlan.protocol) ||
+    finalPlan.protocol !== requestPlan.protocol ||
     !TAG_PATTERN.test(finalPlan.tag ?? '') ||
     !SHA_PATTERN.test(finalPlan.targetSha ?? '') ||
     finalPlan.tag !== requestPlan.request?.nextTag ||
@@ -80,12 +90,16 @@ export function validatePublicationBundle(input) {
   });
   const plannedRequired = [
     ...new Set([...(requestPlan.attestation?.expectedAssetNames ?? []), ...CORE_ASSETS]),
-  ].sort();
+  ].sort(compareUtf8);
   if (!same(required, plannedRequired)) {
     fail('INVALID_BUNDLE', 'requiredAssets must exactly match the request attestation');
   }
   const assets = input.assets;
-  if (!assets || assets.constructor !== Object || !same(Object.keys(assets).sort(), required)) {
+  if (
+    !assets ||
+    assets.constructor !== Object ||
+    !same(Object.keys(assets).sort(compareUtf8), required)
+  ) {
     fail('INVALID_BUNDLE', 'asset names do not exactly match the final plan');
   }
   const expectedBytes = {
@@ -100,7 +114,9 @@ export function validatePublicationBundle(input) {
       fail('INVALID_BUNDLE', `${name} bytes are not canonical`);
     }
     const digest = sha256(bytes);
-    const declared = releaseContent.artifactHashes?.[name];
+    const declared = (releaseContent.publicationAssetHashes ?? releaseContent.artifactHashes)?.[
+      name
+    ];
     if (!expectedBytes[name] && declared !== digest) {
       fail('INVALID_BUNDLE', `${name} does not match release content`);
     }
@@ -122,7 +138,11 @@ export function validatePublicationBundle(input) {
     marker,
     name: `BugDrop ${finalPlan.tag.slice(1)}`,
     planIdentity: finalPlan.planIdentity,
+    protocol: finalPlan.protocol,
     requiredAssets: required,
+    ...(finalPlan.staticPackageIdentity
+      ? { staticPackageIdentity: finalPlan.staticPackageIdentity }
+      : {}),
     tag: finalPlan.tag,
     tagAnnotation: `BugDrop ${finalPlan.tag}\n\n${canonicalize(marker)}`,
     targetSha: finalPlan.targetSha,

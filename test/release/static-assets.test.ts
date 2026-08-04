@@ -89,6 +89,37 @@ describe('deterministic release static package', () => {
     expect(second.contentIdentity).toBe(first.contentIdentity);
   });
 
+  it('ignores filesystem creation and locale-sensitive name order', async () => {
+    const firstRoot = await tempRoot('filesystem-order-first');
+    const secondRoot = await tempRoot('filesystem-order-second');
+    const firstSource = join(firstRoot, 'source');
+    const secondSource = join(secondRoot, 'source');
+    await mkdir(join(firstSource, 'nested'), { recursive: true });
+    await mkdir(join(secondSource, 'nested'), { recursive: true });
+    const files = [
+      ['z.txt', 'z'],
+      ['ä.txt', 'umlaut'],
+      ['nested/a.txt', 'a'],
+    ];
+    for (const [name, bytes] of files) await writeFile(join(firstSource, name), bytes);
+    for (const [name, bytes] of [...files].reverse())
+      await writeFile(join(secondSource, name), bytes);
+    const disabled = {
+      retentionMode: 'disabled',
+      cutoverVersion: null,
+      expectedRetainedVersions: [],
+      retainedReleases: [],
+    };
+    const first = await createReleaseStaticPackage(
+      await releaseInput(join(firstRoot, 'output'), { ...disabled, sourcePublicDir: firstSource })
+    );
+    const second = await createReleaseStaticPackage(
+      await releaseInput(join(secondRoot, 'output'), { ...disabled, sourcePublicDir: secondSource })
+    );
+    expect(second.fileHashes).toEqual(first.fileHashes);
+    expect(second.contentIdentity).toBe(first.contentIdentity);
+  });
+
   it('copies exact/latest/major/minor aliases from one byte set', async () => {
     const result = await packageOnce('aliases');
     const hashes = result.fileHashes;
@@ -105,6 +136,21 @@ describe('deterministic release static package', () => {
     expect(manifest.artifacts['v1.55.0'].sha256).toBe(await hashFile(RETAINED_ASSET));
     expect(manifest.artifacts).not.toHaveProperty('v1.54.0');
     expect(manifest.current).toBe('1.56.0');
+  });
+
+  it('preserves the historical v1 current-only manifest while retention is disabled', async () => {
+    const result = await packageOnce('disabled-v1', {
+      retentionMode: 'disabled',
+      cutoverVersion: null,
+      expectedRetainedVersions: [],
+      retainedReleases: [],
+    });
+    const manifest = JSON.parse(await readFile(join(result.outputDir, 'versions.json'), 'utf8'));
+    expect(manifest.schema).toBe('bugdrop.versions-manifest/v1');
+    expect(manifest.cutoverVersion).toBe('1.56.0');
+    expect(manifest.artifacts['v1.56.0']).toHaveProperty('archiveUrl');
+    expect(manifest.artifacts['v1.56.0']).not.toHaveProperty('version');
+    expect(manifest.artifacts).not.toHaveProperty('v1.55.0');
   });
 
   it.each([
@@ -190,6 +236,35 @@ describe('artifact retry semantics', () => {
         rebuiltContentIdentity: `sha256:${'f'.repeat(64)}`,
       })
     ).toEqual({ kind: 'new-plan-required', reason: 'content-identity-mismatch' });
+  });
+
+  it('requires every v2 request, tree, content, and plan identity after artifact expiry', () => {
+    const expected = {
+      expectedContentIdentity: `sha256:${'1'.repeat(64)}`,
+      expectedRequestIdentity: `sha256:${'2'.repeat(64)}`,
+      expectedStaticPackageIdentity: `sha256:${'3'.repeat(64)}`,
+      expectedPlanIdentity: `sha256:${'4'.repeat(64)}`,
+    };
+    expect(
+      resolveStaticArtifactRetry({
+        artifactStatus: 'expired',
+        ...expected,
+        rebuiltContentIdentity: expected.expectedContentIdentity,
+        rebuiltRequestIdentity: expected.expectedRequestIdentity,
+        rebuiltStaticPackageIdentity: expected.expectedStaticPackageIdentity,
+        rebuiltPlanIdentity: expected.expectedPlanIdentity,
+      })
+    ).toMatchObject({ kind: 'rebuilt-exact', planIdentity: expected.expectedPlanIdentity });
+    expect(
+      resolveStaticArtifactRetry({
+        artifactStatus: 'expired',
+        ...expected,
+        rebuiltContentIdentity: expected.expectedContentIdentity,
+        rebuiltRequestIdentity: expected.expectedRequestIdentity,
+        rebuiltStaticPackageIdentity: `sha256:${'9'.repeat(64)}`,
+        rebuiltPlanIdentity: expected.expectedPlanIdentity,
+      })
+    ).toEqual({ kind: 'new-plan-required', reason: 'total-identity-mismatch' });
   });
 
   it('fails closed for ambiguous artifact state', () => {

@@ -26,9 +26,11 @@ identity, so retries must use the same reason and other identity-bearing inputs.
    inventory since the latest published stable Release.
 3. Choose `patch`, `minor`, or `major` from product compatibility, not commit prefixes.
 4. Choose `standard`, or `emergency` with a rationale explaining urgency and approval context.
-5. Keep operator notes bounded and free of secrets. Record the target SHA, bump, reason, rationale,
-   and expected next tag in the release evidence log.
-6. Confirm there is no in-progress release for the same production target. Concurrency queues rather
+5. Choose `retention_bootstrap=false` for normal operation. Set it to `true` only for the separately
+   authorized, one-time retention cutover; use the identical value for dry-run and live dispatch.
+6. Keep operator notes bounded and free of secrets. Record the target SHA, bump, reason, rationale,
+   retention bootstrap decision, and expected next tag in the release evidence log.
+7. Confirm there is no in-progress release for the same production target. Concurrency queues rather
    than cancels runs, but an operator should still avoid creating ambiguous overlapping requests.
 
 The commands below are examples for an authorized future operation. Replace placeholders; do not run
@@ -45,6 +47,7 @@ gh workflow run deploy.yml --ref main \
   -f release_reason=<standard|emergency> \
   -f rationale='<required-for-emergency>' \
   -f operator_notes='<bounded-notes>' \
+  -f retention_bootstrap=<true|false> \
   -f dry_run=true
 ```
 
@@ -67,6 +70,7 @@ gh workflow run deploy.yml --ref main \
   -f release_reason=<same-standard-or-emergency> \
   -f rationale='<same-rationale>' \
   -f operator_notes='<same-notes>' \
+  -f retention_bootstrap=<same-true-or-false> \
   -f dry_run=false
 ```
 
@@ -157,15 +161,24 @@ every command attempted.
 
 GitHub Releases are the canonical durable release record. Workflow artifacts support short-lived
 audit and recovery and currently retain for 14 days; export required evidence according to the
-project's authorized audit process before expiry. The deployed `versions.json` authenticates assets
-in the current deployment only. Exact static URLs are not guaranteed across later releases: the
-installed workflow supplies no prior-release retention plan, so no durable retention boundary has
-been established. Historical bytes absent from both the current deployment and canonical GitHub
-Release assets are unavailable; do not promise or fabricate them.
+project's authorized audit process before expiry. The repository workflow now supports three
+fail-closed retention states. It defaults to `disabled`; an explicitly authorized one-time
+`retention_bootstrap` makes the candidate version the immutable boundary; later releases
+automatically `continue` from the authenticated GitHub Release lineage. Planning authenticates each
+supported Release and exact asset, the credential-free build consumes a request-keyed local handoff,
+and State 2 plus preapproval verification hash the complete static tree. Missing or conflicting
+history stops the release. Historical bytes before the boundary are never reconstructed.
 
-Production cutover remains blocked pending a separately reviewed repository retention wiring package.
-After that wiring exists, a later authorized operator phase must prove N/N+1 retention before any
-durability claim is made. This repository-only package supplies neither that wiring nor that proof.
+No production boundary has been established by landing this code. Production cutover and live N/N+1
+durability remain blocked until a separately authorized operator goal selects a bootstrap candidate
+and later proves the retained exact bytes and digest in production.
+
+Before an authenticated bootstrap Release is published, this repository feature can be rolled back
+as one coherent unit. After bootstrap publication, retention-unaware rollback is forbidden: every
+later implementation must read v2 authority, preserve the original boundary and complete supported
+set, and pass the same installed N/N+1 and complete-tree checks. Production rollback remains the
+existing restoration of the captured exact Cloudflare baseline; it never rebuilds historical bytes.
+Repository tests prove only the offline installed boundaries, not a live deployment or durable URL.
 
 ## WP8 Boundary
 
@@ -173,5 +186,5 @@ This runbook documents repository behavior; it does not authorize production set
 release. Enabling or inspecting environments, variables, secrets, Cloudflare credentials, approval
 rules, notification credentials, or the two production gates—and performing any dry run, live run,
 cutover, rollback, or notification—belongs to a separately authorized operator phase. Cutover is also
-blocked on the retention wiring and N/N+1 proof described above. Until both repository and operator
-evidence exist, production remains disabled and undispatched.
+blocked on the separate operator authorization and live N/N+1 proof described above. Until that
+evidence exists, production remains disabled and undispatched.

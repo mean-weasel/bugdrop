@@ -23,6 +23,7 @@ import {
   selectStoredController,
   validateSourceContext,
 } from '../../scripts/release/plan.mjs';
+import { disabledV2WorkflowBundle } from '../fixtures/release/workflow/bundle';
 
 const SHA = {
   target: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -352,6 +353,65 @@ describe('deterministic identities and completed-plan lookup', () => {
     );
   });
 
+  it('binds every v2 retention authority field while still excluding dryRun', () => {
+    const make = (assetId: string, sha256: string, dryRun: boolean) => {
+      const inventory = buildReleaseInventory({
+        compareUrl: 'https://github.test/compare/v1.2.0...target',
+        pullRequests: [],
+        commits: [{ sha: SHA.target, subject: 'retain' }],
+        changedPaths: ['src/widget.ts'],
+      });
+      const retention = {
+        schema: 'bugdrop.retention-request/v1',
+        mode: 'continue',
+        cutoverVersion: '1.2.0',
+        expectedRetainedVersions: ['1.2.0'],
+        releases: [
+          {
+            version: '1.2.0',
+            tag: 'v1.2.0',
+            releaseId: '12',
+            targetSha: '1'.repeat(40),
+            publishedAt: '2026-07-01T00:00:00Z',
+            sourcePlanIdentity: `sha256:${'2'.repeat(64)}`,
+            sourceContentIdentity: `sha256:${'3'.repeat(64)}`,
+            asset: {
+              assetId,
+              name: 'widget.v1.2.0.js',
+              apiPath: `/repos/mean-weasel/bugdrop/releases/assets/${assetId}`,
+              downloadUrl:
+                'https://github.com/mean-weasel/bugdrop/releases/download/v1.2.0/widget.v1.2.0.js',
+              sha256,
+            },
+          },
+        ],
+      };
+      return buildRequestPlan({
+        dispatch: normalizeDispatch({ ...rawDispatch, dryRun }),
+        previousTag: 'v1.2.0',
+        nextTag: 'v1.2.1',
+        generatedNotes: inventory.generatedNotes,
+        controllerSha: SHA.controller,
+        remoteMainSha: SHA.main,
+        inventory,
+        retentionBootstrap: false,
+        retention,
+        attestation: {
+          previousReleaseSha: '1'.repeat(40),
+          candidateCommitTimestamp: '2026-08-01T12:00:00Z',
+          candidateBehindMainBy: 0,
+          expectedAliases: ['widget.js'],
+          expectedAssetNames: ['widget.v1.2.1.js', 'versions.json'],
+          verificationCommands: ['npm test'],
+        },
+      });
+    };
+    const baseline = make('120', '4'.repeat(64), true);
+    expect(make('120', '4'.repeat(64), false).requestIdentity).toBe(baseline.requestIdentity);
+    expect(make('121', '4'.repeat(64), true).requestIdentity).not.toBe(baseline.requestIdentity);
+    expect(make('120', '5'.repeat(64), true).requestIdentity).not.toBe(baseline.requestIdentity);
+  });
+
   it('keeps run, artifact storage, timing, and approval observations out of identity', () => {
     const release = completedRelease();
     const first = buildAuditEnvelope({
@@ -535,6 +595,34 @@ describe('partial retry and stale revalidation', () => {
       kind: 'resume',
       tag: 'v1.2.1',
       planIdentity: release.finalPlan.planIdentity,
+    });
+  });
+
+  it('resumes an authenticated v2 partial tag without requiring rebuilt release content', () => {
+    const bundle = disabledV2WorkflowBundle();
+    const marker = buildPublicationMarker(bundle.finalPlan);
+    const state = normalizeGithubState({
+      refs: [
+        {
+          tag: bundle.finalPlan.tag,
+          sha: bundle.finalPlan.targetSha,
+          kind: 'annotated',
+          marker,
+        },
+      ],
+      releases: [],
+    });
+
+    expect(
+      resolvePartialPublication({
+        state,
+        requestPlan: bundle.requestPlan,
+        storedFinalPlan: bundle.finalPlan,
+      })
+    ).toMatchObject({
+      kind: 'resume',
+      tag: bundle.finalPlan.tag,
+      planIdentity: bundle.finalPlan.planIdentity,
     });
   });
 

@@ -30,6 +30,11 @@ on:
         required: true
         default: true
         type: boolean
+      retention_bootstrap:
+        description: Establish the prospective exact-version boundary (one time only)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -100,6 +105,7 @@ jobs:
           BUMP: ${{ inputs.bump }}
           CONTROLLER_SHA: ${{ steps.guard.outputs.controller_sha }}
           DRY_RUN: ${{ inputs.dry_run }}
+          RETENTION_BOOTSTRAP: ${{ inputs.retention_bootstrap }}
           OPERATOR_NOTES: ${{ inputs.operator_notes }}
           RATIONALE: ${{ inputs.rationale }}
           RELEASE_REASON: ${{ inputs.release_reason }}
@@ -124,7 +130,9 @@ jobs:
             --arg operatorNotes "$OPERATOR_NOTES" \
             --argjson dryRun "$DRY_RUN" \
             --argjson candidateReachableFromMain "$candidate_reachable" \
-            '{$repositoryDir, $eventName, $ref, $workflowSha, $candidateReachableFromMain, dispatch: {$repository, $workflowRef, $targetSha, $controllerSha, $bump, $releaseReason, $rationale, $operatorNotes, $dryRun}}' \
+            --argjson retentionBootstrap "$RETENTION_BOOTSTRAP" \
+            --arg retentionOutputDir "$GITHUB_WORKSPACE/retention-input" \
+            '{$repositoryDir, $eventName, $ref, $workflowSha, $candidateReachableFromMain, $retentionBootstrap, $retentionOutputDir, dispatch: {$repository, $workflowRef, $targetSha, $controllerSha, $bump, $releaseReason, $rationale, $operatorNotes, $dryRun}}' \
             > request-context.json
           node controller/scripts/release/workflow.mjs guard request-context.json > guard.json
           node controller/scripts/release/github-adapter.mjs plan request-context.json > request-plan.json
@@ -160,6 +168,7 @@ jobs:
           path: |
             request-context.json
             request-plan.json
+            retention-input/
           if-no-files-found: error
           retention-days: 14
 
@@ -209,6 +218,12 @@ jobs:
           name: request-plan-${{ needs.guard-and-plan.outputs.request_key }}
           path: request
 
+      - name: Reauthenticate request-keyed local retention input
+        shell: bash
+        run: |
+          test -f request/retention-input/retention-plan.json
+          test "$(jq -er '.requestIdentity' request/retention-input/retention-plan.json)" = '${{ needs.guard-and-plan.outputs.request_identity }}'
+
       - name: Build static release package once with controller tooling
         shell: bash
         run: >-
@@ -220,13 +235,14 @@ jobs:
           --timestamp "$(git -C candidate show -s --format=%cI '${{ inputs.target_sha }}' | sed 's/+00:00/Z/')"
           --target-sha '${{ inputs.target_sha }}'
           --repository "$GITHUB_REPOSITORY"
-          --cutover-version '${{ needs.guard-and-plan.outputs.version }}'
+          --retention-plan request/retention-input/retention-plan.json
+          --request-plan request/request-plan.json
+          --result-path "$RUNNER_TEMP/builder-result.json"
 
       - name: Finalize canonical State 2 bundle
         id: bundle
         shell: bash
         run: |
-          exact_name='widget.v${{ needs.guard-and-plan.outputs.version }}.js'
           worker_digest=$(git -C candidate archive '${{ inputs.target_sha }}' src | sha256sum | awk '{print $1}')
           lock_digest=$(sha256sum candidate/package-lock.json | awk '{print $1}')
           config_digest=$(sha256sum controller/wrangler.toml | awk '{print $1}')
@@ -234,19 +250,19 @@ jobs:
           wrangler_version=$(node -p "require('./controller/node_modules/wrangler/package.json').version")
           jq -n \
             --slurpfile requestPlan request/request-plan.json \
-            --arg name "$exact_name" \
-            --rawfile widget "$RUNNER_TEMP/static-package/$exact_name" \
-            --rawfile versions "$RUNNER_TEMP/static-package/versions.json" \
+            --arg staticPackageDir "$RUNNER_TEMP/static-package" \
+            --arg builderResultPath "$RUNNER_TEMP/builder-result.json" \
             --arg worker "$worker_digest" \
             --arg lockfile "$lock_digest" \
             --arg esbuild "$esbuild_version" \
             --arg wrangler "$wrangler_version" \
             --arg config "$config_digest" \
-            '{requestPlan: $requestPlan[0], candidateAssets: {($name): {base64: ($widget | @base64)}, "versions.json": {base64: ($versions | @base64)}}, sourceDigests: {$worker, $lockfile}, toolchain: {$esbuild, $wrangler}, deploymentConfigDigest: $config, verification: {contract: "release-verification/v1", result: "passed"}}' \
+            '{requestPlan: $requestPlan[0], $staticPackageDir, $builderResultPath, sourceDigests: {$worker, $lockfile}, toolchain: {$esbuild, $wrangler}, deploymentConfigDigest: $config, verification: {contract: "release-verification/v1", result: "passed"}}' \
             > bundle-input.json
-          node controller/scripts/release/workflow.mjs bundle bundle-input.json > state2-bundle.json
+          node controller/scripts/release/workflow.mjs bundle-static bundle-input.json > state2-bundle.json
           install -d "$RUNNER_TEMP/release-plan/static-package"
           cp state2-bundle.json "$RUNNER_TEMP/release-plan/state2-bundle.json"
+          cp "$RUNNER_TEMP/builder-result.json" "$RUNNER_TEMP/release-plan/builder-result.json"
           cp -R "$RUNNER_TEMP/static-package/." "$RUNNER_TEMP/release-plan/static-package/"
           plan_identity=$(jq -er '.finalPlan.planIdentity' state2-bundle.json)
           plan_key=$(jq -er '.finalPlan.planIdentity[7:]' state2-bundle.json)
@@ -295,7 +311,7 @@ jobs:
             --slurpfile bundle approved/state2-bundle.json \
             --arg artifactId "$ARTIFACT_ID" \
             --arg controllerSha "$CONTROLLER_SHA" \
-            '{context: {eventName: "workflow_dispatch", ref: "refs/heads/main", workflowSha: $controllerSha, candidateReachableFromMain: true, dispatch: ($bundle[0].requestPlan.request + {controllerSha: $controllerSha, dryRun: true})}, bundle: $bundle[0], artifact: {artifactId: $artifactId, available: true, planIdentity: $bundle[0].finalPlan.planIdentity, contentIdentity: $bundle[0].releaseContent.contentIdentity, requestIdentity: $bundle[0].requestPlan.requestIdentity, verifiedAssetNames: $bundle[0].finalPlan.requiredAssets}, completed: {kind: "none"}, productionEnabled: false}' \
+            '{context: {eventName: "workflow_dispatch", ref: "refs/heads/main", workflowSha: $controllerSha, candidateReachableFromMain: true, dispatch: ($bundle[0].requestPlan.request + {controllerSha: $controllerSha, dryRun: true})}, bundle: $bundle[0], artifact: {artifactId: $artifactId, available: true, planIdentity: $bundle[0].finalPlan.planIdentity, contentIdentity: $bundle[0].releaseContent.contentIdentity, requestIdentity: $bundle[0].requestPlan.requestIdentity, staticPackageIdentity: $bundle[0].finalPlan.staticPackageIdentity, verifiedAssetNames: $bundle[0].finalPlan.requiredAssets}, completed: {kind: "none"}, productionEnabled: false}' \
             > state2-input.json
           node controller/scripts/release/workflow.mjs state2 state2-input.json > state2-decision.json
           test "$(jq -er '.status' state2-decision.json)" = 'dry-run-complete'
@@ -406,6 +422,7 @@ jobs:
           BUGDROP_GITHUB_TOKEN: ${{ github.token }}
           BUMP: ${{ inputs.bump }}
           CONTROLLER_SHA: ${{ needs.guard-and-plan.outputs.controller_sha }}
+          RETENTION_BOOTSTRAP: ${{ inputs.retention_bootstrap }}
           OPERATOR_NOTES: ${{ inputs.operator_notes }}
           RATIONALE: ${{ inputs.rationale }}
           RELEASE_REASON: ${{ inputs.release_reason }}
@@ -421,7 +438,8 @@ jobs:
             --arg releaseReason "$RELEASE_REASON" \
             --arg rationale "$RATIONALE" \
             --arg operatorNotes "$OPERATOR_NOTES" \
-            '{repositoryDir: $repositoryDir, dispatch: {$repository, $workflowRef, $targetSha, $controllerSha, $bump, $releaseReason, $rationale, $operatorNotes, dryRun: false}}' \
+            --argjson retentionBootstrap "$RETENTION_BOOTSTRAP" \
+            '{$repositoryDir, $retentionBootstrap, dispatch: {$repository, $workflowRef, $targetSha, $controllerSha, $bump, $releaseReason, $rationale, $operatorNotes, dryRun: false}}' \
             > revalidation-context.json
           node controller/scripts/release/github-adapter.mjs plan revalidation-context.json > revalidated-plan.json
           expected_plan=$(jq -er '.finalPlan.planIdentity' approved/state2-bundle.json)
@@ -438,7 +456,7 @@ jobs:
             --arg artifactId '${{ needs.verify-candidate.outputs.artifact_id }}' \
             --arg controllerSha "$CONTROLLER_SHA" \
             --argjson completed "$completed" \
-            '{context: {eventName: "workflow_dispatch", ref: "refs/heads/main", workflowSha: $controllerSha, candidateReachableFromMain: true, dispatch: ($bundle[0].requestPlan.request + {workflowRef: ".github/workflows/deploy.yml@refs/heads/main", controllerSha: $controllerSha, dryRun: false})}, bundle: $bundle[0], artifact: {artifactId: $artifactId, available: true, planIdentity: $bundle[0].finalPlan.planIdentity, contentIdentity: $bundle[0].releaseContent.contentIdentity, requestIdentity: $bundle[0].requestPlan.requestIdentity, verifiedAssetNames: $bundle[0].finalPlan.requiredAssets}, completed: $completed, productionEnabled: true}' \
+            '{context: {eventName: "workflow_dispatch", ref: "refs/heads/main", workflowSha: $controllerSha, candidateReachableFromMain: true, dispatch: ($bundle[0].requestPlan.request + {workflowRef: ".github/workflows/deploy.yml@refs/heads/main", controllerSha: $controllerSha, dryRun: false})}, bundle: $bundle[0], artifact: {artifactId: $artifactId, available: true, planIdentity: $bundle[0].finalPlan.planIdentity, contentIdentity: $bundle[0].releaseContent.contentIdentity, requestIdentity: $bundle[0].requestPlan.requestIdentity, staticPackageIdentity: $bundle[0].finalPlan.staticPackageIdentity, verifiedAssetNames: $bundle[0].finalPlan.requiredAssets}, completed: $completed, productionEnabled: true}' \
             > state2-live-input.json
           node controller/scripts/release/workflow.mjs state2 state2-live-input.json > state2-live.json
           if [ "$(jq -er '.status' state2-live.json)" = 'core-noop' ]; then
