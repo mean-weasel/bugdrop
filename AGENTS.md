@@ -2,6 +2,10 @@
 
 Follow `CLAUDE.md` for repo-level agent guidance.
 
+## Pull Request Review
+
+For every pull request, run `codex-pr-review-toolkit:review-pull-request` against its base before merge.
+
 ## Burden Of Proof
 
 Before declaring work complete, try to disprove the change. Identify the
