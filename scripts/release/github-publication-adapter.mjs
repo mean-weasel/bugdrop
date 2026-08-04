@@ -7,6 +7,8 @@ const RELEASE_ID = /^[1-9]\d*$/;
 const TOKEN = /^[A-Za-z0-9_.-]{16,4096}$/;
 const MAX_ASSET_BYTES = 16 * 1024 * 1024;
 const MAX_RELEASE_BYTES = 512 * 1024 * 1024;
+const RELEASES_PER_PAGE = 100;
+const MAX_RELEASE_PAGES = 100;
 const ASSET_TIMEOUT_MS = 30_000;
 
 export class GithubPublicationAdapterError extends Error {
@@ -116,7 +118,15 @@ export function createGithubPublicationAdapter({
     }
     if (response.status === 204) return null;
     try {
-      return record(await response.json(), url.pathname);
+      const value = await response.json();
+      if (options.array) {
+        if (!Array.isArray(value)) fail('INVALID_RESPONSE', `${url.pathname} response is invalid`);
+        return {
+          data: value,
+          hasNext: /<[^>]+>;\s*rel="next"/.test(response.headers.get('link') ?? ''),
+        };
+      }
+      return record(value, url.pathname);
     } catch (error) {
       if (error instanceof GithubPublicationAdapterError) throw error;
       fail('INVALID_RESPONSE', `${url.pathname} did not return JSON`);
@@ -216,15 +226,30 @@ export function createGithubPublicationAdapter({
   const inspect = async requestedTag => {
     const tag = match(requestedTag, TAG, 'tag');
     const tagState = await inspectTag(tag);
-    const release = await request(
-      'GET',
-      `/repos/${repository}/releases/tags/${encodeURIComponent(tag)}`,
-      {
-        missing: true,
+    const matchingReleases = [];
+    for (let page = 1; page <= MAX_RELEASE_PAGES; page += 1) {
+      const releasePage = await request(
+        'GET',
+        `/repos/${repository}/releases?per_page=${RELEASES_PER_PAGE}&page=${page}`,
+        { array: true }
+      );
+      matchingReleases.push(...releasePage.data.filter(item => item?.tag_name === tag));
+      if (!releasePage.hasNext) break;
+      if (page === MAX_RELEASE_PAGES) {
+        fail('INVALID_RESPONSE', 'release pagination exceeded its authenticated bound');
       }
-    );
+    }
+    if (matchingReleases.length > 1) {
+      const releases = matchingReleases.map(release => {
+        if (release.tag_name !== tag || !RELEASE_ID.test(String(release.id ?? ''))) {
+          fail('INVALID_RESPONSE', 'release identity is invalid');
+        }
+        return { id: String(release.id), tag };
+      });
+      return { complete: true, ...tagState, releases };
+    }
     const releases = [];
-    if (release) {
+    for (const release of matchingReleases) {
       if (release.tag_name !== tag || !RELEASE_ID.test(String(release.id ?? ''))) {
         fail('INVALID_RESPONSE', 'release identity is invalid');
       }
