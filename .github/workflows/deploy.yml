@@ -129,19 +129,26 @@ jobs:
           node controller/scripts/release/workflow.mjs guard request-context.json > guard.json
           node controller/scripts/release/github-adapter.mjs plan request-context.json > request-plan.json
           if [ "$(jq -r '.status // "planned"' request-plan.json)" = 'completed' ]; then
+            request_identity=$(jq -er '.planIdentity' request-plan.json)
+            request_key=$(jq -er '.planIdentity[7:]' request-plan.json)
+            plan_identity=$request_identity
+            version=$(jq -er '.tag[1:]' request-plan.json)
             {
               echo 'completed=true'
-              echo "request_identity=$(jq -er '.planIdentity' request-plan.json)"
-              echo "request_key=$(jq -er '.planIdentity | ltrimstr(\"sha256:\")' request-plan.json)"
-              echo "plan_identity=$(jq -er '.planIdentity' request-plan.json)"
-              echo "version=$(jq -er '.tag | ltrimstr(\"v\")' request-plan.json)"
+              echo "request_identity=$request_identity"
+              echo "request_key=$request_key"
+              echo "plan_identity=$plan_identity"
+              echo "version=$version"
             } >> "$GITHUB_OUTPUT"
           else
+            request_identity=$(jq -er '.requestIdentity' request-plan.json)
+            request_key=$(jq -er '.requestIdentity[7:]' request-plan.json)
+            version=$(jq -er '.request.nextTag[1:]' request-plan.json)
             {
               echo 'completed=false'
-              echo "request_identity=$(jq -er '.requestIdentity' request-plan.json)"
-              echo "request_key=$(jq -er '.requestIdentity | ltrimstr(\"sha256:\")' request-plan.json)"
-              echo "version=$(jq -er '.request.nextTag | ltrimstr(\"v\")' request-plan.json)"
+              echo "request_identity=$request_identity"
+              echo "request_key=$request_key"
+              echo "version=$version"
             } >> "$GITHUB_OUTPUT"
             jq -r '"### Request plan `\(.requestIdentity)`\n\nTarget: `\(.request.targetSha)`  \nVersion: `\(.request.nextTag)`"' request-plan.json >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -238,10 +245,13 @@ jobs:
             '{$requestPlan: $requestPlan[0], candidateAssets: {($name): {$base64}, "versions.json": {base64: $versionsBase64}}, sourceDigests: {$worker, $lockfile}, toolchain: {$esbuild, $wrangler}, deploymentConfigDigest: $config, verification: {contract: "release-verification/v1", result: "passed"}}' \
             > bundle-input.json
           node controller/scripts/release/workflow.mjs bundle bundle-input.json > state2-bundle.json
+          plan_identity=$(jq -er '.finalPlan.planIdentity' state2-bundle.json)
+          plan_key=$(jq -er '.finalPlan.planIdentity[7:]' state2-bundle.json)
+          tag=$(jq -er '.finalPlan.tag' state2-bundle.json)
           {
-            echo "plan_identity=$(jq -er '.finalPlan.planIdentity' state2-bundle.json)"
-            echo "plan_key=$(jq -er '.finalPlan.planIdentity | ltrimstr(\"sha256:\")' state2-bundle.json)"
-            echo "tag=$(jq -er '.finalPlan.tag' state2-bundle.json)"
+            echo "plan_identity=$plan_identity"
+            echo "plan_key=$plan_key"
+            echo "tag=$tag"
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload immutable candidate and State 2 evidence
@@ -455,13 +465,19 @@ jobs:
             --arg staticPackageDir "$GITHUB_WORKSPACE/approved/static-package" \
             '{$bundlePath, $origin, $staticPackageDir}' > expected-input.json
           node controller/scripts/release/live-release.mjs expected expected-input.json > expected.json
+          alias_filenames_json=$(jq -c '.aliasFilenames' expected.json)
+          exact_filename=$(jq -er '.exactFilename' expected.json)
+          manifest_sha256=$(jq -er '.manifestSha256' expected.json)
+          retained_assets_json=$(jq -c '.retainedAssets' expected.json)
+          widget_origin=$(jq -er '.origin' expected.json)
+          widget_sha256=$(jq -er '.widgetSha256' expected.json)
           {
-            echo "alias_filenames_json=$(jq -c '.aliasFilenames' expected.json)"
-            echo "exact_filename=$(jq -er '.exactFilename' expected.json)"
-            echo "manifest_sha256=$(jq -er '.manifestSha256' expected.json)"
-            echo "retained_assets_json=$(jq -c '.retainedAssets' expected.json)"
-            echo "widget_origin=$(jq -er '.origin' expected.json)"
-            echo "widget_sha256=$(jq -er '.widgetSha256' expected.json)"
+            echo "alias_filenames_json=$alias_filenames_json"
+            echo "exact_filename=$exact_filename"
+            echo "manifest_sha256=$manifest_sha256"
+            echo "retained_assets_json=$retained_assets_json"
+            echo "widget_origin=$widget_origin"
+            echo "widget_sha256=$widget_sha256"
           } >> "$GITHUB_OUTPUT"
 
       - name: Capture exact production baseline before mutation
@@ -560,7 +576,8 @@ jobs:
             '{$controllerRoot, $candidateRoot, $controllerConfig, $controllerLock, $candidateEntrypoint, $candidateAssets, $targetSha, $expectedPath, $authorizationPath, $baselinePath}' \
             > deploy-input.json
           node controller/scripts/release/live-release.mjs deploy deploy-input.json > deployment.json
-          echo "status=$(jq -er '.status' deployment.json)" >> "$GITHUB_OUTPUT"
+          deployment_status=$(jq -er '.status' deployment.json)
+          echo "status=$deployment_status" >> "$GITHUB_OUTPUT"
 
       - name: Upload authoritative deployment outcome
         if: always()
