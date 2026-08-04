@@ -598,6 +598,29 @@ export async function createRequestPlanFromGithub({
     retentionBootstrap: context?.retentionBootstrap,
   });
   assertInput(dispatch.repository, dispatch.targetSha);
+  let recovery = null;
+  if (
+    context.identityMainSha !== undefined ||
+    context.resumePlanIdentity !== undefined ||
+    context.identityMainReachableFromCurrent !== undefined ||
+    context.controllerReachableFromCurrent !== undefined
+  ) {
+    if (
+      !SHA_PATTERN.test(context.identityMainSha ?? '') ||
+      !/^sha256:[0-9a-f]{64}$/.test(context.resumePlanIdentity ?? '') ||
+      context.identityMainReachableFromCurrent !== true ||
+      context.controllerReachableFromCurrent !== true
+    ) {
+      fail(
+        'UNAUTHENTICATED_PARTIAL_SOURCE',
+        'stored controller, remote-main, and plan identities must remain authenticated'
+      );
+    }
+    recovery = {
+      identityMainSha: context.identityMainSha,
+      planIdentity: context.resumePlanIdentity,
+    };
+  }
   const state = await observeGithubState({
     transport,
     repository: dispatch.repository,
@@ -623,6 +646,17 @@ export async function createRequestPlanFromGithub({
       releases: [hydrated],
       containsTarget: () => false,
     });
+    if (
+      recovery &&
+      (hydrated.finalPlan.planIdentity !== recovery.planIdentity ||
+        hydrated.requestPlan.source.controllerSha !== dispatch.controllerSha ||
+        hydrated.requestPlan.source.remoteMainSha !== recovery.identityMainSha)
+    ) {
+      fail(
+        'COMPLETED_PLAN_CONFLICT',
+        'published plan differs from the authenticated recovery identity'
+      );
+    }
     return {
       status: 'completed',
       planIdentity: completed.planIdentity,
@@ -636,20 +670,7 @@ export async function createRequestPlanFromGithub({
     requestRecord(transport, `/repos/${dispatch.repository}/commits/main`, 'remote main'),
     observeMergeQueuePreflight(transport, dispatch.repository, dispatch.targetSha),
   ]);
-  let identityMainSha = remoteMain.sha;
-  if (context.identityMainSha !== undefined) {
-    if (
-      !SHA_PATTERN.test(context.identityMainSha) ||
-      context.identityMainReachableFromCurrent !== true ||
-      context.controllerReachableFromCurrent !== true
-    ) {
-      fail(
-        'UNAUTHENTICATED_PARTIAL_SOURCE',
-        'stored controller and remote-main identities must remain reachable from current main'
-      );
-    }
-    identityMainSha = context.identityMainSha;
-  }
+  const identityMainSha = recovery?.identityMainSha ?? remoteMain.sha;
   const git = gitObserver({
     repositoryDir: context.repositoryDir,
     previousSha: frontier.targetSha,
