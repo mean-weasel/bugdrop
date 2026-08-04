@@ -16,6 +16,8 @@ fail() {
 
 grep -Fq 'timeout-minutes:' "$live_workflow" ||
   fail 'live verification job lacks an overall timeout'
+grep -Fq 'retained exact and stable alias filenames' "$live_workflow" ||
+  fail 'manual live verification does not require the complete retained asset set'
 
 for controller_context in \
   '--arg eventName "$GITHUB_EVENT_NAME"' \

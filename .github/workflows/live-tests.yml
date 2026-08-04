@@ -71,7 +71,7 @@ on:
         required: false
         type: string
       retained_assets_json:
-        description: JSON object of retained exact filenames to SHA-256 values
+        description: JSON object of retained exact and stable alias filenames to SHA-256 values
         required: false
         type: string
   schedule:

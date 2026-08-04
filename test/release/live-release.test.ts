@@ -221,7 +221,7 @@ describe('live release production orchestration', () => {
       })
     ).resolves.toMatchObject({ status: 'candidate-active' });
     expect(sleep).toHaveBeenCalledOnce();
-    expect(cloudflare.inspectStatus).toHaveBeenCalledTimes(3);
+    expect(cloudflare.inspectStatus).toHaveBeenCalledTimes(5);
   });
 
   it('rejects invalid inspection retry options before production mutation', async () => {

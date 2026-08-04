@@ -77,6 +77,14 @@ describe('explicit live verification', () => {
     expect(verifyLiveSnapshot(input, observed)).toMatchObject({ status: 'verified' });
   });
 
+  it('rejects an explicit identity that omits a retained manifest alias', () => {
+    const observed = snapshot();
+    observed.assetHashes['widget.v1.55.js'] = RETAINED_HASH;
+    observed.manifest.versions['v1.55'] = 'widget.v1.55.js';
+
+    expect(() => verifyLiveSnapshot(expected(), observed)).toThrow(/retained alias v1\.55/);
+  });
+
   it.each([
     ['environment', observed => (observed.health.environment = 'preview')],
     ['build SHA', observed => (observed.health.buildSha = '0'.repeat(40))],
@@ -163,10 +171,14 @@ describe('polling and scheduled observation', () => {
   });
 
   it('enforces one overall live-verification deadline', async () => {
+    let providerSignal: AbortSignal | undefined;
     await expect(
       pollLiveVerification({
         expected: expected(),
-        snapshotProvider: () => new Promise(() => {}),
+        snapshotProvider: (_attempt, options) => {
+          providerSignal = options?.signal;
+          return new Promise(() => {});
+        },
         maxAttempts: 1,
         overallTimeoutMs: 5,
       })
@@ -174,6 +186,35 @@ describe('polling and scheduled observation', () => {
       code: 'LIVE_VERIFICATION_TIMEOUT',
       details: { lastCode: 'LIVE_OVERALL_TIMEOUT' },
     });
+    expect(providerSignal?.aborted).toBe(true);
+  });
+
+  it('aborts the default live request when the overall deadline expires', async () => {
+    const originalFetch = globalThis.fetch;
+    let requestSignal: AbortSignal | undefined;
+    globalThis.fetch = vi.fn((_url, init) => {
+      requestSignal = init?.signal;
+      return new Promise((_resolve, reject) => {
+        requestSignal?.addEventListener('abort', () => reject(new Error('aborted')));
+      });
+    }) as typeof fetch;
+    try {
+      await expect(
+        pollLiveVerification({
+          expected: expected(),
+          maxAttempts: 1,
+          overallTimeoutMs: 5,
+          requestTimeoutMs: 100,
+        })
+      ).rejects.toMatchObject({
+        code: 'LIVE_VERIFICATION_TIMEOUT',
+        details: { lastCode: 'LIVE_OVERALL_TIMEOUT' },
+      });
+      expect(requestSignal?.aborted).toBe(true);
+      expect(globalThis.fetch).toHaveBeenCalledOnce();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('rejects an oversized live widget before buffering its response body', async () => {
