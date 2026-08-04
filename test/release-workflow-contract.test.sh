@@ -239,6 +239,10 @@ for literal in \
   'needs: [guard-and-plan, verify-candidate, capability-gate]' \
   'environment: production' \
   'artifact-ids: ${{ needs.verify-candidate.outputs.artifact_id }}' \
+  'Stage exact static package below candidate trust root' \
+  'diff -qr approved/static-package candidate/.release-static-package' \
+  '--arg staticPackageDir "$GITHUB_WORKSPACE/candidate/.release-static-package"' \
+  '--arg candidateAssets "$GITHUB_WORKSPACE/candidate/.release-static-package"' \
   'Revalidate exact plan after protected approval' \
   'node controller/scripts/release/workflow.mjs authorize' \
   'Capture exact production baseline before mutation' \
@@ -257,6 +261,8 @@ deploy_block=$(job_block deploy-candidate)
 for literal in \
   "needs.approval-baseline.outputs.proceed == 'true'" \
   'environment: production' \
+  'diff -qr release-state/static-package candidate/.release-static-package' \
+  '--arg candidateAssets "$GITHUB_WORKSPACE/candidate/.release-static-package"' \
   'node controller/scripts/release/live-release.mjs deploy' \
   'Require exact candidate deployment' \
   "test '\${{ steps.deploy.outputs.status }}' = 'candidate-active'"; do
@@ -310,13 +316,15 @@ for literal in \
   'status: "no-mutation", rollbackAttempted: false' \
   'test -s release-state/baseline.json' \
   'test -s release-state/expected.json' \
+  'diff -qr release-state/static-package candidate/.release-static-package' \
+  '--arg candidateAssets "$GITHUB_WORKSPACE/candidate/.release-static-package"' \
   'node controller/scripts/release/live-release.mjs finalize' \
   'Require verified stable or restored production' \
   'test "$status" = '\''no-mutation'\'''; do
   grep -Fq -- "$literal" <<< "$final_block" || fail "finalizer lacks: $literal"
 done
 
-[[ $(grep -Fc "if: \${{ needs.deploy-candidate.result != 'skipped' }}" <<< "$final_block") -eq 6 ]] ||
+[[ $(grep -Fc "if: \${{ needs.deploy-candidate.result != 'skipped' }}" <<< "$final_block") -eq 7 ]] ||
   fail 'skipped deployment must bypass all recovery setup and artifact downloads'
 
 require_absent 'CAPABILITY_NOT_INSTALLED'
