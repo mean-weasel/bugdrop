@@ -174,6 +174,7 @@ for literal in \
   'cp "$RUNNER_TEMP/builder-result.json" "$RUNNER_TEMP/release-plan/builder-result.json"' \
   'cp -R "$RUNNER_TEMP/static-package/." "$RUNNER_TEMP/release-plan/static-package/"' \
   'path: ${{ runner.temp }}/release-plan/' \
+  'include-hidden-files: true' \
   'retention-days: 14'; do
   grep -Fq -- "$literal" <<< "$verify_block" || fail "verify-candidate lacks: $literal"
 done
@@ -304,10 +305,19 @@ for literal in \
   'always()' \
   'environment: production' \
   'contents: read' \
+  'DEPLOY_JOB_RESULT: ${{ needs.deploy-candidate.result }}' \
+  'if [ "$DEPLOY_JOB_RESULT" = '\''skipped'\'' ]; then' \
+  'status: "no-mutation", rollbackAttempted: false' \
+  'test -s release-state/baseline.json' \
+  'test -s release-state/expected.json' \
   'node controller/scripts/release/live-release.mjs finalize' \
-  'Require verified stable or restored production'; do
+  'Require verified stable or restored production' \
+  'test "$status" = '\''no-mutation'\'''; do
   grep -Fq -- "$literal" <<< "$final_block" || fail "finalizer lacks: $literal"
 done
+
+[[ $(grep -Fc "if: \${{ needs.deploy-candidate.result != 'skipped' }}" <<< "$final_block") -eq 6 ]] ||
+  fail 'skipped deployment must bypass all recovery setup and artifact downloads'
 
 require_absent 'CAPABILITY_NOT_INSTALLED'
 

@@ -279,6 +279,7 @@ jobs:
         with:
           name: release-plan-${{ steps.bundle.outputs.plan_key }}
           path: ${{ runner.temp }}/release-plan/
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
 
@@ -726,6 +727,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout immutable controller
+        if: ${{ needs.deploy-candidate.result != 'skipped' }}
         uses: actions/checkout@v5
         with:
           ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
@@ -733,6 +735,7 @@ jobs:
           persist-credentials: false
 
       - name: Checkout immutable candidate source
+        if: ${{ needs.deploy-candidate.result != 'skipped' }}
         uses: actions/checkout@v5
         with:
           ref: ${{ inputs.target_sha }}
@@ -740,15 +743,18 @@ jobs:
           persist-credentials: false
 
       - uses: actions/setup-node@v5
+        if: ${{ needs.deploy-candidate.result != 'skipped' }}
         with:
           node-version: '22'
 
       - name: Install immutable controller and candidate dependencies
+        if: ${{ needs.deploy-candidate.result != 'skipped' }}
         run: |
           npm --prefix controller ci --ignore-scripts
           npm --prefix candidate ci --ignore-scripts
 
       - name: Download exact State 2 and baseline evidence
+        if: ${{ needs.deploy-candidate.result != 'skipped' }}
         uses: actions/download-artifact@v5
         with:
           artifact-ids: ${{ needs.verify-candidate.outputs.artifact_id }},${{ needs.approval-baseline.outputs.artifact_id }}
@@ -756,6 +762,7 @@ jobs:
           merge-multiple: true
 
       - name: Download deployment evidence when available
+        if: ${{ needs.deploy-candidate.result != 'skipped' }}
         continue-on-error: true
         uses: actions/download-artifact@v5
         with:
@@ -769,7 +776,18 @@ jobs:
           BUGDROP_GITHUB_TOKEN: ${{ github.token }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DEPLOY_JOB_RESULT: ${{ needs.deploy-candidate.result }}
         run: |
+          if [ "$DEPLOY_JOB_RESULT" = 'skipped' ]; then
+            jq -n --arg planIdentity '${{ needs.verify-candidate.outputs.plan_identity }}' \
+              '{protocol: "bugdrop.live-release/v1", status: "no-mutation", rollbackAttempted: false, planIdentity: $planIdentity}' \
+              > finalization.json
+            echo 'status=no-mutation' >> "$GITHUB_OUTPUT"
+            jq -r '"### Finalization — \(.status)\n\nRollback attempted: `\(.rollbackAttempted)`"' finalization.json >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          test -s release-state/baseline.json
+          test -s release-state/expected.json
           if [ ! -s release-state/deployment.json ]; then
             jq -n --arg planIdentity '${{ needs.verify-candidate.outputs.plan_identity }}' \
               '{status: "ambiguous-critical", mutationAttempted: true, planIdentity: $planIdentity}' \
@@ -800,4 +818,5 @@ jobs:
           status='${{ steps.finalize.outputs.status }}'
           test "$status" = 'published-stable' || \
             test "$status" = 'baseline-restored' || \
-            test "$status" = 'rollback-verified'
+            test "$status" = 'rollback-verified' || \
+            test "$status" = 'no-mutation'
