@@ -37,23 +37,25 @@ describe('GitHub publication inspection', () => {
       if (url.pathname.endsWith(`/git/tags/${TAG_OBJECT_SHA}`)) {
         return response({ message: 'annotation', object: { type: 'commit', sha: SHA } });
       }
-      if (url.pathname.endsWith('/releases/tags/v1.2.3')) {
-        return response({
-          id: 123,
-          tag_name: 'v1.2.3',
-          body: `notes\n\n${bodyMarker}`,
-          draft: false,
-          prerelease: false,
-          published_at: '2026-08-03T12:00:00Z',
-          assets: [
-            {
-              id: 7,
-              name: 'widget.v1.2.3.js',
-              url: `${API}/repos/mean-weasel/bugdrop/releases/assets/7`,
-              size: Buffer.byteLength('widget-bytes'),
-            },
-          ],
-        });
+      if (url.pathname.endsWith('/releases') && url.searchParams.get('page') === '1') {
+        return response([
+          {
+            id: 123,
+            tag_name: 'v1.2.3',
+            body: `notes\n\n${bodyMarker}`,
+            draft: false,
+            prerelease: false,
+            published_at: '2026-08-03T12:00:00Z',
+            assets: [
+              {
+                id: 7,
+                name: 'widget.v1.2.3.js',
+                url: `${API}/repos/mean-weasel/bugdrop/releases/assets/7`,
+                size: Buffer.byteLength('widget-bytes'),
+              },
+            ],
+          },
+        ]);
       }
       if (url.pathname === '/repos/mean-weasel/bugdrop/releases/assets/7') {
         return new Response(null, {
@@ -98,13 +100,129 @@ describe('GitHub publication inspection', () => {
   });
 
   it('returns a complete empty observation for an unused tag', async () => {
-    const fetchImpl = vi.fn(async () => response({ message: 'Not Found' }, 404));
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      return url.pathname.endsWith('/releases')
+        ? response([])
+        : response({ message: 'Not Found' }, 404);
+    });
     await expect(adapter(fetchImpl).inspect('v9.9.9')).resolves.toEqual({
       complete: true,
       tagObject: null,
       tagRef: null,
       releases: [],
     });
+  });
+
+  it('observes drafts that the release-by-tag endpoint omits', async () => {
+    const publicationMarker = { planIdentity: `sha256:${'4'.repeat(64)}` };
+    const bodyMarker = `<!-- bugdrop-publication ${Buffer.from(JSON.stringify(publicationMarker)).toString('base64url')} -->`;
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/git/ref/tags/v1.2.3')) {
+        return response({ object: { type: 'tag', sha: TAG_OBJECT_SHA } });
+      }
+      if (url.pathname.endsWith(`/git/tags/${TAG_OBJECT_SHA}`)) {
+        return response({ message: 'annotation', object: { type: 'commit', sha: SHA } });
+      }
+      if (url.pathname.endsWith('/releases')) {
+        return response([
+          {
+            id: 456,
+            tag_name: 'v1.2.3',
+            body: bodyMarker,
+            draft: true,
+            prerelease: false,
+            published_at: null,
+            assets: [],
+          },
+        ]);
+      }
+      throw new Error(`unexpected ${url.pathname}`);
+    });
+
+    await expect(adapter(fetchImpl).inspect('v1.2.3')).resolves.toMatchObject({
+      complete: true,
+      releases: [
+        {
+          id: '456',
+          draft: true,
+          published: false,
+          marker: publicationMarker,
+          tag: 'v1.2.3',
+          targetSha: SHA,
+        },
+      ],
+    });
+    expect(fetchImpl).not.toHaveBeenCalledWith(
+      expect.objectContaining({ pathname: expect.stringContaining('/releases/tags/') }),
+      expect.anything()
+    );
+  });
+
+  it('uses pagination authority and accepts an exactly full final bounded page', async () => {
+    let releasePageCalls = 0;
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/releases')) {
+        releasePageCalls += 1;
+        const page = Number(url.searchParams.get('page'));
+        return response(
+          Array.from({ length: 100 }, (_, index) => ({
+            id: page * 100 + index,
+            tag_name: 'v1.2.2',
+          })),
+          200,
+          page < 100
+            ? { link: `<${API}/repos/mean-weasel/bugdrop/releases?page=${page + 1}>; rel="next"` }
+            : undefined
+        );
+      }
+      return response({ message: 'Not Found' }, 404);
+    });
+
+    await expect(adapter(fetchImpl).inspect('v1.2.3')).resolves.toMatchObject({
+      complete: true,
+      releases: [],
+    });
+    expect(releasePageCalls).toBe(100);
+  });
+
+  it('reports duplicate same-tag identities without downloading their assets', async () => {
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/releases')) {
+        return response(
+          [501, 502].map(id => ({
+            id,
+            tag_name: 'v1.2.3',
+            assets: [
+              {
+                id: id + 100,
+                name: 'large.zip',
+                size: 1024,
+                url: `${API}/repos/mean-weasel/bugdrop/releases/assets/${id + 100}`,
+              },
+            ],
+          }))
+        );
+      }
+      if (url.pathname.includes('/releases/assets/')) {
+        throw new Error('duplicate assets must not be downloaded');
+      }
+      return response({ message: 'Not Found' }, 404);
+    });
+
+    await expect(adapter(fetchImpl).inspect('v1.2.3')).resolves.toMatchObject({
+      complete: true,
+      releases: [
+        { id: '501', tag: 'v1.2.3' },
+        { id: '502', tag: 'v1.2.3' },
+      ],
+    });
+    expect(
+      fetchImpl.mock.calls.some(([input]) => new URL(String(input)).pathname.includes('/assets/'))
+    ).toBe(false);
   });
 });
 
