@@ -35,6 +35,18 @@ on:
         required: false
         default: false
         type: boolean
+      resume_controller_sha:
+        description: Stored controller SHA for an authenticated partial-publication retry
+        required: false
+        type: string
+      resume_remote_main_sha:
+        description: Stored remote-main SHA for an authenticated partial-publication retry
+        required: false
+        type: string
+      resume_plan_identity:
+        description: Expected sha256 plan identity for an authenticated partial-publication retry
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -51,9 +63,13 @@ jobs:
     outputs:
       completed: ${{ steps.plan.outputs.completed }}
       controller_sha: ${{ steps.guard.outputs.controller_sha }}
+      identity_main_sha: ${{ steps.guard.outputs.identity_main_sha }}
       plan_identity: ${{ steps.plan.outputs.plan_identity }}
+      plan_controller_sha: ${{ steps.guard.outputs.plan_controller_sha }}
       request_key: ${{ steps.plan.outputs.request_key }}
       request_identity: ${{ steps.plan.outputs.request_identity }}
+      resume_plan_identity: ${{ steps.guard.outputs.resume_plan_identity }}
+      resuming: ${{ steps.guard.outputs.resuming }}
       version: ${{ steps.plan.outputs.version }}
     steps:
       - name: Reject non-main or malformed dispatch before checkout
@@ -62,6 +78,9 @@ jobs:
         env:
           CONTROLLER_SHA: ${{ github.workflow_sha }}
           DISPATCH_REF: ${{ github.ref }}
+          RESUME_CONTROLLER_SHA: ${{ inputs.resume_controller_sha }}
+          RESUME_PLAN_IDENTITY: ${{ inputs.resume_plan_identity }}
+          RESUME_REMOTE_MAIN_SHA: ${{ inputs.resume_remote_main_sha }}
           TARGET_SHA: ${{ inputs.target_sha }}
         run: |
           test "$DISPATCH_REF" = 'refs/heads/main' || {
@@ -76,7 +95,42 @@ jobs:
             echo 'target_sha must be exactly 40 lowercase hexadecimal characters.' >&2
             exit 1
           }
-          echo "controller_sha=$CONTROLLER_SHA" >> "$GITHUB_OUTPUT"
+          resume_count=0
+          for value in "$RESUME_CONTROLLER_SHA" "$RESUME_REMOTE_MAIN_SHA" "$RESUME_PLAN_IDENTITY"; do
+            test -z "$value" || resume_count=$((resume_count + 1))
+          done
+          test "$resume_count" = 0 || test "$resume_count" = 3 || {
+            echo 'partial retry requires all three resume inputs or none of them.' >&2
+            exit 1
+          }
+          if [ "$resume_count" = 3 ]; then
+            [[ "$RESUME_CONTROLLER_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+              echo 'resume_controller_sha must be exactly 40 lowercase hexadecimal characters.' >&2
+              exit 1
+            }
+            [[ "$RESUME_REMOTE_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+              echo 'resume_remote_main_sha must be exactly 40 lowercase hexadecimal characters.' >&2
+              exit 1
+            }
+            [[ "$RESUME_PLAN_IDENTITY" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+              echo 'resume_plan_identity must be a complete sha256 identity.' >&2
+              exit 1
+            }
+            plan_controller_sha=$RESUME_CONTROLLER_SHA
+            identity_main_sha=$RESUME_REMOTE_MAIN_SHA
+            resuming=true
+          else
+            plan_controller_sha=$CONTROLLER_SHA
+            identity_main_sha=''
+            resuming=false
+          fi
+          {
+            echo "controller_sha=$CONTROLLER_SHA"
+            echo "identity_main_sha=$identity_main_sha"
+            echo "plan_controller_sha=$plan_controller_sha"
+            echo "resume_plan_identity=$RESUME_PLAN_IDENTITY"
+            echo "resuming=$resuming"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Checkout immutable controller
         uses: actions/checkout@v5
@@ -103,17 +157,27 @@ jobs:
         env:
           BUGDROP_GITHUB_TOKEN: ${{ github.token }}
           BUMP: ${{ inputs.bump }}
-          CONTROLLER_SHA: ${{ steps.guard.outputs.controller_sha }}
+          CONTROLLER_SHA: ${{ steps.guard.outputs.plan_controller_sha }}
           DRY_RUN: ${{ inputs.dry_run }}
+          IDENTITY_MAIN_SHA: ${{ steps.guard.outputs.identity_main_sha }}
           RETENTION_BOOTSTRAP: ${{ inputs.retention_bootstrap }}
           OPERATOR_NOTES: ${{ inputs.operator_notes }}
           RATIONALE: ${{ inputs.rationale }}
           RELEASE_REASON: ${{ inputs.release_reason }}
+          RESUMING: ${{ steps.guard.outputs.resuming }}
           TARGET_SHA: ${{ inputs.target_sha }}
         run: |
           candidate_reachable=false
           if git -C "$GITHUB_WORKSPACE/controller" merge-base --is-ancestor "$TARGET_SHA" origin/main; then
             candidate_reachable=true
+          fi
+          identity_main_reachable_from_current=false
+          controller_reachable_from_current=false
+          if [ "$RESUMING" = true ]; then
+            git -C "$GITHUB_WORKSPACE/controller" merge-base --is-ancestor "$IDENTITY_MAIN_SHA" origin/main &&
+              identity_main_reachable_from_current=true
+            git -C "$GITHUB_WORKSPACE/controller" merge-base --is-ancestor "$CONTROLLER_SHA" origin/main &&
+              controller_reachable_from_current=true
           fi
           jq -n \
             --arg repositoryDir "$GITHUB_WORKSPACE/controller" \
@@ -130,9 +194,13 @@ jobs:
             --arg operatorNotes "$OPERATOR_NOTES" \
             --argjson dryRun "$DRY_RUN" \
             --argjson candidateReachableFromMain "$candidate_reachable" \
+            --arg identityMainSha "$IDENTITY_MAIN_SHA" \
+            --argjson identityMainReachableFromCurrent "$identity_main_reachable_from_current" \
             --argjson retentionBootstrap "$RETENTION_BOOTSTRAP" \
+            --argjson controllerReachableFromCurrent "$controller_reachable_from_current" \
             --arg retentionOutputDir "$GITHUB_WORKSPACE/retention-input" \
-            '{$repositoryDir, $eventName, $ref, $workflowSha, $candidateReachableFromMain, $retentionBootstrap, $retentionOutputDir, dispatch: {$repository, $workflowRef, $targetSha, $controllerSha, $bump, $releaseReason, $rationale, $operatorNotes, $dryRun}}' \
+            --argjson resuming "$RESUMING" \
+            '{$repositoryDir, $eventName, $ref, $workflowSha, $candidateReachableFromMain, $retentionBootstrap, $retentionOutputDir, dispatch: {$repository, $workflowRef, $targetSha, $controllerSha, $bump, $releaseReason, $rationale, $operatorNotes, $dryRun}} + (if $resuming then {$identityMainSha, $identityMainReachableFromCurrent, $controllerReachableFromCurrent} else {} end)' \
             > request-context.json
           node controller/scripts/release/workflow.mjs guard request-context.json > guard.json
           node controller/scripts/release/github-adapter.mjs plan request-context.json > request-plan.json
@@ -273,6 +341,23 @@ jobs:
             echo "tag=$tag"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Authenticate exact partial-publication retry
+        if: needs.guard-and-plan.outputs.resuming == 'true'
+        shell: bash
+        env:
+          BUGDROP_GITHUB_TOKEN: ${{ github.token }}
+          EXPECTED_PLAN_IDENTITY: ${{ needs.guard-and-plan.outputs.resume_plan_identity }}
+        run: |
+          test "$(jq -er '.finalPlan.planIdentity' state2-bundle.json)" = "$EXPECTED_PLAN_IDENTITY"
+          jq -n \
+            --arg bundlePath "$GITHUB_WORKSPACE/state2-bundle.json" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            '{$bundlePath, $repository}' > partial-inspection-input.json
+          node controller/scripts/release/live-release.mjs inspect-publication partial-inspection-input.json > partial-inspection.json
+          test "$(jq -er '.planIdentity' partial-inspection.json)" = "$EXPECTED_PLAN_IDENTITY"
+          test "$(jq -er '.status' partial-inspection.json)" = 'partial-resumable'
+          test "$(jq -er '.nextAction.kind' partial-inspection.json)" != 'create-tag'
+
       - name: Upload immutable candidate and State 2 evidence
         id: upload
         uses: actions/upload-artifact@v5
@@ -306,7 +391,7 @@ jobs:
         shell: bash
         env:
           ARTIFACT_ID: ${{ needs.verify-candidate.outputs.artifact_id }}
-          CONTROLLER_SHA: ${{ needs.guard-and-plan.outputs.controller_sha }}
+          CONTROLLER_SHA: ${{ needs.guard-and-plan.outputs.plan_controller_sha }}
         run: |
           jq -n \
             --slurpfile bundle approved/state2-bundle.json \
@@ -429,13 +514,23 @@ jobs:
         env:
           BUGDROP_GITHUB_TOKEN: ${{ github.token }}
           BUMP: ${{ inputs.bump }}
-          CONTROLLER_SHA: ${{ needs.guard-and-plan.outputs.controller_sha }}
+          CONTROLLER_SHA: ${{ needs.guard-and-plan.outputs.plan_controller_sha }}
+          IDENTITY_MAIN_SHA: ${{ needs.guard-and-plan.outputs.identity_main_sha }}
           RETENTION_BOOTSTRAP: ${{ inputs.retention_bootstrap }}
           OPERATOR_NOTES: ${{ inputs.operator_notes }}
           RATIONALE: ${{ inputs.rationale }}
           RELEASE_REASON: ${{ inputs.release_reason }}
+          RESUMING: ${{ needs.guard-and-plan.outputs.resuming }}
           TARGET_SHA: ${{ inputs.target_sha }}
         run: |
+          identity_main_reachable_from_current=false
+          controller_reachable_from_current=false
+          if [ "$RESUMING" = true ]; then
+            git -C "$GITHUB_WORKSPACE/controller" merge-base --is-ancestor "$IDENTITY_MAIN_SHA" origin/main &&
+              identity_main_reachable_from_current=true
+            git -C "$GITHUB_WORKSPACE/controller" merge-base --is-ancestor "$CONTROLLER_SHA" origin/main &&
+              controller_reachable_from_current=true
+          fi
           jq -n \
             --arg repositoryDir "$GITHUB_WORKSPACE/controller" \
             --arg repository "$GITHUB_REPOSITORY" \
@@ -446,8 +541,12 @@ jobs:
             --arg releaseReason "$RELEASE_REASON" \
             --arg rationale "$RATIONALE" \
             --arg operatorNotes "$OPERATOR_NOTES" \
+            --arg identityMainSha "$IDENTITY_MAIN_SHA" \
+            --argjson identityMainReachableFromCurrent "$identity_main_reachable_from_current" \
             --argjson retentionBootstrap "$RETENTION_BOOTSTRAP" \
-            '{$repositoryDir, $retentionBootstrap, dispatch: {$repository, $workflowRef, $targetSha, $controllerSha, $bump, $releaseReason, $rationale, $operatorNotes, dryRun: false}}' \
+            --argjson controllerReachableFromCurrent "$controller_reachable_from_current" \
+            --argjson resuming "$RESUMING" \
+            '{$repositoryDir, $retentionBootstrap, dispatch: {$repository, $workflowRef, $targetSha, $controllerSha, $bump, $releaseReason, $rationale, $operatorNotes, dryRun: false}} + (if $resuming then {$identityMainSha, $identityMainReachableFromCurrent, $controllerReachableFromCurrent} else {} end)' \
             > revalidation-context.json
           node controller/scripts/release/github-adapter.mjs plan revalidation-context.json > revalidated-plan.json
           expected_plan=$(jq -er '.finalPlan.planIdentity' approved/state2-bundle.json)
@@ -458,6 +557,17 @@ jobs:
           else
             test "$(jq -er '.requestIdentity' revalidated-plan.json)" = "$expected_request"
             completed='{"kind":"none"}'
+          fi
+          if [ "$RESUMING" = true ]; then
+            test "$expected_plan" = '${{ needs.guard-and-plan.outputs.resume_plan_identity }}'
+            jq -n \
+              --arg bundlePath "$GITHUB_WORKSPACE/approved/state2-bundle.json" \
+              --arg repository "$GITHUB_REPOSITORY" \
+              '{$bundlePath, $repository}' > partial-inspection-input.json
+            node controller/scripts/release/live-release.mjs inspect-publication partial-inspection-input.json > partial-inspection.json
+            test "$(jq -er '.planIdentity' partial-inspection.json)" = "$expected_plan"
+            test "$(jq -er '.status' partial-inspection.json)" = 'partial-resumable'
+            test "$(jq -er '.nextAction.kind' partial-inspection.json)" != 'create-tag'
           fi
           jq -n \
             --slurpfile bundle approved/state2-bundle.json \

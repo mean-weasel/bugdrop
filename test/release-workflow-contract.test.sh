@@ -67,7 +67,8 @@ top_level_events=$(awk '
 [[ "$top_level_events" == 'workflow_dispatch:' ]] ||
   fail "workflow_dispatch must be the only trigger; found: $top_level_events"
 
-for input in target_sha bump release_reason rationale operator_notes dry_run retention_bootstrap; do
+for input in target_sha bump release_reason rationale operator_notes dry_run retention_bootstrap \
+  resume_controller_sha resume_remote_main_sha resume_plan_identity; do
   require_literal "      $input:"
 done
 for literal in \
@@ -120,6 +121,8 @@ for literal in \
   '[[ "$CONTROLLER_SHA" =~ ^[0-9a-f]{40}$ ]]' \
   '[[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]' \
   'CONTROLLER_SHA: ${{ github.workflow_sha }}' \
+  'partial retry requires all three resume inputs or none of them.' \
+  'plan_controller_sha=$plan_controller_sha' \
   'node controller/scripts/release/workflow.mjs guard' \
   'node controller/scripts/release/github-adapter.mjs plan' \
   '--arg repositoryDir "$GITHUB_WORKSPACE/controller"' \
@@ -178,6 +181,14 @@ for literal in \
   'retention-days: 14'; do
   grep -Fq -- "$literal" <<< "$verify_block" || fail "verify-candidate lacks: $literal"
 done
+for literal in \
+  "if: needs.guard-and-plan.outputs.resuming == 'true'" \
+  'node controller/scripts/release/live-release.mjs inspect-publication' \
+  "test \"\$(jq -er '.status' partial-inspection.json)\" = 'partial-resumable'"; do
+  grep -Fq -- "$literal" <<< "$verify_block" || fail "partial retry verification lacks: $literal"
+done
+[[ $(grep -Fc 'test "$(jq -er '\''.nextAction.kind'\'' partial-inspection.json)" != '\''create-tag'\''' "$workflow") -eq 2 ]] ||
+  fail 'partial retry must reject pristine publication state before dry-run success and mutation'
 if grep -Fq -- '{$requestPlan:' <<< "$verify_block"; then
   fail 'slurped request plan must be a literal requestPlan field, not a dynamic object key'
 fi
