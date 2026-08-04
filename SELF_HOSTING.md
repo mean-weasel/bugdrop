@@ -136,33 +136,19 @@ wrangler secret put AUTH_TOKEN_SECRET
 make deploy
 ```
 
-### Auto-Deploy via GitHub Releases
+### Repository Release Workflow
 
-The CI workflow automatically deploys to Cloudflare when you publish a GitHub Release. This gives you explicit control over when updates go to production.
+Publishing a GitHub Release does not deploy BugDrop. The repository's production workflow has
+only an explicit `workflow_dispatch` trigger. It derives the next tag from the latest authenticated
+published Release plus the operator-selected SemVer bump; package metadata and commit prefixes are
+not release-version authority.
 
-**Setup (one-time):**
-
-1. Get your Cloudflare credentials:
-   - Go to [Cloudflare Dashboard](https://dash.cloudflare.com) → Profile → API Tokens
-   - Create a token with **Workers Scripts: Edit** permission
-   - Note your **Account ID** from the Workers overview page
-
-2. Add secrets to your GitHub repository:
-   - Go to your repo → Settings → Secrets and variables → Actions
-   - Add these repository secrets:
-     - `CLOUDFLARE_API_TOKEN` - Your Cloudflare API token
-     - `CLOUDFLARE_ACCOUNT_ID` - Your Cloudflare account ID
-
-**To deploy a new version:**
-
-1. Merge your PRs to `main` (tests run, but no deploy)
-2. Go to your repo → Releases → **Create a new release**
-3. Create a new tag (e.g., `v1.2.0`) following semver
-4. Add release notes describing changes
-5. Click **Publish release**
-6. CI will automatically build and deploy to Cloudflare
-
-The release tag (e.g., `v1.2.0`) becomes the version number for the widget files.
+The workflow is tailored to the canonical BugDrop production service, including its protected
+environment, Cloudflare target, static-asset origin, and external capability gates. It is disabled
+until separately authorized production setup is complete. Self-hosters should use the manual
+`make deploy` path above or deliberately adapt and validate the guarded workflow for their own
+environment. Do not copy its production settings or assume that creating a tag or Release activates
+it. Maintainers of the canonical service should follow [the release runbook](docs/releasing.md).
 
 ## Configuration
 

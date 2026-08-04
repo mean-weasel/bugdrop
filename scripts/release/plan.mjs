@@ -68,8 +68,8 @@ export function normalizeDispatch(input) {
   if (!['patch', 'minor', 'major'].includes(input.bump)) {
     fail('INVALID_BUMP', 'bump must be patch, minor, or major');
   }
-  if (!['weekly', 'emergency'].includes(input.releaseReason)) {
-    fail('INVALID_RELEASE_REASON', 'releaseReason must be weekly or emergency');
+  if (!['standard', 'emergency'].includes(input.releaseReason)) {
+    fail('INVALID_RELEASE_REASON', 'releaseReason must be standard or emergency');
   }
   const rationale = text(input.rationale ?? '', 'rationale', {
     required: input.releaseReason === 'emergency',

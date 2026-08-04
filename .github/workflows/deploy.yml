@@ -13,10 +13,10 @@ on:
         type: choice
         options: [patch, minor, major]
       release_reason:
-        description: Normal weekly window or emergency release
+        description: Standard or emergency manual release
         required: true
         type: choice
-        options: [weekly, emergency]
+        options: [standard, emergency]
       rationale:
         description: Required for emergency releases
         required: false
