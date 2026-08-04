@@ -235,14 +235,14 @@ jobs:
           jq -n \
             --slurpfile requestPlan request/request-plan.json \
             --arg name "$exact_name" \
-            --arg base64 "$(base64 -w 0 "$RUNNER_TEMP/static-package/$exact_name")" \
-            --arg versionsBase64 "$(base64 -w 0 "$RUNNER_TEMP/static-package/versions.json")" \
+            --rawfile widget "$RUNNER_TEMP/static-package/$exact_name" \
+            --rawfile versions "$RUNNER_TEMP/static-package/versions.json" \
             --arg worker "$worker_digest" \
             --arg lockfile "$lock_digest" \
             --arg esbuild "$esbuild_version" \
             --arg wrangler "$wrangler_version" \
             --arg config "$config_digest" \
-            '{$requestPlan: $requestPlan[0], candidateAssets: {($name): {$base64}, "versions.json": {base64: $versionsBase64}}, sourceDigests: {$worker, $lockfile}, toolchain: {$esbuild, $wrangler}, deploymentConfigDigest: $config, verification: {contract: "release-verification/v1", result: "passed"}}' \
+            '{$requestPlan: $requestPlan[0], candidateAssets: {($name): {base64: ($widget | @base64)}, "versions.json": {base64: ($versions | @base64)}}, sourceDigests: {$worker, $lockfile}, toolchain: {$esbuild, $wrangler}, deploymentConfigDigest: $config, verification: {contract: "release-verification/v1", result: "passed"}}' \
             > bundle-input.json
           node controller/scripts/release/workflow.mjs bundle bundle-input.json > state2-bundle.json
           plan_identity=$(jq -er '.finalPlan.planIdentity' state2-bundle.json)

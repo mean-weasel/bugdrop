@@ -159,11 +159,19 @@ for literal in \
   'npm run build' \
   'node controller/scripts/build-widget.js' \
   '--mode release' \
+  '--rawfile widget "$RUNNER_TEMP/static-package/$exact_name"' \
+  '--rawfile versions "$RUNNER_TEMP/static-package/versions.json"' \
+  'base64: ($widget | @base64)' \
+  'base64: ($versions | @base64)' \
   'node controller/scripts/release/workflow.mjs bundle' \
   'static-package/versions.json' \
   'retention-days: 14'; do
   grep -Fq -- "$literal" <<< "$verify_block" || fail "verify-candidate lacks: $literal"
 done
+if grep -Fq -- '--arg base64 "$(base64' <<< "$verify_block" ||
+  grep -Fq -- '--arg versionsBase64 "$(base64' <<< "$verify_block"; then
+  fail 'release artifact bytes must not be passed through the process argument list'
+fi
 if grep -Eq 'secrets\.|environment:' <<< "$verify_block"; then
   fail 'candidate verification must not reference secrets or an environment'
 fi
