@@ -14,7 +14,11 @@ import {
   validatePublicationBundle,
 } from './publication.mjs';
 import { canonicalize } from './canonical-json.mjs';
-import { collectRecoveryIdentity, pollLiveVerification } from './verify-live.mjs';
+import {
+  collectBaselineIdentity,
+  collectRecoveryIdentity,
+  pollLiveVerification,
+} from './verify-live.mjs';
 import { assertStaticTree } from './static-tree.mjs';
 
 const PROTOCOL = 'bugdrop.live-release/v1';
@@ -142,7 +146,7 @@ async function inspectAuthoritative(client, origin, observe = collectRecoveryIde
   };
 }
 
-export async function captureBaseline({ client, expected, observe = collectRecoveryIdentity }) {
+export async function captureBaseline({ client, expected, observe = collectBaselineIdentity }) {
   const current = await inspectAuthoritative(client, expected.origin, observe);
   return {
     protocol: PROTOCOL,
@@ -277,7 +281,7 @@ export async function finalizeRelease({
   deployment,
   expected,
   publication,
-  observe = collectRecoveryIdentity,
+  observe = collectBaselineIdentity,
   verify = value => pollLiveVerification({ expected: value }),
 }) {
   if (deployment?.mutationAttempted !== true) {
