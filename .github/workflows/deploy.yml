@@ -105,8 +105,15 @@ jobs:
           RELEASE_REASON: ${{ inputs.release_reason }}
           TARGET_SHA: ${{ inputs.target_sha }}
         run: |
+          candidate_reachable=false
+          if git -C "$GITHUB_WORKSPACE/controller" merge-base --is-ancestor "$TARGET_SHA" origin/main; then
+            candidate_reachable=true
+          fi
           jq -n \
             --arg repositoryDir "$GITHUB_WORKSPACE/controller" \
+            --arg eventName "$GITHUB_EVENT_NAME" \
+            --arg ref "$GITHUB_REF" \
+            --arg workflowSha "$CONTROLLER_SHA" \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg workflowRef '.github/workflows/deploy.yml@refs/heads/main' \
             --arg targetSha "$TARGET_SHA" \
@@ -116,7 +123,8 @@ jobs:
             --arg rationale "$RATIONALE" \
             --arg operatorNotes "$OPERATOR_NOTES" \
             --argjson dryRun "$DRY_RUN" \
-            '{$repositoryDir, dispatch: {$repository, $workflowRef, $targetSha, $controllerSha, $bump, $releaseReason, $rationale, $operatorNotes, $dryRun}}' \
+            --argjson candidateReachableFromMain "$candidate_reachable" \
+            '{$repositoryDir, $eventName, $ref, $workflowSha, $candidateReachableFromMain, dispatch: {$repository, $workflowRef, $targetSha, $controllerSha, $bump, $releaseReason, $rationale, $operatorNotes, $dryRun}}' \
             > request-context.json
           node controller/scripts/release/workflow.mjs guard request-context.json > guard.json
           node controller/scripts/release/github-adapter.mjs plan request-context.json > request-plan.json
