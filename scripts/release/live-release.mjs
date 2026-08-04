@@ -146,6 +146,26 @@ async function inspectAuthoritative(client, origin, observe = collectRecoveryIde
   };
 }
 
+async function inspectAfterMutation({
+  client,
+  origin,
+  observe,
+  maxAttempts = 12,
+  intervalMs = 5000,
+  sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
+}) {
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await inspectAuthoritative(client, origin, observe);
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts) await sleep(intervalMs);
+    }
+  }
+  throw lastError;
+}
+
 export async function captureBaseline({ client, expected, observe = collectBaselineIdentity }) {
   const current = await inspectAuthoritative(client, expected.origin, observe);
   return {
@@ -172,9 +192,23 @@ export async function deployCandidate({
   baseline,
   client,
   expected,
+  inspectionAttempts = 12,
+  inspectionIntervalMs = 5000,
   observe = collectRecoveryIdentity,
+  sleep,
   verify = value => pollLiveVerification({ expected: value }),
 }) {
+  if (
+    !Number.isSafeInteger(inspectionAttempts) ||
+    inspectionAttempts < 1 ||
+    inspectionAttempts > 100 ||
+    !Number.isSafeInteger(inspectionIntervalMs) ||
+    inspectionIntervalMs < 0 ||
+    inspectionIntervalMs > 60000 ||
+    (sleep !== undefined && typeof sleep !== 'function')
+  ) {
+    fail('INVALID_LIVE_RELEASE_INPUT', 'post-deploy inspection retry options are invalid');
+  }
   requireAuthorization(authorization, expected);
   if (
     baseline?.status !== 'baseline-captured' ||
@@ -187,7 +221,14 @@ export async function deployCandidate({
   const command = client.deploy();
   let after;
   try {
-    after = await inspectAuthoritative(client, expected.origin, observe);
+    after = await inspectAfterMutation({
+      client,
+      origin: expected.origin,
+      observe,
+      maxAttempts: inspectionAttempts,
+      intervalMs: inspectionIntervalMs,
+      ...(sleep ? { sleep } : {}),
+    });
   } catch {
     return {
       protocol: PROTOCOL,

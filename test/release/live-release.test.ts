@@ -169,6 +169,54 @@ describe('live release production orchestration', () => {
     });
   });
 
+  it('retries a transient authoritative inspection after the deploy command succeeds', async () => {
+    const cloudflare = client();
+    const baseline = await captureBaseline({
+      client: cloudflare,
+      expected,
+      observe: cloudflare.observe,
+    });
+    cloudflare.inspectStatus.mockImplementationOnce(() => ({ status: 'failed' }));
+    const sleep = vi.fn(async () => {});
+
+    await expect(
+      deployCandidate({
+        authorization,
+        baseline,
+        client: cloudflare,
+        expected,
+        inspectionAttempts: 2,
+        inspectionIntervalMs: 1,
+        observe: cloudflare.observe,
+        sleep,
+        verify: async () => ({ status: 'verified', targetSha: SHA }),
+      })
+    ).resolves.toMatchObject({ status: 'candidate-active' });
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(cloudflare.inspectStatus).toHaveBeenCalledTimes(3);
+  });
+
+  it('rejects invalid inspection retry options before production mutation', async () => {
+    const cloudflare = client();
+    const baseline = await captureBaseline({
+      client: cloudflare,
+      expected,
+      observe: cloudflare.observe,
+    });
+
+    await expect(
+      deployCandidate({
+        authorization,
+        baseline,
+        client: cloudflare,
+        expected,
+        inspectionAttempts: 0,
+        observe: cloudflare.observe,
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_LIVE_RELEASE_INPUT' });
+    expect(cloudflare.deploy).not.toHaveBeenCalled();
+  });
+
   it('does not accept a candidate deployment when bounded live proof fails', async () => {
     const cloudflare = client();
     const baseline = await captureBaseline({
