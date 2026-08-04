@@ -242,7 +242,7 @@ jobs:
             --arg esbuild "$esbuild_version" \
             --arg wrangler "$wrangler_version" \
             --arg config "$config_digest" \
-            '{$requestPlan: $requestPlan[0], candidateAssets: {($name): {base64: ($widget | @base64)}, "versions.json": {base64: ($versions | @base64)}}, sourceDigests: {$worker, $lockfile}, toolchain: {$esbuild, $wrangler}, deploymentConfigDigest: $config, verification: {contract: "release-verification/v1", result: "passed"}}' \
+            '{requestPlan: $requestPlan[0], candidateAssets: {($name): {base64: ($widget | @base64)}, "versions.json": {base64: ($versions | @base64)}}, sourceDigests: {$worker, $lockfile}, toolchain: {$esbuild, $wrangler}, deploymentConfigDigest: $config, verification: {contract: "release-verification/v1", result: "passed"}}' \
             > bundle-input.json
           node controller/scripts/release/workflow.mjs bundle bundle-input.json > state2-bundle.json
           plan_identity=$(jq -er '.finalPlan.planIdentity' state2-bundle.json)

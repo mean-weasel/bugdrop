@@ -161,6 +161,7 @@ for literal in \
   '--mode release' \
   '--rawfile widget "$RUNNER_TEMP/static-package/$exact_name"' \
   '--rawfile versions "$RUNNER_TEMP/static-package/versions.json"' \
+  'requestPlan: $requestPlan[0]' \
   'base64: ($widget | @base64)' \
   'base64: ($versions | @base64)' \
   'node controller/scripts/release/workflow.mjs bundle' \
@@ -168,10 +169,25 @@ for literal in \
   'retention-days: 14'; do
   grep -Fq -- "$literal" <<< "$verify_block" || fail "verify-candidate lacks: $literal"
 done
+if grep -Fq -- '{$requestPlan:' <<< "$verify_block"; then
+  fail 'slurped request plan must be a literal requestPlan field, not a dynamic object key'
+fi
 if grep -Fq -- '--arg base64 "$(base64' <<< "$verify_block" ||
   grep -Fq -- '--arg versionsBase64 "$(base64' <<< "$verify_block"; then
   fail 'release artifact bytes must not be passed through the process argument list'
 fi
+
+bundle_shape=$(jq -n \
+  --argjson requestPlan '[{"schema":"proof"}]' \
+  --arg name 'widget.v1.2.3.js' \
+  --arg widget 'widget bytes' \
+  --arg versions 'manifest bytes' \
+  '{requestPlan: $requestPlan[0], candidateAssets: {($name): {base64: ($widget | @base64)}, "versions.json": {base64: ($versions | @base64)}}}')
+jq -e '
+  .requestPlan.schema == "proof" and
+  (.candidateAssets["widget.v1.2.3.js"].base64 | @base64d) == "widget bytes" and
+  (.candidateAssets["versions.json"].base64 | @base64d) == "manifest bytes"
+' <<< "$bundle_shape" >/dev/null || fail 'bundle-input jq shape is not executable or byte-safe'
 if grep -Eq 'secrets\.|environment:' <<< "$verify_block"; then
   fail 'candidate verification must not reference secrets or an environment'
 fi
