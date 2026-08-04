@@ -1,0 +1,157 @@
+name: Cloudflare Preview Capability Drill
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_a_sha:
+        description: Earlier immutable main SHA for release A
+        required: true
+        type: string
+      candidate_b_sha:
+        description: Later immutable main SHA for release B
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bugdrop-shared-preview
+  cancel-in-progress: false
+
+jobs:
+  prove:
+    name: Prove preview deploy, retention, rollback, and restoration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Reject non-main or malformed drill before checkout
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+          SHA_A: ${{ inputs.candidate_a_sha }}
+          SHA_B: ${{ inputs.candidate_b_sha }}
+        run: |
+          test "$DISPATCH_REF" = 'refs/heads/main'
+          [[ "$SHA_A" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SHA_B" =~ ^[0-9a-f]{40}$ ]]
+          test "$SHA_A" != "$SHA_B"
+
+      - name: Checkout immutable controller
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: controller
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require ordered immutable main candidates
+        env:
+          SHA_A: ${{ inputs.candidate_a_sha }}
+          SHA_B: ${{ inputs.candidate_b_sha }}
+        run: |
+          git -C controller merge-base --is-ancestor "$SHA_A" origin/main
+          git -C controller merge-base --is-ancestor "$SHA_B" origin/main
+          git -C controller merge-base --is-ancestor "$SHA_A" "$SHA_B"
+
+      - name: Checkout immutable candidate A
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.candidate_a_sha }}
+          path: candidate-a
+          persist-credentials: false
+
+      - name: Checkout immutable candidate B
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.candidate_b_sha }}
+          path: candidate-b
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install locked controller and candidate dependencies
+        run: |
+          npm --prefix controller ci --ignore-scripts
+          npm --prefix candidate-a ci --ignore-scripts
+          npm --prefix candidate-b ci --ignore-scripts
+
+      - name: Build capability release A
+        env:
+          SHA_A: ${{ inputs.candidate_a_sha }}
+        run: |
+          timestamp_a=$(node -e 'console.log(new Date(Number(process.argv[1]) * 1000).toISOString().replace(".000Z", "Z"))' "$(git -C candidate-a show -s --format=%ct "$SHA_A")")
+          jq -n '{mode:"bootstrap",cutoverVersion:"9000.0.0",expectedRetainedVersions:[],retainedReleases:[]}' > retention-a.json
+          node controller/scripts/build-widget.js \
+            --mode release \
+            --source-dir candidate-a \
+            --output-dir candidate-a/capability-assets \
+            --version 9000.0.0 \
+            --timestamp "$timestamp_a" \
+            --target-sha "$SHA_A" \
+            --repository "$GITHUB_REPOSITORY" \
+            --current-archive-url 'https://example.invalid/capability/widget.v9000.0.0.js' \
+            --retention-plan retention-a.json
+
+      - name: Build capability release B retaining A
+        env:
+          SHA_A: ${{ inputs.candidate_a_sha }}
+          SHA_B: ${{ inputs.candidate_b_sha }}
+        run: |
+          hash_a=$(sha256sum candidate-a/capability-assets/widget.v9000.0.0.js | awk '{print $1}')
+          published_a=$(node -e 'console.log(new Date(Number(process.argv[1]) * 1000).toISOString().replace(".000Z", "Z"))' "$(git -C candidate-a show -s --format=%ct "$SHA_A")")
+          timestamp_b=$(node -e 'console.log(new Date(Number(process.argv[1]) * 1000).toISOString().replace(".000Z", "Z"))' "$(git -C candidate-b show -s --format=%ct "$SHA_B")")
+          jq -n \
+            --arg assetPath "$GITHUB_WORKSPACE/candidate-a/capability-assets/widget.v9000.0.0.js" \
+            --arg publishedAt "$published_a" \
+            --arg sha256 "$hash_a" \
+            --arg targetSha "$SHA_A" \
+            '{mode:"continue",cutoverVersion:"9000.0.0",expectedRetainedVersions:["9000.0.0"],retainedReleases:[{version:"9000.0.0",targetSha:$targetSha,publishedAt:$publishedAt,archiveUrl:"https://example.invalid/capability/widget.v9000.0.0.js",sha256:$sha256,assetPath:$assetPath}]}' \
+            > retention-b.json
+          node controller/scripts/build-widget.js \
+            --mode release \
+            --source-dir candidate-b \
+            --output-dir candidate-b/capability-assets \
+            --version 9000.0.1 \
+            --timestamp "$timestamp_b" \
+            --target-sha "$SHA_B" \
+            --repository "$GITHUB_REPOSITORY" \
+            --current-archive-url 'https://example.invalid/capability/widget.v9000.0.1.js' \
+            --retention-plan retention-b.json
+
+      - name: Run reversible preview capability drill
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          SHA_A: ${{ inputs.candidate_a_sha }}
+          SHA_B: ${{ inputs.candidate_b_sha }}
+        run: |
+          jq -n \
+            --arg controllerRoot "$GITHUB_WORKSPACE/controller" \
+            --arg controllerConfig "$GITHUB_WORKSPACE/controller/wrangler.toml" \
+            --arg controllerLock "$GITHUB_WORKSPACE/controller/package-lock.json" \
+            --arg candidateARoot "$GITHUB_WORKSPACE/candidate-a" \
+            --arg candidateBRoot "$GITHUB_WORKSPACE/candidate-b" \
+            --arg assetsA "$GITHUB_WORKSPACE/candidate-a/capability-assets" \
+            --arg assetsB "$GITHUB_WORKSPACE/candidate-b/capability-assets" \
+            --arg shaA "$SHA_A" \
+            --arg shaB "$SHA_B" \
+            --arg origin 'https://bugdrop-preview.neonwatty.workers.dev' \
+            '{controllerRoot:$controllerRoot,controllerConfig:$controllerConfig,controllerLock:$controllerLock,candidateARoot:$candidateARoot,candidateBRoot:$candidateBRoot,assetsA:$assetsA,assetsB:$assetsB,shaA:$shaA,shaB:$shaB,versionA:"9000.0.0",versionB:"9000.0.1",origin:$origin}' \
+            > capability-input.json
+          node controller/scripts/release/cloudflare-capability-drill.mjs capability-input.json capability-proof.json
+
+      - name: Report verified non-production capability
+        run: |
+          jq -e '.rollbackProof.status == "verified" and .restoration.verification.status == "verified" and .lostResponse.status == "candidate-active"' capability-proof.json
+          jq -r '"### Cloudflare preview capability verified\n\nWrangler: `\(.wranglerVersion)`  \nA: `\(.releaseA.versionId)`  \nB: `\(.releaseB.versionId)`  \nRollback: `\(.rollbackProof.status)`  \nBaseline restoration: `\(.restoration.verification.status)`"' capability-proof.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload capability evidence
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: cloudflare-preview-capability-${{ github.run_id }}
+          path: capability-proof.json
+          if-no-files-found: warn
+          retention-days: 14

@@ -180,6 +180,40 @@ set, and pass the same installed N/N+1 and complete-tree checks. Production roll
 existing restoration of the captured exact Cloudflare baseline; it never rebuilds historical bytes.
 Repository tests prove only the offline installed boundaries, not a live deployment or durable URL.
 
+## Cloudflare capability proof
+
+Before setting `RELEASE_CLOUDFLARE_CAPABILITY_VALIDATED=true`, dispatch **Cloudflare Preview
+Capability Drill** from `main` with two ordered full SHAs from `main`. The workflow shares the
+`bugdrop-shared-preview` concurrency lock with merge-queue preview deployment. It captures the exact
+preview baseline, builds release A and release B from separate immutable checkouts, requires B to
+retain A's exact bytes, deploys A then B, treats B's command result as lost and reconciles it by live
+inspection, rolls back to A, and finally restores and verifies the captured baseline. Never use the
+production Worker for this proof.
+
+The controller-pinned Wrangler 4.98.0 command shapes are `deployments status`, `deployments list`,
+`versions list`, `versions view <version-id>`, `deploy <candidate-entrypoint> --assets
+<candidate-assets> --var BUILD_SHA:<full-sha>`, and `rollback <version-id> --message <bounded-message>
+--yes`. Every command also receives controller-owned `--config <absolute-wrangler.toml> --env
+<preview|production>` and never receives `--name`. Commands run without a shell, with a two-minute
+process timeout and an environment reduced to runner basics plus only the Cloudflare account and API
+token.
+
+Accepted deployment status JSON has one deployment `id`, `created_on`, `source`, `strategy`, and
+exactly one `versions[]` entry at 100 percent with `version_id`. Accepted version JSON has matching
+`id`, `metadata.created_on`, `metadata.source`, `resources.script.etag`, one optional full-SHA
+`BUILD_SHA` binding, the `ASSETS` binding, and boolean asset runtime fields. Live reads have a
+15-second request timeout and a bounded response size; convergence permits 30 two-second polls. The
+workflow itself is bounded to 30 minutes.
+
+The required evidence is the successful run URL and `cloudflare-preview-capability-<run-id>` artifact
+showing A and B version IDs, B's retained A filename, `candidate-active` lost-response reconciliation,
+bounded deployment/version list counts containing the active baseline, verified rollback, and
+verified baseline restoration. If the artifact is absent, restoration is not
+verified, or any field is ambiguous, leave both release gates false. Preserve the run, inspect the
+captured baseline version ID, and perform only an explicitly authorized locked-controller rollback to
+that ID followed by independent health, widget, and manifest hash verification; do not guess a
+version or switch to an ad hoc Wrangler command.
+
 ## WP8 Boundary
 
 This runbook documents repository behavior; it does not authorize production setup or prove a live

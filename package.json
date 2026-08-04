@@ -37,7 +37,7 @@
     "release:live": "node scripts/release/live-release.mjs",
     "test": "vitest run",
     "test:release": "vitest run test/release",
-    "test:release-workflow": "vitest run test/release/git-observer.test.ts test/release/github-adapter.test.ts test/release/github-publication-adapter.test.ts test/release/cloudflare-adapter.test.ts test/release/cloudflare-client.test.ts test/release/live-release.test.ts test/release/workflow.test.ts && bash test/release-workflow-contract.test.sh",
+    "test:release-workflow": "vitest run test/release/git-observer.test.ts test/release/github-adapter.test.ts test/release/github-publication-adapter.test.ts test/release/cloudflare-adapter.test.ts test/release/cloudflare-client.test.ts test/release/cloudflare-capability-drill.test.ts test/release/live-release.test.ts test/release/workflow.test.ts && bash test/release-workflow-contract.test.sh",
     "test:static-assets": "vitest run test/release/static-assets.test.ts",
     "test:watch": "vitest",
     "test:e2e": "playwright test",

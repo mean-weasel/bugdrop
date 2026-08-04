@@ -9,6 +9,8 @@ import {
   createWranglerPlan,
   executeWrangler,
   parseDeploymentStatus,
+  parseDeploymentList,
+  parseVersionList,
   parseEnvironmentTarget,
   parseVersionView,
   reconcileDeployment,
@@ -94,7 +96,7 @@ describe('controller-owned Cloudflare command plan', () => {
 
   it.each([
     ['wrong target', { controllerConfigBytes: config('other-worker') }],
-    ['wrong environment', { environment: 'preview' }],
+    ['wrong environment', { environment: 'staging' }],
     ['wrong Wrangler', { controllerLockBytes: lock('4.99.0') }],
     ['controller escape', { controllerConfig: '/untrusted/wrangler.toml' }],
     ['candidate source escape', { candidateEntrypoint: '/trusted/controller/src/index.ts' }],
@@ -119,6 +121,17 @@ describe('controller-owned Cloudflare command plan', () => {
       parseEnvironmentTarget('[env.production]\nname=target_from_input', 'production', 'bugdrop')
     ).toThrow('unsafe');
   });
+
+  it('pins the preview target for the non-production capability drill', () => {
+    const result = plan({
+      controllerConfigBytes: Buffer.from('[env.preview]\nname="bugdrop-preview"\n'),
+      environment: 'preview',
+      expectedTarget: 'bugdrop-preview',
+    });
+    expect(result).toMatchObject({ environment: 'preview', target: 'bugdrop-preview' });
+    expect(result.deploy.args).toContain('preview');
+    expect(result.deploy.args).not.toContain('--name');
+  });
 });
 
 describe('authoritative Cloudflare observations', () => {
@@ -131,6 +144,32 @@ describe('authoritative Cloudflare observations', () => {
       strategy: 'percentage',
     });
   });
+
+  it('normalizes bounded deployment and version lists', async () => {
+    const deployment = await fixture('status-active');
+    expect(parseDeploymentList([deployment])).toEqual([parseDeploymentStatus(deployment)]);
+    expect(
+      parseVersionList([
+        {
+          id: 'version-current',
+          metadata: { created_on: '2026-08-03T12:00:00Z', source: 'wrangler' },
+        },
+      ])
+    ).toEqual([
+      {
+        versionId: 'version-current',
+        createdOn: '2026-08-03T12:00:00Z',
+        source: 'wrangler',
+      },
+    ]);
+  });
+
+  it.each([[], Array.from({ length: 101 }, () => ({}))])(
+    'rejects empty or unbounded deployment lists',
+    value => {
+      expect(() => parseDeploymentList(value)).toThrow(CloudflareAdapterError);
+    }
+  );
 
   it.each([
     ['split traffic', async () => fixture('status-split')],
