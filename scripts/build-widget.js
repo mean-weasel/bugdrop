@@ -2,7 +2,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +12,8 @@ import {
   createDevelopmentStaticPackage,
   createReleaseStaticPackage,
 } from './release/static-assets.mjs';
+import { canonicalize } from './release/canonical-json.mjs';
+import { loadRetentionInput } from './release/retention.mjs';
 
 const CONTROLLER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const VALUE_OPTIONS = new Set([
@@ -24,6 +26,8 @@ const VALUE_OPTIONS = new Set([
   'repository',
   'cutover-version',
   'retention-plan',
+  'request-plan',
+  'result-path',
   'current-archive-url',
   'controller-identity',
   'tool-identity',
@@ -49,6 +53,8 @@ Release options:
   --target-sha SHA            Candidate commit (derived from Git when omitted)
   --repository OWNER/NAME     Release repository (derived from Git when omitted)
   --retention-plan PATH       JSON declaration of retained exact-version assets
+  --request-plan PATH         Approved request plan matching the retention input
+  --result-path PATH          Write the complete builder-result identity outside the output tree
   --cutover-version VERSION   First retained exact version (default: current)
   --current-archive-url URL   Prospective exact-version release URL
   --controller-identity ID    sha256 identity (derived when omitted)
@@ -168,11 +174,21 @@ async function bundleCandidate({ sourceDir, version, enableTestHooks }) {
   return bytes;
 }
 
-async function loadRetentionPlan(path) {
+async function loadRetentionPlan(path, requestPlanPath) {
   if (!path) return {};
-  const plan = JSON.parse(await readFile(resolve(path), 'utf8'));
+  const resolved = resolve(path);
+  const plan = JSON.parse(await readFile(resolved, 'utf8'));
   if (plan === null || Array.isArray(plan) || typeof plan !== 'object') {
     throw new Error('Retention plan must be a JSON object');
+  }
+  if (plan.schema === 'bugdrop.retention-input/v1') {
+    if (!requestPlanPath) throw new Error('Authenticated retention input requires --request-plan');
+    const requestBytes = await readFile(resolve(requestPlanPath));
+    const requestPlan = JSON.parse(requestBytes.toString('utf8'));
+    if (!requestBytes.equals(Buffer.from(`${canonicalize(requestPlan)}\n`))) {
+      throw new Error('Request plan must be canonical JSON');
+    }
+    return loadRetentionInput(resolved, requestPlan.requestIdentity, requestPlan.retention);
   }
   return plan;
 }
@@ -229,8 +245,10 @@ async function main() {
     repositoryFromRemote(git(sourceDir, ['remote', 'get-url', 'origin']))
   );
   const retention = await loadRetentionPlan(
-    option(options, 'retention-plan', 'BUGDROP_RETENTION_PLAN')
+    option(options, 'retention-plan', 'BUGDROP_RETENTION_PLAN'),
+    option(options, 'request-plan', 'BUGDROP_REQUEST_PLAN')
   );
+  const retentionMode = retention.mode ?? (retention.retainedReleases ? undefined : 'disabled');
   const bundleBytes = await bundleCandidate({ sourceDir, version, enableTestHooks: false });
   const exactName = `widget.v${version}.js`;
   const result = await createReleaseStaticPackage({
@@ -244,11 +262,12 @@ async function main() {
     cutoverVersion:
       option(options, 'cutover-version', 'BUGDROP_CUTOVER_VERSION') ??
       retention.cutoverVersion ??
-      version,
+      (retentionMode === 'disabled' ? null : version),
     expectedRetainedVersions: retention.expectedRetainedVersions ?? [],
     outputDir,
     repository,
     retainedReleases: retention.retainedReleases ?? [],
+    retentionMode,
     sourceDigest:
       option(options, 'source-digest', 'BUGDROP_SOURCE_DIGEST') ??
       (await treeDigest(join(sourceDir, 'src/widget'))),
@@ -260,6 +279,15 @@ async function main() {
       `sha256:${sha256(`esbuild:${esbuildVersion}`)}`,
     version,
   });
+  const resultPath = option(options, 'result-path', 'BUGDROP_BUILDER_RESULT');
+  if (resultPath) {
+    const builderResult = {
+      schema: 'bugdrop.builder-result/v1',
+      requestIdentity: retention.requestIdentity ?? null,
+      staticPackage: result.staticPackage,
+    };
+    await writeFile(resolve(resultPath), `${canonicalize(builderResult)}\n`, { flag: 'wx' });
+  }
   process.stdout.write(`Built authoritative widget v${version} (${result.contentIdentity})\n`);
 }
 

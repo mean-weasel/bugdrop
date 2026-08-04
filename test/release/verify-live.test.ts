@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  collectRecoveryIdentity,
   LiveVerificationError,
   observeLiveSnapshot,
   observePreviewSnapshot,
@@ -147,6 +148,56 @@ describe('polling and scheduled observation', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it('rejects an oversized live widget before buffering its response body', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/api/health') {
+        return Response.json({ status: 'ok', environment: 'production', buildSha: SHA });
+      }
+      if (path === '/widget.js') {
+        return new Response(Buffer.alloc(16 * 1024 * 1024 + 1), {
+          headers: { 'content-length': String(16 * 1024 * 1024 + 1) },
+        });
+      }
+      if (path === '/versions.json') {
+        return Response.json({ current: '1.56.0' });
+      }
+      throw new Error(`unexpected request ${path}`);
+    });
+
+    await expect(
+      collectRecoveryIdentity(expected().origin, fetchImpl as typeof fetch)
+    ).rejects.toMatchObject({ code: 'LIVE_FETCH_TOO_LARGE' });
+  });
+
+  it('cancels a streamed live widget that exceeds its bound without Content-Length', async () => {
+    const chunk = new Uint8Array(8 * 1024 * 1024 + 1);
+    const cancel = vi.fn();
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/api/health') {
+        return Response.json({ status: 'ok', environment: 'production', buildSha: SHA });
+      }
+      if (path === '/widget.js') {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(chunk);
+              controller.enqueue(chunk);
+            },
+            cancel,
+          })
+        );
+      }
+      throw new Error(`unexpected request ${path}`);
+    });
+
+    await expect(
+      collectRecoveryIdentity(expected().origin, fetchImpl as typeof fetch)
+    ).rejects.toMatchObject({ code: 'LIVE_FETCH_TOO_LARGE' });
+    expect(cancel).toHaveBeenCalledOnce();
   });
 
   it('records scheduled production identity as observation, not plan verification', () => {

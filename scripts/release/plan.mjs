@@ -3,11 +3,21 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { canonicalHash, canonicalize, normalizeCanonicalValue } from './canonical-json.mjs';
+import {
+  canonicalHash,
+  canonicalize,
+  compareUtf8,
+  normalizeCanonicalValue,
+} from './canonical-json.mjs';
+import { validateRetentionRequest } from './retention.mjs';
+import { validateStaticTreeRecord } from './static-tree.mjs';
 
 export const RELEASE_PROTOCOL = 'release-plan/v1';
 export const REQUEST_SCHEMA = 'bugdrop.release-request/v1';
 export const CONTENT_SCHEMA = 'bugdrop.release-content/v1';
+export const RELEASE_PROTOCOL_V2 = 'release-plan/v2';
+export const REQUEST_SCHEMA_V2 = 'bugdrop.release-request/v2';
+export const CONTENT_SCHEMA_V2 = 'bugdrop.release-content/v2';
 export const AUDIT_SCHEMA = 'bugdrop.release-audit/v1';
 export const MARKER_SCHEMA = 'bugdrop.publication-marker/v1';
 export const INVENTORY_SCHEMA = 'bugdrop.release-inventory/v1';
@@ -41,8 +51,8 @@ function exactKeys(value, keys, field) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     fail('INVALID_SCHEMA', `${field} must be an object`);
   }
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
+  const actual = Object.keys(value).sort(compareUtf8);
+  const expected = [...keys].sort(compareUtf8);
   if (canonicalize(actual) !== canonicalize(expected)) {
     fail('INVALID_SCHEMA', `${field} must contain exactly ${expected.join(', ')}`);
   }
@@ -88,6 +98,9 @@ export function normalizeDispatch(input) {
     rationale,
     operatorNotes: text(input.operatorNotes ?? '', 'operatorNotes', { max: 5000 }),
     dryRun: input.dryRun ?? true,
+    ...(input.retentionBootstrap !== undefined
+      ? { retentionBootstrap: input.retentionBootstrap === true }
+      : {}),
   };
 }
 
@@ -223,9 +236,9 @@ export function publishedFrontier(state) {
 
 function normalizedLabels(labels = []) {
   if (!Array.isArray(labels)) fail('INVALID_INVENTORY', 'labels must be an array');
-  return [
-    ...new Set(labels.map(label => text(label, 'label', { required: true, max: 100 }))),
-  ].sort();
+  return [...new Set(labels.map(label => text(label, 'label', { required: true, max: 100 })))].sort(
+    compareUtf8
+  );
 }
 
 export function buildReleaseInventory(input) {
@@ -253,7 +266,7 @@ export function buildReleaseInventory(input) {
   if (commits.length === 0) fail('EMPTY_RELEASE_RANGE', 'compare inventory has no commits');
   const changedPaths = [
     ...new Set((input.changedPaths ?? []).map(path => text(path, 'path', { required: true }))),
-  ].sort();
+  ].sort(compareUtf8);
   const excludedNewerMainCommits = (input.excludedNewerMainCommits ?? [])
     .map(commit => ({
       sha: fullSha(commit.sha, 'excluded main commit SHA'),
@@ -288,15 +301,17 @@ export function buildReleaseInventory(input) {
     pullRequests,
     commits,
     changedPaths,
-    changedTopLevelPaths: [...new Set(changedPaths.map(path => path.split('/')[0]))].sort(),
+    changedTopLevelPaths: [...new Set(changedPaths.map(path => path.split('/')[0]))].sort(
+      compareUtf8
+    ),
     excludedNewerMainCommits,
     categorized,
     generatedNotes,
   });
 }
 
-function requestIdentity(request) {
-  return canonicalHash({ schema: REQUEST_SCHEMA, request });
+function requestIdentity(request, schema = REQUEST_SCHEMA, authority) {
+  return canonicalHash(authority ?? { schema, request });
 }
 
 function composeReleaseNotes(request) {
@@ -310,6 +325,7 @@ function composeReleaseNotes(request) {
 }
 
 function validateRequestPlanRecord(plan) {
+  const v2 = plan?.protocol === RELEASE_PROTOCOL_V2;
   exactKeys(
     plan,
     [
@@ -321,10 +337,14 @@ function validateRequestPlanRecord(plan) {
       'source',
       'attestation',
       'inventory',
+      ...(v2 ? ['retention'] : []),
     ],
     'requestPlan'
   );
-  if (plan.schema !== REQUEST_SCHEMA || plan.protocol !== RELEASE_PROTOCOL) {
+  if (
+    (v2 && plan.schema !== REQUEST_SCHEMA_V2) ||
+    (!v2 && (plan.schema !== REQUEST_SCHEMA || plan.protocol !== RELEASE_PROTOCOL))
+  ) {
     fail('INVALID_SCHEMA', 'unsupported request-plan schema or protocol');
   }
   exactKeys(
@@ -340,6 +360,7 @@ function validateRequestPlanRecord(plan) {
       'rationale',
       'generatedNotes',
       'operatorNotes',
+      ...(v2 ? ['retentionBootstrap'] : []),
     ],
     'requestPlan.request'
   );
@@ -357,6 +378,8 @@ function validateRequestPlanRecord(plan) {
     'requestPlan.attestation'
   );
   normalizeDispatch({ ...plan.request, controllerSha: plan.source.controllerSha });
+  if (v2)
+    validateRetentionRequest(plan.retention, { candidateVersion: plan.request.nextTag.slice(1) });
   text(plan.request.generatedNotes, 'generatedNotes');
   fullSha(plan.source.candidateSha, 'candidateSha');
   fullSha(plan.source.remoteMainSha, 'remoteMainSha');
@@ -388,7 +411,22 @@ function validateRequestPlanRecord(plan) {
   }
   const rebuiltInventory = buildReleaseInventory(plan.inventory);
   if (
-    plan.requestIdentity !== requestIdentity(plan.request) ||
+    plan.requestIdentity !==
+      requestIdentity(
+        plan.request,
+        plan.schema,
+        v2
+          ? {
+              schema: plan.schema,
+              protocol: plan.protocol,
+              request: plan.request,
+              source: plan.source,
+              attestation: plan.attestation,
+              inventory: plan.inventory,
+              retention: plan.retention,
+            }
+          : undefined
+      ) ||
     plan.releaseNotes !== composeReleaseNotes(plan.request) ||
     plan.inventory.schema !== INVENTORY_SCHEMA ||
     plan.inventory.generatedNotes !== plan.request.generatedNotes ||
@@ -400,6 +438,7 @@ function validateRequestPlanRecord(plan) {
 }
 
 function validateReleaseContentRecord(content, requestPlan) {
+  const v2 = requestPlan.protocol === RELEASE_PROTOCOL_V2;
   exactKeys(
     content,
     [
@@ -411,11 +450,12 @@ function validateReleaseContentRecord(content, requestPlan) {
       'deploymentConfigDigest',
       'verification',
       'contentIdentity',
+      ...(v2 ? ['publicationAssetHashes', 'staticPackage'] : []),
     ],
     'releaseContent'
   );
   if (
-    content.schema !== CONTENT_SCHEMA ||
+    content.schema !== (v2 ? CONTENT_SCHEMA_V2 : CONTENT_SCHEMA) ||
     content.requestIdentity !== requestPlan.requestIdentity
   ) {
     fail('INVALID_SCHEMA', 'release content schema or request identity is invalid');
@@ -435,6 +475,14 @@ function validateReleaseContentRecord(content, requestPlan) {
   digest(content.sourceDigests.worker, 'worker source');
   digest(content.sourceDigests.lockfile, 'lockfile');
   digest(content.deploymentConfigDigest, 'deploymentConfigDigest');
+  if (v2) {
+    validateStaticTreeRecord(content.staticPackage);
+    for (const [name, hash] of Object.entries(content.publicationAssetHashes ?? {})) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name))
+        fail('INVALID_SCHEMA', 'invalid publication asset name');
+      digest(hash, `publication asset ${name}`);
+    }
+  }
   if (!['passed', 'failed'].includes(content.verification.result)) {
     fail('INVALID_SCHEMA', 'verification result must be passed or failed');
   }
@@ -447,6 +495,7 @@ function validateReleaseContentRecord(content, requestPlan) {
 }
 
 function validateFinalPlanRecord(finalPlan, requestPlan, releaseContent) {
+  const v2 = requestPlan.protocol === RELEASE_PROTOCOL_V2;
   exactKeys(
     finalPlan,
     [
@@ -462,14 +511,15 @@ function validateFinalPlanRecord(finalPlan, requestPlan, releaseContent) {
       'tag',
       'requiredAssets',
       'planIdentity',
+      ...(v2 ? ['staticPackageIdentity'] : []),
     ],
     'finalPlan'
   );
   const payload = { ...finalPlan };
   delete payload.planIdentity;
   const valid =
-    finalPlan.schema === RELEASE_PROTOCOL &&
-    finalPlan.protocol === RELEASE_PROTOCOL &&
+    finalPlan.schema === requestPlan.protocol &&
+    finalPlan.protocol === requestPlan.protocol &&
     finalPlan.requestIdentity === requestPlan.requestIdentity &&
     finalPlan.requestPlanHash === canonicalHash(requestPlan) &&
     finalPlan.repository === requestPlan.request.repository &&
@@ -480,7 +530,10 @@ function validateFinalPlanRecord(finalPlan, requestPlan, releaseContent) {
     /^sha256:[0-9a-f]{64}$/.test(finalPlan.contentIdentity) &&
     canonicalize(finalPlan.requiredAssets) === canonicalize(requiredAssetsFor(requestPlan)) &&
     finalPlan.planIdentity === canonicalHash(payload) &&
-    (!releaseContent || finalPlan.contentIdentity === releaseContent.contentIdentity);
+    (!v2 || /^sha256:[0-9a-f]{64}$/.test(finalPlan.staticPackageIdentity)) &&
+    (!releaseContent ||
+      (finalPlan.contentIdentity === releaseContent.contentIdentity &&
+        (!v2 || finalPlan.staticPackageIdentity === releaseContent.staticPackage.contentIdentity)));
   if (!valid) fail('INVALID_SCHEMA', 'final release plan is not internally consistent');
   return finalPlan;
 }
@@ -494,7 +547,7 @@ function requiredAssetsFor(requestPlan) {
       'final-release-plan.json',
       'checksums.sha256',
     ]),
-  ].sort();
+  ].sort(compareUtf8);
 }
 
 export function buildRequestPlan(input) {
@@ -552,6 +605,8 @@ export function buildRequestPlan(input) {
   ) {
     fail('INVALID_ATTESTATION', 'behind count, assets, and verification contract are invalid');
   }
+  const v2 = input.retention !== undefined;
+  if (v2) validateRetentionRequest(input.retention, { candidateVersion: input.nextTag.slice(1) });
   const request = normalizeCanonicalValue({
     repository: dispatch.repository,
     workflowRef: dispatch.workflowRef,
@@ -563,15 +618,31 @@ export function buildRequestPlan(input) {
     rationale: dispatch.rationale,
     generatedNotes: input.generatedNotes,
     operatorNotes: dispatch.operatorNotes,
+    ...(v2 ? { retentionBootstrap: input.retentionBootstrap === true } : {}),
   });
   if (calculateNextTag(request.previousTag, request.bump) !== request.nextTag) {
     fail('VERSION_MISMATCH', 'nextTag does not match the explicit bump');
   }
   const releaseNotes = composeReleaseNotes(request);
+  const schema = v2 ? REQUEST_SCHEMA_V2 : REQUEST_SCHEMA;
+  const protocol = v2 ? RELEASE_PROTOCOL_V2 : RELEASE_PROTOCOL;
+  const authority = {
+    schema,
+    protocol,
+    request,
+    source: {
+      controllerSha: fullSha(input.controllerSha, 'controllerSha'),
+      candidateSha: dispatch.targetSha,
+      remoteMainSha: fullSha(input.remoteMainSha, 'remoteMainSha'),
+    },
+    attestation: normalizedAttestation,
+    inventory: input.inventory,
+    ...(v2 ? { retention: input.retention } : {}),
+  };
   const plan = normalizeCanonicalValue({
-    schema: REQUEST_SCHEMA,
-    protocol: RELEASE_PROTOCOL,
-    requestIdentity: requestIdentity(request),
+    schema,
+    protocol,
+    requestIdentity: requestIdentity(request, schema, v2 ? authority : undefined),
     request,
     releaseNotes,
     source: {
@@ -581,6 +652,7 @@ export function buildRequestPlan(input) {
     },
     attestation: normalizedAttestation,
     inventory: input.inventory,
+    ...(v2 ? { retention: input.retention } : {}),
   });
   return validateRequestPlanRecord(plan);
 }
@@ -602,14 +674,22 @@ export function buildReleaseContent(input) {
     fail('INVALID_SCHEMA', 'verification result must be passed or failed');
   }
   digest(input.deploymentConfigDigest, 'deploymentConfigDigest');
+  const v2 = input.requestPlan.protocol === RELEASE_PROTOCOL_V2;
+  if (v2) validateStaticTreeRecord(input.staticPackage);
   const payload = normalizeCanonicalValue({
-    schema: CONTENT_SCHEMA,
+    schema: v2 ? CONTENT_SCHEMA_V2 : CONTENT_SCHEMA,
     requestIdentity: input.requestPlan.requestIdentity,
     artifactHashes: input.artifactHashes,
     sourceDigests: input.sourceDigests,
     toolchain: input.toolchain,
     deploymentConfigDigest: input.deploymentConfigDigest,
     verification: input.verification,
+    ...(v2
+      ? {
+          publicationAssetHashes: input.publicationAssetHashes ?? input.artifactHashes,
+          staticPackage: input.staticPackage,
+        }
+      : {}),
   });
   return validateReleaseContentRecord(
     { ...payload, contentIdentity: canonicalHash(payload) },
@@ -627,8 +707,8 @@ export function buildFinalPlan({ requestPlan, releaseContent }) {
   }
   const requiredAssets = requiredAssetsFor(requestPlan);
   const payload = normalizeCanonicalValue({
-    schema: RELEASE_PROTOCOL,
-    protocol: RELEASE_PROTOCOL,
+    schema: requestPlan.protocol,
+    protocol: requestPlan.protocol,
     requestIdentity: requestPlan.requestIdentity,
     contentIdentity: releaseContent.contentIdentity,
     requestPlanHash: canonicalHash(requestPlan),
@@ -638,6 +718,9 @@ export function buildFinalPlan({ requestPlan, releaseContent }) {
     remoteMainSha: requestPlan.source.remoteMainSha,
     tag: requestPlan.request.nextTag,
     requiredAssets,
+    ...(requestPlan.protocol === RELEASE_PROTOCOL_V2
+      ? { staticPackageIdentity: releaseContent.staticPackage.contentIdentity }
+      : {}),
   });
   return validateFinalPlanRecord(
     { ...payload, planIdentity: canonicalHash(payload) },
@@ -648,8 +731,9 @@ export function buildFinalPlan({ requestPlan, releaseContent }) {
 
 export function buildPublicationMarker(finalPlan) {
   return normalizeCanonicalValue({
-    schema: MARKER_SCHEMA,
-    protocol: RELEASE_PROTOCOL,
+    schema:
+      finalPlan.protocol === RELEASE_PROTOCOL_V2 ? 'bugdrop.publication-marker/v2' : MARKER_SCHEMA,
+    protocol: finalPlan.protocol,
     planIdentity: finalPlan.planIdentity,
     requestIdentity: finalPlan.requestIdentity,
     contentIdentity: finalPlan.contentIdentity,
@@ -682,6 +766,7 @@ function authenticateCompleted(release, dispatch) {
     'releaseReason',
     'rationale',
     'operatorNotes',
+    ...(requestPlan.protocol === RELEASE_PROTOCOL_V2 ? ['retentionBootstrap'] : []),
   ];
   for (const field of compared) {
     if (requestPlan.request?.[field] !== dispatch[field]) {
@@ -705,14 +790,31 @@ function authenticateCompleted(release, dispatch) {
     ],
     'assetVerification'
   );
-  const verifiedAssetNames = [...(assetVerification?.verifiedAssetNames ?? [])].sort();
+  const verifiedAssetNames = [...(assetVerification?.verifiedAssetNames ?? [])].sort(compareUtf8);
   const valid =
-    requestPlan.schema === REQUEST_SCHEMA &&
-    requestPlan.protocol === RELEASE_PROTOCOL &&
-    releaseContent.schema === CONTENT_SCHEMA &&
-    finalPlan.schema === RELEASE_PROTOCOL &&
-    finalPlan.protocol === RELEASE_PROTOCOL &&
-    requestPlan.requestIdentity === requestIdentity(requestPlan.request) &&
+    [RELEASE_PROTOCOL, RELEASE_PROTOCOL_V2].includes(requestPlan.protocol) &&
+    requestPlan.schema ===
+      (requestPlan.protocol === RELEASE_PROTOCOL_V2 ? REQUEST_SCHEMA_V2 : REQUEST_SCHEMA) &&
+    releaseContent.schema ===
+      (requestPlan.protocol === RELEASE_PROTOCOL_V2 ? CONTENT_SCHEMA_V2 : CONTENT_SCHEMA) &&
+    finalPlan.schema === requestPlan.protocol &&
+    finalPlan.protocol === requestPlan.protocol &&
+    requestPlan.requestIdentity ===
+      requestIdentity(
+        requestPlan.request,
+        requestPlan.schema,
+        requestPlan.protocol === RELEASE_PROTOCOL_V2
+          ? {
+              schema: requestPlan.schema,
+              protocol: requestPlan.protocol,
+              request: requestPlan.request,
+              source: requestPlan.source,
+              attestation: requestPlan.attestation,
+              inventory: requestPlan.inventory,
+              retention: requestPlan.retention,
+            }
+          : undefined
+      ) &&
     releaseContent.requestIdentity === requestPlan.requestIdentity &&
     releaseContent.contentIdentity === canonicalHash(contentPayload) &&
     finalPlan.requestIdentity === requestPlan.requestIdentity &&

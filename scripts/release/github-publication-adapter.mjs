@@ -5,6 +5,9 @@ const SHA = /^[0-9a-f]{40}$/;
 const ASSET = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
 const RELEASE_ID = /^[1-9]\d*$/;
 const TOKEN = /^[A-Za-z0-9_.-]{16,4096}$/;
+const MAX_ASSET_BYTES = 16 * 1024 * 1024;
+const MAX_RELEASE_BYTES = 512 * 1024 * 1024;
+const ASSET_TIMEOUT_MS = 30_000;
 
 export class GithubPublicationAdapterError extends Error {
   constructor(code, message, details = {}) {
@@ -63,6 +66,12 @@ export function createGithubPublicationAdapter({
     fail('INVALID_INPUT', 'repository is invalid');
   }
   if (!TOKEN.test(token ?? '')) fail('TOKEN_REQUIRED', 'token is required');
+  const apiOrigin = new URL(apiUrl).origin;
+  const storageOrigins = new Set([
+    'https://objects.githubusercontent.com',
+    'https://release-assets.githubusercontent.com',
+    'https://github-releases.githubusercontent.com',
+  ]);
   const headers = accept => ({
     accept,
     authorization: `Bearer ${token}`,
@@ -113,34 +122,69 @@ export function createGithubPublicationAdapter({
       fail('INVALID_RESPONSE', `${url.pathname} did not return JSON`);
     }
   };
-  const requestBytes = async assetUrl => {
+  const requestBytes = async (assetUrl, expectedSize, assetId) => {
     const url = new URL(assetUrl);
-    if (url.origin !== new URL(apiUrl).origin)
+    if (
+      url.origin !== apiOrigin ||
+      url.pathname !== `/repos/${repository}/releases/assets/${assetId}`
+    )
       fail('UNSAFE_ENDPOINT', 'asset API URL is untrusted');
     let response;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ASSET_TIMEOUT_MS);
     try {
       response = await fetchImpl(url, {
         headers: headers('application/octet-stream'),
         redirect: 'manual',
+        signal: controller.signal,
       });
-    } catch {
-      fail('GITHUB_REQUEST_FAILED', 'GitHub asset request failed', { status: null });
-    }
-    if ([301, 302, 303, 307, 308].includes(response.status)) {
-      const location = response.headers.get('location');
-      if (!location?.startsWith('https://')) fail('UNSAFE_ENDPOINT', 'asset redirect is untrusted');
-      try {
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        let location;
+        try {
+          location = new URL(response.headers.get('location'));
+        } catch {
+          fail('UNSAFE_ENDPOINT', 'asset redirect is malformed');
+        }
+        if (
+          location.protocol !== 'https:' ||
+          location.username ||
+          location.password ||
+          !storageOrigins.has(location.origin)
+        )
+          fail('UNSAFE_ENDPOINT', 'asset redirect is untrusted');
         response = await fetchImpl(location, {
           headers: { accept: 'application/octet-stream' },
           redirect: 'error',
+          signal: controller.signal,
         });
-      } catch {
-        fail('GITHUB_REQUEST_FAILED', 'GitHub asset request failed', { status: null });
       }
+      if (!response.ok)
+        fail('GITHUB_REQUEST_FAILED', 'GitHub asset request failed', { status: response.status });
+      const declared = response.headers.get('content-length');
+      if (declared !== null && Number(declared) !== expectedSize)
+        fail('INVALID_RESPONSE', 'asset Content-Length differs from GitHub metadata');
+      if (!response.body) fail('INVALID_RESPONSE', 'asset body is unavailable');
+      const chunks = [];
+      let total = 0;
+      const reader = response.body.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > MAX_ASSET_BYTES || total > expectedSize) {
+          await reader.cancel();
+          fail('INVALID_RESPONSE', 'asset exceeds its authenticated byte bound');
+        }
+        chunks.push(Buffer.from(value));
+      }
+      if (total !== expectedSize) fail('INVALID_RESPONSE', 'asset response is truncated');
+      return Buffer.concat(chunks, total);
+    } catch (error) {
+      if (error instanceof GithubPublicationAdapterError) throw error;
+      fail('GITHUB_REQUEST_FAILED', 'GitHub asset request failed or timed out', { status: null });
+    } finally {
+      clearTimeout(timer);
     }
-    if (!response.ok)
-      fail('GITHUB_REQUEST_FAILED', 'GitHub asset request failed', { status: response.status });
-    return Buffer.from(await response.arrayBuffer());
   };
   const inspectTag = async tag => {
     const ref = await request(
@@ -186,11 +230,24 @@ export function createGithubPublicationAdapter({
       }
       if (!Array.isArray(release.assets)) fail('INVALID_RESPONSE', 'release assets are incomplete');
       const assets = [];
+      let totalBytes = 0;
       for (const asset of release.assets) {
-        if (!ASSET.test(asset?.name ?? '') || typeof asset?.url !== 'string') {
+        if (
+          !ASSET.test(asset?.name ?? '') ||
+          !RELEASE_ID.test(String(asset?.id ?? '')) ||
+          typeof asset?.url !== 'string' ||
+          !Number.isSafeInteger(asset?.size) ||
+          asset.size < 0 ||
+          asset.size > MAX_ASSET_BYTES ||
+          totalBytes + asset.size > MAX_RELEASE_BYTES
+        ) {
           fail('INVALID_RESPONSE', 'release asset identity is invalid');
         }
-        assets.push({ name: asset.name, bytes: await requestBytes(asset.url) });
+        assets.push({
+          name: asset.name,
+          bytes: await requestBytes(asset.url, asset.size, String(asset.id)),
+        });
+        totalBytes += asset.size;
       }
       releases.push({
         ...marker(release.body),

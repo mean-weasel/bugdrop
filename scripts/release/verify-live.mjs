@@ -9,6 +9,10 @@ const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const ASSET_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
+const MAX_HEALTH_BYTES = 64 * 1024;
+const MAX_MANIFEST_BYTES = 1024 * 1024;
+const MAX_WIDGET_BYTES = 16 * 1024 * 1024;
+const MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024;
 
 export class LiveVerificationError extends Error {
   constructor(code, message, details = {}) {
@@ -117,7 +121,11 @@ export function verifyLiveSnapshot(input, snapshot) {
     fail('LIVE_MANIFEST_MISMATCH', 'manifest does not identify the planned release');
   }
   const current = manifest.artifacts?.[`v${expected.version}`];
-  if (current?.filename !== expected.exactFilename || current?.sha256 !== expected.widgetSha256) {
+  if (
+    current?.filename !== expected.exactFilename ||
+    current?.sha256 !== expected.widgetSha256 ||
+    (manifest.schema === 'bugdrop.versions-manifest/v2' && current.version !== expected.version)
+  ) {
     fail('LIVE_MANIFEST_MISMATCH', 'manifest current artifact is inconsistent');
   }
   const [major, minor] = expected.version.split('.');
@@ -134,7 +142,11 @@ export function verifyLiveSnapshot(input, snapshot) {
   for (const [filename, digest] of Object.entries(expected.retainedAssets)) {
     const version = filename.slice('widget.v'.length, -'.js'.length);
     const retained = manifest.artifacts?.[`v${version}`];
-    if (retained?.filename !== filename || retained?.sha256 !== digest) {
+    if (
+      retained?.filename !== filename ||
+      retained?.sha256 !== digest ||
+      (manifest.schema === 'bugdrop.versions-manifest/v2' && retained.version !== version)
+    ) {
       fail('LIVE_MANIFEST_MISMATCH', `manifest retained artifact ${filename} is inconsistent`);
     }
     if (manifest.versions?.[`v${version}`] !== filename) {
@@ -162,13 +174,61 @@ async function fetchOk(url, fetchImpl, timeoutMs) {
   if (!response.ok) fail('LIVE_FETCH_FAILED', `${url} returned ${response.status}`);
   return response;
 }
+async function readBoundedBytes(response, url, maxBytes, budget) {
+  const remaining = MAX_SNAPSHOT_BYTES - budget.used;
+  const allowed = Math.min(maxBytes, remaining);
+  const declared = response.headers.get('content-length');
+  if (declared !== null) {
+    if (!/^(0|[1-9]\d*)$/.test(declared) || !Number.isSafeInteger(Number(declared))) {
+      fail('LIVE_FETCH_FAILED', `${url} returned an invalid Content-Length`);
+    }
+    if (Number(declared) > allowed) {
+      fail('LIVE_FETCH_TOO_LARGE', `${url} exceeds its live verification byte bound`);
+    }
+  }
+  if (!response.body) fail('LIVE_FETCH_FAILED', `${url} returned no response body`);
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > allowed) {
+      await reader.cancel();
+      fail('LIVE_FETCH_TOO_LARGE', `${url} exceeds its live verification byte bound`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  budget.used += total;
+  return Buffer.concat(chunks, total);
+}
 async function collectSnapshot(origin, filenames, fetchImpl, timeoutMs, manifestErrorCode) {
-  const health = await (await fetchOk(`${origin}/api/health`, fetchImpl, timeoutMs)).json();
+  const budget = { used: 0 };
+  const healthUrl = `${origin}/api/health`;
+  const healthBytes = await readBoundedBytes(
+    await fetchOk(healthUrl, fetchImpl, timeoutMs),
+    healthUrl,
+    MAX_HEALTH_BYTES,
+    budget
+  );
+  let health;
+  try {
+    health = JSON.parse(healthBytes.toString('utf8'));
+  } catch {
+    fail('LIVE_OBSERVATION_FAILED', 'health response is not valid JSON');
+  }
   const assetHashes = {};
   let manifest;
   for (const filename of [...new Set(filenames)]) {
-    const response = await fetchOk(`${origin}/${filename}`, fetchImpl, timeoutMs);
-    const payload = Buffer.from(await response.arrayBuffer());
+    const url = `${origin}/${filename}`;
+    const response = await fetchOk(url, fetchImpl, timeoutMs);
+    const payload = await readBoundedBytes(
+      response,
+      url,
+      filename === 'versions.json' ? MAX_MANIFEST_BYTES : MAX_WIDGET_BYTES,
+      budget
+    );
     assetHashes[filename] = sha256(payload);
     if (filename === 'versions.json') {
       try {

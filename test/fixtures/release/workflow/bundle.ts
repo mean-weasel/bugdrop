@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 
-import { canonicalize } from '../../../../scripts/release/canonical-json.mjs';
+import {
+  canonicalHash,
+  canonicalize,
+  compareUtf8,
+} from '../../../../scripts/release/canonical-json.mjs';
 import {
   buildFinalPlan,
   buildReleaseContent,
@@ -97,6 +101,155 @@ export function workflowBundle() {
     .join('\n');
   assets['checksums.sha256'] = Buffer.from(`${checksums}\n`);
   return { requestPlan, releaseContent, finalPlan, assets };
+}
+
+export function disabledV2WorkflowBundle({
+  previousTag = 'v1.55.0',
+  nextTag = 'v1.55.1',
+  bump = 'patch',
+  targetSha = SHA.target,
+  timestamp = '2026-08-03T00:00:00Z',
+  retentionMode = 'disabled',
+  retentionOverride = null,
+  manifestChanges = {},
+  manifestTransform = (value: Record<string, unknown>) => value,
+  staticManifestHashOverride = null,
+} = {}) {
+  const version = nextTag.slice(1);
+  const [major, minor] = version.split('.');
+  const inventory = buildReleaseInventory({
+    compareUrl: `https://github.test/compare/${previousTag}...${targetSha}`,
+    pullRequests: [],
+    commits: [{ sha: targetSha, subject: `Ship ${nextTag}` }],
+    changedPaths: ['src/index.ts'],
+  });
+  const retention =
+    retentionOverride ??
+    ({
+      schema: 'bugdrop.retention-request/v1',
+      mode: retentionMode,
+      cutoverVersion: retentionMode === 'bootstrap' ? version : null,
+      expectedRetainedVersions: [],
+      releases: [],
+    } as const);
+  const requestPlan = buildRequestPlan({
+    dispatch: normalizeDispatch({
+      ...workflowContext(false).dispatch,
+      targetSha,
+      bump,
+    }),
+    previousTag,
+    nextTag,
+    generatedNotes: inventory.generatedNotes,
+    controllerSha: SHA.controller,
+    remoteMainSha: SHA.main,
+    inventory,
+    retentionBootstrap: retention.mode === 'bootstrap',
+    retention,
+    attestation: {
+      previousReleaseSha: 'd'.repeat(40),
+      candidateCommitTimestamp: timestamp,
+      candidateBehindMainBy: 0,
+      expectedAliases: ['widget.js', `widget.v${major}.js`, `widget.v${major}.${minor}.js`],
+      expectedAssetNames: [`widget.v${version}.js`, 'versions.json'],
+      verificationCommands: ['npm test'],
+    },
+  });
+  const widget = Buffer.from(`disabled v2 widget ${version}`);
+  const exactName = `widget.v${version}.js`;
+  const priorArtifacts = Object.fromEntries(
+    retention.releases.map(prior => [
+      `v${prior.version}`,
+      {
+        downloadUrl: prior.asset.downloadUrl,
+        filename: prior.asset.name,
+        sha256: prior.asset.sha256,
+        tag: prior.tag,
+        targetSha: prior.targetSha,
+        version: prior.version,
+      },
+    ])
+  );
+  const manifestRecord = manifestTransform({
+    artifacts: {
+      ...priorArtifacts,
+      [`v${version}`]: {
+        ...(retention.mode !== 'disabled'
+          ? {
+              downloadUrl: `https://github.com/mean-weasel/bugdrop/releases/download/${nextTag}/${exactName}`,
+              tag: nextTag,
+              version,
+            }
+          : {
+              archiveUrl: `https://github.com/mean-weasel/bugdrop/releases/download/${nextTag}/${exactName}`,
+              publishedAt: timestamp,
+            }),
+        filename: exactName,
+        sha256: sha256(widget),
+        targetSha,
+      },
+    },
+    authoritative: true,
+    current: version,
+    cutoverVersion: retention.cutoverVersion ?? version,
+    generatedAt: timestamp,
+    latest: 'widget.js',
+    mode: 'release',
+    repository: 'mean-weasel/bugdrop',
+    schema:
+      retention.mode !== 'disabled'
+        ? 'bugdrop.versions-manifest/v2'
+        : 'bugdrop.versions-manifest/v1',
+    versions: {
+      ...Object.fromEntries(
+        retention.releases.map(prior => [`v${prior.version}`, prior.asset.name])
+      ),
+      [`v${version}`]: exactName,
+      [`v${major}`]: `widget.v${major}.js`,
+      [`v${major}.${minor}`]: `widget.v${major}.${minor}.js`,
+    },
+    ...manifestChanges,
+  });
+  const manifest = Buffer.from(`${canonicalize(manifestRecord)}\n`);
+  const fileHashes = {
+    ...Object.fromEntries(retention.releases.map(prior => [prior.asset.name, prior.asset.sha256])),
+    [exactName]: sha256(widget),
+    'versions.json': staticManifestHashOverride ?? sha256(manifest),
+  };
+  const staticPayload = { schema: 'bugdrop.static-tree/v1', fileHashes };
+  const staticPackage = { ...staticPayload, contentIdentity: canonicalHash(staticPayload) };
+  const publicationAssetHashes = {
+    [exactName]: fileHashes[exactName],
+    'versions.json': sha256(manifest),
+  };
+  const releaseContent = buildReleaseContent({
+    requestPlan,
+    artifactHashes: publicationAssetHashes,
+    publicationAssetHashes,
+    staticPackage,
+    sourceDigests: { worker: 'e'.repeat(64), lockfile: 'f'.repeat(64) },
+    toolchain: { esbuild: '0.28.0', wrangler: '4.98.0' },
+    deploymentConfigDigest: '1'.repeat(64),
+    verification: { contract: 'release-verification/v1', result: 'passed' },
+  });
+  const finalPlan = buildFinalPlan({ requestPlan, releaseContent });
+  const assets: Record<string, Buffer> = {
+    [exactName]: widget,
+    'versions.json': manifest,
+    'request-plan.json': Buffer.from(`${canonicalize(requestPlan)}\n`),
+    'release-content.json': Buffer.from(`${canonicalize(releaseContent)}\n`),
+    'final-release-plan.json': Buffer.from(`${canonicalize(finalPlan)}\n`),
+  };
+  const checksums = Object.entries(assets)
+    .sort(([left], [right]) => compareUtf8(left, right))
+    .map(([name, bytes]) => `${sha256(bytes)}  ${name}`)
+    .join('\n');
+  assets['checksums.sha256'] = Buffer.from(`${checksums}\n`);
+  return { requestPlan, releaseContent, finalPlan, assets };
+}
+
+export function bootstrapV2WorkflowBundle(options = {}) {
+  return disabledV2WorkflowBundle({ ...options, retentionMode: 'bootstrap' });
 }
 
 export function artifactFor(bundle = workflowBundle()) {

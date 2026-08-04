@@ -15,6 +15,7 @@ import {
 } from './publication.mjs';
 import { canonicalize } from './canonical-json.mjs';
 import { collectRecoveryIdentity, pollLiveVerification } from './verify-live.mjs';
+import { assertStaticTree } from './static-tree.mjs';
 
 const PROTOCOL = 'bugdrop.live-release/v1';
 const SHA = /^[0-9a-f]{40}$/;
@@ -57,6 +58,9 @@ export async function buildExpectedLive({ bundle: rawBundle, origin, staticPacka
   const expectedPublication = validatePublicationBundle(bundle);
   const tag = match(expectedPublication.tag, TAG, 'tag');
   const version = tag.slice(1);
+  if (bundle.requestPlan.protocol === 'release-plan/v2') {
+    await assertStaticTree(staticPackageDir, bundle.releaseContent.staticPackage);
+  }
   const exactFilename = `widget.${tag}.js`;
   const aliases = bundle.requestPlan.attestation.expectedAliases;
   const exactBytes = await readFile(resolve(staticPackageDir, exactFilename));
@@ -78,8 +82,12 @@ export async function buildExpectedLive({ bundle: rawBundle, origin, staticPacka
   const widgetSha256 = sha256(exactBytes);
   const manifestSha256 = sha256(manifestBytes);
   if (
-    bundle.releaseContent.artifactHashes[exactFilename] !== widgetSha256 ||
-    bundle.releaseContent.artifactHashes['versions.json'] !== manifestSha256
+    (bundle.releaseContent.publicationAssetHashes ?? bundle.releaseContent.artifactHashes)[
+      exactFilename
+    ] !== widgetSha256 ||
+    (bundle.releaseContent.publicationAssetHashes ?? bundle.releaseContent.artifactHashes)[
+      'versions.json'
+    ] !== manifestSha256
   ) {
     fail('INVALID_STATIC_PACKAGE', 'static package bytes differ from authenticated State 2');
   }
@@ -89,11 +97,20 @@ export async function buildExpectedLive({ bundle: rawBundle, origin, staticPacka
     if (
       typeof artifact?.filename !== 'string' ||
       !/^widget\.v\d+\.\d+\.\d+\.js$/.test(artifact.filename) ||
-      !/^[0-9a-f]{64}$/.test(artifact.sha256 ?? '')
+      !/^[0-9a-f]{64}$/.test(artifact.sha256 ?? '') ||
+      (manifest.schema === 'bugdrop.versions-manifest/v2' &&
+        artifact.version !== artifactVersion.slice(1))
     ) {
       fail('INVALID_STATIC_PACKAGE', 'retained artifact identity is invalid');
     }
     retainedAssets[artifact.filename] = artifact.sha256;
+    const retainedBytes = await readFile(resolve(staticPackageDir, artifact.filename));
+    if (sha256(retainedBytes) !== artifact.sha256) {
+      fail(
+        'INVALID_STATIC_PACKAGE',
+        `retained ${artifact.filename} bytes differ from the manifest`
+      );
+    }
   }
   return {
     protocol: PROTOCOL,
