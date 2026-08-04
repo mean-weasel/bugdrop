@@ -11,6 +11,26 @@ fail() {
   exit 1
 }
 
+for controller_context in \
+  '--arg eventName "$GITHUB_EVENT_NAME"' \
+  '--arg ref "$GITHUB_REF"' \
+  '--arg workflowSha "$CONTROLLER_SHA"' \
+  'git -C "$GITHUB_WORKSPACE/controller" merge-base --is-ancestor "$TARGET_SHA" origin/main' \
+  '--argjson candidateReachableFromMain "$candidate_reachable"' \
+  '$candidateReachableFromMain'; do
+  grep -Fq -- "$controller_context" "$workflow" ||
+    fail "guard request context lacks: $controller_context"
+done
+
+guard_plan_block=$(awk '
+  /^  guard-and-plan:$/ { capture = 1 }
+  capture && /^  verify-candidate:$/ { exit }
+  capture { print }
+' "$workflow")
+if grep -Fq -- 'candidateReachableFromMain: true' <<< "$guard_plan_block"; then
+  fail 'guard request context must not assert candidate reachability'
+fi
+
 require_literal() {
   grep -Fq -- "$1" "$workflow" || fail "deploy.yml lacks: $1"
 }
