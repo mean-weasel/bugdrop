@@ -11,7 +11,8 @@ bundled with esbuild, and the test venue is `mean-weasel/bugdrop-widget-test` on
 - **Unit tests**: `test/` — Vitest
 - **E2E tests**: `e2e/` — Playwright (sharded), runs against `wrangler dev` at localhost:8787
 - **CI**: `.github/workflows/ci.yml` — lint, unit, E2E, deploy preview, live tests
-- **Release**: semantic-release on push to main (`fix:` → patch, `feat:` → minor)
+- **Release**: explicit operator dispatch of `.github/workflows/deploy.yml`; production is
+  fail-closed unless its two external capability gates and protected approval are satisfied
 
 ---
 
@@ -91,13 +92,16 @@ Before creating any pull request, run these **pr-review-toolkit** agents **in pa
 Use the `/pr-creator` skill when creating pull requests. It handles branch naming,
 commit organization, and PR description formatting.
 
-Follow conventional commit format for all commits:
+Follow conventional commit format for readable history. Prefixes do not select a release
+version; the operator chooses the SemVer bump in the manual release dispatch.
 
-- `fix:` — bug fixes (patch bump)
-- `feat:` — new features (minor bump)
+- `fix:` — bug fixes
+- `feat:` — new features
 - `test:` — test-only changes (no release)
 - `chore:` — maintenance (no release)
 - `docs:` — documentation (no release)
+
+See `docs/releasing.md` for the on-demand dry-run, live-release, and recovery procedure.
 
 ---
 

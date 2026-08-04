@@ -153,7 +153,7 @@ describe('GitHub release-state observation', () => {
           targetSha: SHA.target,
           controllerSha: SHA.release,
           bump: 'patch',
-          releaseReason: 'weekly',
+          releaseReason: 'standard',
           rationale: '',
           operatorNotes: '',
           dryRun: true,
@@ -313,7 +313,7 @@ describe('GitHub release-state observation', () => {
             targetSha: 'short',
             controllerSha: SHA.release,
             bump: 'patch',
-            releaseReason: 'weekly',
+            releaseReason: 'standard',
           },
         },
       })

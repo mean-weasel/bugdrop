@@ -18,7 +18,6 @@
     "lint-staged",
     "playwright",
     "prettier",
-    "semantic-release",
     "tsc",
     "vitest",
     "wrangler"
@@ -30,7 +29,6 @@
     "husky",
     "lint-staged",
     "prettier",
-    "semantic-release",
     "wrangler"
   ]
 }

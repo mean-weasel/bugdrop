@@ -50,7 +50,7 @@ for input in target_sha bump release_reason rationale operator_notes dry_run; do
 done
 for literal in \
   'options: [patch, minor, major]' \
-  'options: [weekly, emergency]' \
+  'options: [standard, emergency]' \
   'default: true' \
   'type: boolean' \
   'group: bugdrop-production-release' \

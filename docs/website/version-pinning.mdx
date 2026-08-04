@@ -1,6 +1,10 @@
 # Version Pinning
 
-BugDrop supports version pinning so you can control exactly which version of the widget runs on your site. By default, you always get the latest version. For production sites, you can pin to a major, minor, or exact patch version to avoid unexpected changes.
+BugDrop supports version-aware URLs so you can control how a deployed widget is updated. The
+unversioned URL follows the current deployment. Major and minor aliases move only when an operator
+completes an on-demand release. An exact URL can identify an asset in the current deployment when it
+is present in the authoritative `versions.json`, but availability is not guaranteed across later
+releases.
 
 ## Default Behavior
 
@@ -24,7 +28,7 @@ BugDrop follows [semantic versioning](https://semver.org/) (major.minor.patch). 
 | `/widget.js` | Always latest | Gets all updates automatically | Development, testing |
 | `/widget.v1.js` | Major pin | Gets minor and patch updates (1.x.x) | **Production (recommended)** |
 | `/widget.v1.1.js` | Minor pin | Gets patch updates only (1.1.x) | Cautious production |
-| `/widget.v1.1.0.js` | Exact pin | Never updates automatically | Maximum control |
+| `/widget.v1.1.0.js` | Exact URL | Identifies a listed current-deployment asset | Inspection and validation |
 
 ### Major Version Pin (Recommended for Production)
 
@@ -61,18 +65,27 @@ This loads the latest `1.1.x` release. You only get patch updates (bug fixes and
 ></script>
 ```
 
-This loads exactly version `1.1.0` and never changes. You must manually update the URL to get any updates, including bug fixes and security patches. Use this only if you need absolute reproducibility or are running your own update process.
+This requests version `1.1.0` from the current deployment. Confirm that its filename and digest appear
+in the live `versions.json` before using it. That manifest authenticates what is deployed now; it does
+not promise that the file will survive the next release. The installed workflow supplies neither a
+prior-release retention plan nor a durable archive input, so no durable retention boundary exists.
+Historical bytes that are absent from the current deployment and GitHub Release assets are
+unavailable and must not be reconstructed or promised.
 
 ## How Versioned URLs Work
 
-When a new version of BugDrop is released, the build process generates versioned copies of the widget file:
+When an operator completes a release, the guarded build creates the new exact file and the aliases
+for that release:
 
 - `widget.js` -- Always points to the latest version
 - `widget.v1.js` -- Points to the latest `1.x.x` version
 - `widget.v1.1.js` -- Points to the latest `1.1.x` version
-- `widget.v1.1.0.js` -- Points to exactly `1.1.0`
+- `widget.v1.1.0.js` -- Names the `1.1.0` asset when that file is deployed
 
-All versioned files are served from the same Cloudflare Worker, so there is no performance difference between them.
+The deployed `versions.json` is authoritative for which assets exist in the current deployment and
+which version each alias currently selects. It is not a cross-release archive. GitHub Releases are
+the canonical release record and carry the authenticated assets attached at publication. A source
+tag, changelog entry, or prior manifest alone does not prove that a static URL remains available.
 
 ## Choosing the Right Pin Level
 
@@ -95,11 +108,15 @@ Here is a decision guide:
 - You have specific behavior you depend on and want to avoid any UI changes
 - You prefer to manually opt in to new features
 
-### Use `/widget.v1.1.0.js` (exact pin) when:
-- You need bit-for-bit reproducibility
-- You have a formal change management process
-- You run your own testing pipeline before updating dependencies
-- You are embedding BugDrop in a product where stability is critical
+### Use `/widget.v1.1.0.js` (exact URL) when:
+
+- You are inspecting or validating an asset present in the current deployment
+- You have verified its filename and digest against the live `versions.json`
+- You do not depend on that URL remaining available after another release
+
+Production cutover is blocked until a separately reviewed retention wiring package establishes a
+durable boundary and a later authorized operator phase proves N/N+1 behavior. Until then, use a
+separately controlled archive if your application requires cross-release reproducibility.
 
 ## Upgrading Versions
 
@@ -113,7 +130,9 @@ To upgrade from one version to another, simply change the URL in your script tag
 <script src="https://bugdrop.neonwatty.workers.dev/widget.v2.js" ...></script>
 ```
 
-Before upgrading to a new major version, check the [CHANGELOG](https://github.com/mean-weasel/bugdrop/blob/main/CHANGELOG.md) for breaking changes and migration instructions.
+Before upgrading, check the corresponding
+[GitHub Release](https://github.com/mean-weasel/bugdrop/releases) for canonical notes and assets.
+The changelog is an incomplete historical aid.
 
 ## Checking Your Current Version
 
@@ -123,10 +142,12 @@ You can check which version of BugDrop is loaded by opening your browser's devel
 console.log(window.BugDrop);
 ```
 
-The widget version is also included in the console log message when the widget initializes.
+The widget version is also included in the console log message when the widget initializes. To
+verify an exact URL in the current deployment, compare its filename and digest with the live
+`versions.json`.
 
 ## Next Steps
 
-- [View the CHANGELOG](https://github.com/mean-weasel/bugdrop/blob/main/CHANGELOG.md) for release history
+- [View GitHub Releases](https://github.com/mean-weasel/bugdrop/releases) for canonical release history
 - [Configure the widget](/docs/configuration) with data attributes
 - [Test your setup](/docs/ci-testing) with Playwright

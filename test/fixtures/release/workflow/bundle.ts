@@ -24,7 +24,7 @@ export function workflowContext(dryRun = true) {
       targetSha: SHA.target,
       controllerSha: SHA.controller,
       bump: 'patch',
-      releaseReason: 'weekly',
+      releaseReason: 'standard',
       rationale: '',
       operatorNotes: '',
       dryRun,

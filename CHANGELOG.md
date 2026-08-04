@@ -5,6 +5,10 @@ All notable changes to BugDrop will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+GitHub Releases are the canonical release record going forward. The entries below are an archived,
+incomplete snapshot of early project history; they are not evidence that an artifact is currently
+served. Current release notes and authenticated assets belong on the corresponding GitHub Release.
+
 ## [1.11.0] - 2026-01-30
 
 ### Added
@@ -85,7 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `/widget.v1.js` - Pinned to major version 1.x
   - `/widget.v1.1.js` - Pinned to minor version 1.1.x
   - `/widget.v1.1.0.js` - Pinned to exact version
-- **Release-based deployment**: Publishing a GitHub Release now automatically deploys to Cloudflare Workers. This gives maintainers explicit control over when updates reach users.
+- **Historical release-based deployment**: At the time, publishing a GitHub Release triggered the then-current Cloudflare deployment process. This is not the current release procedure.
 - **Versions manifest**: `/versions.json` endpoint shows available versions.
 
 ### Changed
@@ -133,13 +137,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Minor versions** (v1.0 → v1.1): New features, backwards compatible
 - **Patch versions** (v1.0.0 → v1.0.1): Bug fixes only
 
-[Unreleased]: https://github.com/neonwatty/bugdrop/compare/v1.11.0...HEAD
-[1.11.0]: https://github.com/neonwatty/bugdrop/compare/v1.10.0...v1.11.0
-[1.10.0]: https://github.com/neonwatty/bugdrop/compare/v1.9.0...v1.10.0
-[1.9.0]: https://github.com/neonwatty/bugdrop/compare/v1.8.1...v1.9.0
-[1.8.1]: https://github.com/neonwatty/bugdrop/compare/v1.8.0...v1.8.1
-[1.8.0]: https://github.com/neonwatty/bugdrop/compare/v1.7.0...v1.8.0
-[1.7.0]: https://github.com/neonwatty/bugdrop/compare/v1.6.0...v1.7.0
-[1.6.0]: https://github.com/neonwatty/bugdrop/compare/v1.1.0...v1.6.0
-[1.1.0]: https://github.com/neonwatty/bugdrop/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/neonwatty/bugdrop/releases/tag/v1.0.0
+[Unreleased]: https://github.com/mean-weasel/bugdrop/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/mean-weasel/bugdrop/compare/v1.10.0...v1.11.0
+[1.10.0]: https://github.com/mean-weasel/bugdrop/compare/v1.9.0...v1.10.0
+[1.9.0]: https://github.com/mean-weasel/bugdrop/compare/v1.8.1...v1.9.0
+[1.8.1]: https://github.com/mean-weasel/bugdrop/compare/v1.8.0...v1.8.1
+[1.8.0]: https://github.com/mean-weasel/bugdrop/compare/v1.7.0...v1.8.0
+[1.7.0]: https://github.com/mean-weasel/bugdrop/compare/v1.6.0...v1.7.0
+[1.6.0]: https://github.com/mean-weasel/bugdrop/compare/v1.1.0...v1.6.0
+[1.1.0]: https://github.com/mean-weasel/bugdrop/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/mean-weasel/bugdrop/releases/tag/v1.0.0

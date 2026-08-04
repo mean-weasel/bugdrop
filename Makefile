@@ -163,7 +163,7 @@ help:
 	@echo "    make knip             - Check for dead code"
 	@echo "    make audit            - Run npm security audit"
 	@echo "    make check-actions-node24 - Verify GitHub Actions use Node 24-ready entries"
-	@echo "    make check-release-workflow - Verify production release automation is frozen"
+	@echo "    make check-release-workflow - Verify the guarded manual release contract"
 	@echo ""
 	@echo "  Combined:"
 	@echo "    make check            - Run quality, CI scope, and workflow contract checks"

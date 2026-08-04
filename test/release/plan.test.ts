@@ -40,8 +40,8 @@ const rawDispatch = {
   targetSha: SHA.target,
   controllerSha: SHA.controller,
   bump: 'patch',
-  releaseReason: 'weekly',
-  rationale: 'Routine weekly release\r\nApproved inventory.',
+  releaseReason: 'standard',
+  rationale: '',
   operatorNotes: 'Ship it',
 };
 
@@ -187,6 +187,7 @@ describe('dispatch and source trust', () => {
   });
 
   it.each([
+    ['legacy weekly reason', { releaseReason: 'weekly' }],
     ['unknown reason', { releaseReason: 'routine' }],
     ['emergency without rationale', { releaseReason: 'emergency', rationale: '   ' }],
     ['unbounded notes', { operatorNotes: 'x'.repeat(5001) }],
@@ -337,6 +338,7 @@ describe('published frontier and SemVer', () => {
 describe('deterministic identities and completed-plan lookup', () => {
   it('creates request identity before content identity and final approval identity', () => {
     const request = requestPlan();
+    expect(request.request.releaseReason).toBe('standard');
     expect(request.requestIdentity).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(request).not.toHaveProperty('contentIdentity');
     const release = completedRelease(request);

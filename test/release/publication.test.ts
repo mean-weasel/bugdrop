@@ -49,7 +49,7 @@ function publicationBundle(verificationResult: 'passed' | 'failed' = 'passed') {
       targetSha: SHA.target,
       controllerSha: SHA.controller,
       bump: 'patch',
-      releaseReason: 'weekly',
+      releaseReason: 'standard',
       rationale: '',
       operatorNotes: '',
     }),
