@@ -226,11 +226,18 @@ export async function pollLiveVerification({
     lastMessage: lastError instanceof Error ? lastError.message : String(lastError),
   });
 }
-export function observeLiveSnapshot(origin, snapshot) {
+function observeSnapshotForEnvironment(origin, snapshot, expectedEnvironment) {
   normalizeOrigin(origin);
   if (snapshot?.health?.status !== 'ok' || typeof snapshot.health.environment !== 'string') {
     fail('LIVE_OBSERVATION_FAILED', 'health observation is incomplete');
   }
+  if (snapshot.health.environment !== expectedEnvironment) {
+    fail(
+      'LIVE_ENVIRONMENT_MISMATCH',
+      `expected ${expectedEnvironment}, observed ${snapshot.health.environment}`
+    );
+  }
+  match(snapshot.health.buildSha, SHA_PATTERN, 'observed buildSha', 'LIVE_BUILD_SHA_MISMATCH');
   const currentVersion = snapshot.manifest?.current;
   if (typeof currentVersion !== 'string' || !currentVersion) {
     fail('LIVE_OBSERVATION_FAILED', 'manifest current identity is missing');
@@ -245,6 +252,12 @@ export function observeLiveSnapshot(origin, snapshot) {
     verifiedAgainstPlan: false,
     widgetSha256: observedHash(snapshot, 'widget.js'),
   };
+}
+export function observeLiveSnapshot(origin, snapshot) {
+  return observeSnapshotForEnvironment(origin, snapshot, 'production');
+}
+export function observePreviewSnapshot(origin, snapshot) {
+  return observeSnapshotForEnvironment(origin, snapshot, 'preview');
 }
 async function collectObservation(origin, fetchImpl = fetch) {
   normalizeOrigin(origin);
@@ -315,12 +328,19 @@ async function main() {
     );
     return;
   }
+  if (mode === 'preview-observe') {
+    const origin = normalizeOrigin(process.env.EXPECTED_WIDGET_ORIGIN);
+    process.stdout.write(
+      `${JSON.stringify(observePreviewSnapshot(origin, await collectObservation(origin)))}\n`
+    );
+    return;
+  }
   if (mode === 'recovery-observe') {
     const origin = normalizeOrigin(process.env.EXPECTED_WIDGET_ORIGIN);
     process.stdout.write(`${JSON.stringify(await collectRecoveryIdentity(origin))}\n`);
     return;
   }
-  fail('INVALID_INPUT', 'usage: verify-live.mjs verify|observe|recovery-observe');
+  fail('INVALID_INPUT', 'usage: verify-live.mjs verify|observe|preview-observe|recovery-observe');
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(error => {

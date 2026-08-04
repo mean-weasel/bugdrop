@@ -347,6 +347,7 @@ jobs:
       - name: Preflight stale canary cleanup
         run: >-
           node scripts/github-issue-canary.mjs preflight
+          --profile preview
           --repo mean-weasel/bugdrop-widget-test
           --prefix "[BugDrop CI canary]"
         env:
@@ -456,6 +457,7 @@ jobs:
       - name: Verify canary Issue independently
         run: >-
           node scripts/github-issue-canary.mjs verify
+          --profile preview
           --repo mean-weasel/bugdrop-widget-test
           --marker "$BUGDROP_CANARY_MARKER"
           --expected-sha "$GITHUB_SHA"
@@ -471,6 +473,7 @@ jobs:
             exit 0
           fi
           node scripts/github-issue-canary.mjs cleanup \
+            --profile preview \
             --repo mean-weasel/bugdrop-widget-test \
             --marker "$BUGDROP_CANARY_MARKER"
         env:
@@ -480,6 +483,7 @@ jobs:
         if: always()
         run: >-
           node scripts/github-issue-canary.mjs sweep
+          --profile preview
           --repo mean-weasel/bugdrop-widget-test
           --prefix "[BugDrop CI canary]"
         env:

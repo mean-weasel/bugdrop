@@ -1,0 +1,338 @@
+name: Production Heartbeat
+
+on:
+  workflow_dispatch:
+    inputs:
+      controlled_failure:
+        description: Fail after verified cleanup to exercise incident handling
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: '17 2 * * *'
+    - cron: '47 1/4 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bugdrop-production-heartbeat
+  cancel-in-progress: false
+
+jobs:
+  heartbeat:
+    name: Production synthetic transaction
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          (github.event_name == 'schedule' &&
+           ((github.event.schedule == '17 2 * * *' &&
+             vars.BUGDROP_PRODUCTION_HEARTBEAT_MODE == 'daily') ||
+            (github.event.schedule == '47 1/4 * * *' &&
+             vars.BUGDROP_PRODUCTION_HEARTBEAT_MODE == 'four-hour'))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      heartbeat_ok: ${{ steps.summarize.outputs.heartbeat_ok }}
+      details: ${{ steps.summarize.outputs.details }}
+      summarize_outcome: ${{ steps.summarize.outcome }}
+      artifact_prepare_outcome: ${{ steps.prepare-artifact.outcome }}
+      artifact_outcome: ${{ steps.artifact.outcome }}
+    steps:
+      - name: Check out heartbeat code
+        id: checkout
+        uses: actions/checkout@v5
+        continue-on-error: true
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        id: node
+        if: always()
+        uses: actions/setup-node@v5
+        continue-on-error: true
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        id: install
+        if: always() && steps.checkout.outcome == 'success' && steps.node.outcome == 'success'
+        continue-on-error: true
+        run: npm ci
+
+      - name: Install Chromium
+        id: browser
+        if: always() && steps.install.outcome == 'success'
+        continue-on-error: true
+        run: npx playwright install --with-deps chromium
+
+      - name: Observe strict production identity
+        id: identity
+        if: always() && steps.install.outcome == 'success'
+        continue-on-error: true
+        env:
+          EXPECTED_WIDGET_ORIGIN: https://bugdrop.neonwatty.workers.dev
+        run: |
+          identity_json=$(node scripts/release/verify-live.mjs observe)
+          worker_sha=$(jq -er '.buildSha | select(test("^[a-f0-9]{40}$"))' <<< "$identity_json")
+          widget_sha=$(jq -er '.widgetSha256 | select(test("^[a-f0-9]{64}$"))' <<< "$identity_json")
+          fixture_path="$RUNNER_TEMP/bugdrop-production-widget-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.js"
+          candidate_path="$fixture_path.candidate"
+          curl --max-time 30 -sSf https://bugdrop.neonwatty.workers.dev/widget.js -o "$candidate_path"
+          actual_sha=$(shasum -a 256 "$candidate_path" | awk '{print $1}')
+          test "$actual_sha" = "$widget_sha"
+          mv "$candidate_path" "$fixture_path"
+          echo "EXPECTED_WORKER_SHA=$worker_sha" >> "$GITHUB_ENV"
+          echo "EXPECTED_WIDGET_SHA256=$widget_sha" >> "$GITHUB_ENV"
+          echo "EXACT_WIDGET_FIXTURE_PATH=$fixture_path" >> "$GITHUB_ENV"
+          echo "BUGDROP_CANARY_MARKER=bugdrop-production-heartbeat:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${worker_sha}" >> "$GITHUB_ENV"
+          echo "BUGDROP_CANARY_RESULT_FILE=$RUNNER_TEMP/production-heartbeat-result.json" >> "$GITHUB_ENV"
+          echo "BUGDROP_CANARY_ATTEMPT_FILE=$RUNNER_TEMP/production-heartbeat-attempt" >> "$GITHUB_ENV"
+          echo "LIVE_TARGET=production" >> "$GITHUB_ENV"
+          echo "PLAYWRIGHT_BASE_URL=https://bugdrop-widget-test.vercel.app" >> "$GITHUB_ENV"
+          echo "EXPECTED_WIDGET_ORIGIN=https://bugdrop.neonwatty.workers.dev" >> "$GITHUB_ENV"
+
+      - name: Preflight production heartbeat cleanup
+        id: preflight
+        if: always() && steps.identity.outcome == 'success'
+        continue-on-error: true
+        run: >-
+          node scripts/github-issue-canary.mjs preflight
+          --profile production
+          --repo mean-weasel/bugdrop-widget-test
+          --prefix "[BugDrop production heartbeat]"
+        env:
+          BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
+
+      - name: Verify fixed production venue
+        id: venue
+        if: always() && steps.identity.outcome == 'success'
+        continue-on-error: true
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          bypass_args=()
+          if [ -n "$VERCEL_AUTOMATION_BYPASS_SECRET" ]; then
+            bypass_args=(-H "x-vercel-protection-bypass:${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          fi
+          html=$(curl --max-time 30 -sSf "${bypass_args[@]}" https://bugdrop-widget-test.vercel.app)
+          grep -Fq 'https://bugdrop.neonwatty.workers.dev/widget.js' <<< "$html"
+
+      - name: Run one production Issue canary
+        id: canary
+        if: >-
+          always() && steps.browser.outcome == 'success' &&
+          steps.identity.outcome == 'success' && steps.preflight.outcome == 'success' &&
+          steps.venue.outcome == 'success'
+        continue-on-error: true
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          : > "$BUGDROP_CANARY_ATTEMPT_FILE"
+          npx playwright test e2e/widget.issue-canary.spec.ts --project=chromium-issue-canary --workers=1 --retries=0
+
+      - name: Verify production canary independently
+        id: verify
+        if: always() && steps.canary.outcome == 'success'
+        continue-on-error: true
+        run: >-
+          node scripts/github-issue-canary.mjs verify
+          --profile production
+          --repo mean-weasel/bugdrop-widget-test
+          --marker "$BUGDROP_CANARY_MARKER"
+          --expected-sha "$EXPECTED_WORKER_SHA"
+          --result-file "$BUGDROP_CANARY_RESULT_FILE"
+        env:
+          BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
+
+      - name: Cleanup current production marker
+        id: cleanup
+        if: always() && steps.identity.outcome == 'success'
+        continue-on-error: true
+        run: |
+          if [ ! -f "$BUGDROP_CANARY_ATTEMPT_FILE" ]; then
+            echo 'The production canary never started; no current marker can exist.'
+            exit 0
+          fi
+          node scripts/github-issue-canary.mjs cleanup \
+            --profile production \
+            --repo mean-weasel/bugdrop-widget-test \
+            --marker "$BUGDROP_CANARY_MARKER"
+        env:
+          BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
+
+      - name: Final production-prefix sweep
+        id: sweep
+        if: always() && steps.checkout.outcome == 'success'
+        continue-on-error: true
+        run: >-
+          node scripts/github-issue-canary.mjs sweep
+          --profile production
+          --repo mean-weasel/bugdrop-widget-test
+          --prefix "[BugDrop production heartbeat]"
+        env:
+          BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
+
+      - name: Controlled post-cleanup failure
+        id: controlled
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.controlled_failure
+        continue-on-error: true
+        run: |
+          echo 'Controlled failure requested after cleanup and sweep.'
+          exit 1
+
+      - name: Summarize heartbeat stages
+        id: summarize
+        if: always()
+        continue-on-error: true
+        env:
+          CHECKOUT: ${{ steps.checkout.outcome }}
+          NODE: ${{ steps.node.outcome }}
+          INSTALL: ${{ steps.install.outcome }}
+          BROWSER: ${{ steps.browser.outcome }}
+          IDENTITY: ${{ steps.identity.outcome }}
+          PREFLIGHT: ${{ steps.preflight.outcome }}
+          VENUE: ${{ steps.venue.outcome }}
+          CANARY: ${{ steps.canary.outcome }}
+          VERIFY: ${{ steps.verify.outcome }}
+          CLEANUP: ${{ steps.cleanup.outcome }}
+          SWEEP: ${{ steps.sweep.outcome }}
+          CONTROLLED: ${{ steps.controlled.outcome }}
+        run: |
+          details="checkout=$CHECKOUT,node=$NODE,install=$INSTALL,browser=$BROWSER,identity=$IDENTITY,preflight=$PREFLIGHT,venue=$VENUE,canary=$CANARY,verify=$VERIFY,cleanup=$CLEANUP,sweep=$SWEEP,controlled=$CONTROLLED"
+          heartbeat_ok=true
+          for outcome in "$CHECKOUT" "$NODE" "$INSTALL" "$BROWSER" "$IDENTITY" "$PREFLIGHT" "$VENUE" "$CANARY" "$VERIFY" "$CLEANUP" "$SWEEP"; do
+            if [ "$outcome" != success ]; then heartbeat_ok=false; fi
+          done
+          if [ "$CONTROLLED" = failure ]; then heartbeat_ok=false; fi
+          diagnostics_path="$RUNNER_TEMP/production-heartbeat-diagnostics.json"
+          diagnostics_tmp="$RUNNER_TEMP/production-heartbeat-diagnostics-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tmp"
+          trap 'rm -f -- "$diagnostics_tmp"' EXIT
+          jq -n \
+            --argjson schemaVersion 1 \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --arg checkout "$CHECKOUT" \
+            --arg node "$NODE" \
+            --arg install "$INSTALL" \
+            --arg browser "$BROWSER" \
+            --arg identity "$IDENTITY" \
+            --arg preflight "$PREFLIGHT" \
+            --arg venue "$VENUE" \
+            --arg canary "$CANARY" \
+            --arg verify "$VERIFY" \
+            --arg cleanup "$CLEANUP" \
+            --arg sweep "$SWEEP" \
+            --arg controlled "$CONTROLLED" \
+            --arg heartbeatOk "$heartbeat_ok" \
+            '{schemaVersion: $schemaVersion, runId: $runId, runAttempt: $runAttempt, stages: {checkout: $checkout, node: $node, install: $install, browser: $browser, identity: $identity, preflight: $preflight, venue: $venue, canary: $canary, verify: $verify, cleanup: $cleanup, sweep: $sweep, controlled: $controlled}, heartbeatOk: ($heartbeatOk == "true")}' \
+            > "$diagnostics_tmp"
+          test -s "$diagnostics_tmp"
+          jq -e '
+            type == "object" and
+            (keys == ["heartbeatOk", "runAttempt", "runId", "schemaVersion", "stages"]) and
+            .schemaVersion == 1 and
+            (.runId | type == "string" and length > 0) and
+            (.runAttempt | type == "string" and length > 0) and
+            (.heartbeatOk | type == "boolean") and
+            (.stages | type == "object") and
+            (.stages | keys == ["browser", "canary", "checkout", "cleanup", "controlled", "identity", "install", "node", "preflight", "sweep", "venue", "verify"]) and
+            ([.stages[] | select(. != "success" and . != "failure" and . != "skipped" and . != "cancelled")] | length == 0)
+          ' "$diagnostics_tmp" > /dev/null
+          mv "$diagnostics_tmp" "$diagnostics_path"
+          trap - EXIT
+          echo "heartbeat_ok=$heartbeat_ok" >> "$GITHUB_OUTPUT"
+          echo "details=$details" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare heartbeat diagnostics artifact
+        id: prepare-artifact
+        if: always()
+        continue-on-error: true
+        run: |
+          diagnostics_path="$RUNNER_TEMP/production-heartbeat-diagnostics.json"
+          artifact_path="$RUNNER_TEMP/production-heartbeat-artifact-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$artifact_path"
+          test -s "$diagnostics_path"
+          jq -e '
+            type == "object" and
+            (keys == ["heartbeatOk", "runAttempt", "runId", "schemaVersion", "stages"]) and
+            .schemaVersion == 1 and
+            (.runId | type == "string" and length > 0) and
+            (.runAttempt | type == "string" and length > 0) and
+            (.heartbeatOk | type == "boolean") and
+            (.stages | type == "object") and
+            (.stages | keys == ["browser", "canary", "checkout", "cleanup", "controlled", "identity", "install", "node", "preflight", "sweep", "venue", "verify"]) and
+            ([.stages[] | select(. != "success" and . != "failure" and . != "skipped" and . != "cancelled")] | length == 0)
+          ' "$diagnostics_path" > /dev/null
+          cp "$diagnostics_path" "$artifact_path/diagnostics.json"
+          if [ -d playwright-report ]; then cp -R playwright-report "$artifact_path/"; fi
+          if [ -d test-results ]; then cp -R test-results "$artifact_path/"; fi
+
+      - name: Upload heartbeat diagnostics
+        id: artifact
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v5
+        with:
+          name: production-heartbeat-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/production-heartbeat-artifact-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 7
+
+  incident:
+    name: Reconcile heartbeat incident
+    needs: heartbeat
+    if: always() && needs.heartbeat.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Reconcile one stable incident Issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HEARTBEAT_OK: ${{ needs.heartbeat.outputs.heartbeat_ok }}
+          SUMMARIZE_OUTCOME: ${{ needs.heartbeat.outputs.summarize_outcome }}
+          ARTIFACT_PREPARE_OUTCOME: ${{ needs.heartbeat.outputs.artifact_prepare_outcome }}
+          ARTIFACT_OUTCOME: ${{ needs.heartbeat.outputs.artifact_outcome }}
+          DETAILS: ${{ needs.heartbeat.outputs.details }}
+        run: |
+          outcome=failure
+          if [ "$HEARTBEAT_OK" = true ] && [ "$SUMMARIZE_OUTCOME" = success ] && [ "$ARTIFACT_PREPARE_OUTCOME" = success ] && [ "$ARTIFACT_OUTCOME" = success ]; then
+            outcome=recovery
+          fi
+          node scripts/github-heartbeat-incident.mjs "$outcome" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --details "$DETAILS,summarize=$SUMMARIZE_OUTCOME,artifact_prepare=$ARTIFACT_PREPARE_OUTCOME,artifact=$ARTIFACT_OUTCOME"
+
+  conclusion:
+    name: Production Heartbeat Conclusion
+    needs: [heartbeat, incident]
+    if: always() && needs.heartbeat.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Fail closed on every required outcome
+        env:
+          HEARTBEAT_JOB: ${{ needs.heartbeat.result }}
+          HEARTBEAT_OK: ${{ needs.heartbeat.outputs.heartbeat_ok }}
+          SUMMARIZE_OUTCOME: ${{ needs.heartbeat.outputs.summarize_outcome }}
+          ARTIFACT_PREPARE_OUTCOME: ${{ needs.heartbeat.outputs.artifact_prepare_outcome }}
+          ARTIFACT_OUTCOME: ${{ needs.heartbeat.outputs.artifact_outcome }}
+          INCIDENT_JOB: ${{ needs.incident.result }}
+        run: |
+          if [ "$HEARTBEAT_JOB" != success ] || [ "$HEARTBEAT_OK" != true ] || \
+             [ "$SUMMARIZE_OUTCOME" != success ] || \
+             [ "$ARTIFACT_PREPARE_OUTCOME" != success ] || \
+             [ "$ARTIFACT_OUTCOME" != success ] || [ "$INCIDENT_JOB" != success ]; then
+            echo "Production heartbeat failed: heartbeat_job=$HEARTBEAT_JOB heartbeat_ok=$HEARTBEAT_OK summarize=$SUMMARIZE_OUTCOME artifact_prepare=$ARTIFACT_PREPARE_OUTCOME artifact=$ARTIFACT_OUTCOME incident=$INCIDENT_JOB" >&2
+            exit 1
+          fi

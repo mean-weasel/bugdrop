@@ -327,6 +327,21 @@ describe('GitHub Issue canary discovery and verification', () => {
     ).rejects.toThrow('not browser Issue #42');
   });
 
+  it('rejects a marker bound to a different Worker SHA before network access', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    await expect(
+      verifyCanaryIssue({
+        fetchImpl,
+        repo: REPO,
+        token: TOKEN,
+        marker: `bugdrop-ci-canary:123:1:${'b'.repeat(40)}`,
+        expectedSha: SHA,
+        result: result(),
+      })
+    ).rejects.toThrow('expected Worker SHA');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('rejects an unbounded consistency configuration before making a request', async () => {
     const fetchImpl = vi.fn<typeof fetch>();
 

@@ -24,6 +24,11 @@ The marker format is:
 bugdrop-ci-canary:<run-id>:<run-attempt>:<full-merge-group-sha>
 ```
 
+The preview profile binds the marker's terminal SHA to the exact expected Worker SHA before browser
+mutation and again during independent verification. Production uses the disjoint
+`bugdrop-production-heartbeat` marker namespace and `[BugDrop production heartbeat]` title prefix;
+neither workflow can sweep the other's Issues.
+
 Before the mutating canary, two nonmutating live tests render the inline star review and CTA text
 modal from the exact deployed widget bytes. Each intercepts its only feedback POST, prevents it from
 reaching the Worker, and asserts the complete normalized Issue draft and explicit-submit behavior.
@@ -62,7 +67,8 @@ Same-run cleanup has two independent passes while holding the lock:
 Hard cancellation can skip both passes. The next merge group performs a locked prefix preflight
 before deploying, and the daily scheduled live workflow performs the same prefix sweep under the
 same lock. Manual and reusable live runs use unique concurrency groups and remain nonmutating; they
-cannot race the preview mutex or run the canary.
+cannot race the preview mutex or run the canary. The daily scheduled live workflow is fixed to the
+preview venue and Worker, remains nonmutating, and selects the preview-profile janitor.
 
 When a run fails, do not rerun merely to obtain green status. First inspect the failed step and
 confirm whether the final sweep ran. If cancellation prevented cleanup, wait for the next locked
