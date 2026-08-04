@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   CloudflareClientError,
+  createPreviewCloudflareClient,
   createProductionCloudflareClient,
 } from '../../scripts/release/cloudflare-client.mjs';
 
@@ -146,5 +147,12 @@ describe('production Cloudflare client', () => {
     expect(createProductionCloudflareClient(input({ environment: 'preview' })).environment).toBe(
       'production'
     );
+  });
+
+  it('uses the same locked client boundary for the preview capability target', () => {
+    const client = createPreviewCloudflareClient(
+      input({ controllerConfigBytes: Buffer.from('[env.preview]\nname="bugdrop-preview"\n') })
+    );
+    expect(client).toMatchObject({ environment: 'preview', target: 'bugdrop-preview' });
   });
 });

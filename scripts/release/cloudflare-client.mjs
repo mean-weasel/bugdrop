@@ -2,6 +2,8 @@ import { spawnSync } from 'node:child_process';
 
 import {
   parseDeploymentStatus,
+  parseDeploymentList,
+  parseVersionList,
   parseVersionView,
   createWranglerPlan,
   executeWrangler,
@@ -41,17 +43,19 @@ function safeEnvironment(source) {
   );
 }
 
-export function createProductionCloudflareClient({
+function createCloudflareClient({
   accountId,
   apiToken,
+  environment,
+  expectedTarget,
   baseEnv = process.env,
   spawn = spawnSync,
   ...planInput
 }) {
   const plan = createWranglerPlan({
     ...planInput,
-    environment: 'production',
-    expectedTarget: 'bugdrop',
+    environment,
+    expectedTarget,
   });
   const commandEnv = {
     ...safeEnvironment(baseEnv),
@@ -66,9 +70,27 @@ export function createProductionCloudflareClient({
     environment: plan.environment,
     wranglerVersion: plan.wranglerVersion,
     inspectStatus: () => execute(plan.status, parseDeploymentStatus),
+    inspectDeployments: () => execute(plan.deployments, parseDeploymentList),
+    inspectVersions: () => execute(plan.versions, parseVersionList),
     inspectVersion: versionId =>
       execute(plan.viewVersion(versionId), value => parseVersionView(value, versionId)),
     deploy: () => execute(plan.deploy),
     rollback: (versionId, message) => execute(plan.rollback(versionId, message)),
   };
+}
+
+export function createProductionCloudflareClient(input) {
+  return createCloudflareClient({
+    ...input,
+    environment: 'production',
+    expectedTarget: 'bugdrop',
+  });
+}
+
+export function createPreviewCloudflareClient(input) {
+  return createCloudflareClient({
+    ...input,
+    environment: 'preview',
+    expectedTarget: 'bugdrop-preview',
+  });
 }

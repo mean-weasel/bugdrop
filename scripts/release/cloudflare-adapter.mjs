@@ -62,7 +62,9 @@ function boundedText(value, field) {
 }
 
 export function parseEnvironmentTarget(configBytes, environment, expectedTarget) {
-  if (environment !== 'production') fail('INVALID_ENVIRONMENT', 'environment must be production');
+  if (!['preview', 'production'].includes(environment)) {
+    fail('INVALID_ENVIRONMENT', 'environment must be preview or production');
+  }
   match(expectedTarget, SAFE_NAME, 'expectedTarget');
   const source = Buffer.isBuffer(configBytes) ? configBytes.toString('utf8') : configBytes;
   if (typeof source !== 'string') fail('INVALID_CONTROLLER_CONFIG', 'config bytes are missing');
@@ -223,6 +225,26 @@ export function parseVersionView(value, expectedVersionId) {
       serveDirectly: runtimeAssets.serve_directly,
     },
   };
+}
+
+export function parseDeploymentList(value) {
+  const deployments = json(value, 'deployment list');
+  if (!Array.isArray(deployments) || deployments.length === 0 || deployments.length > 100) {
+    fail('INVALID_CLOUDFLARE_RESPONSE', 'deployment list is empty or unbounded');
+  }
+  return deployments.map(parseDeploymentStatus);
+}
+
+export function parseVersionList(value) {
+  const versions = json(value, 'version list');
+  if (!Array.isArray(versions) || versions.length === 0 || versions.length > 100) {
+    fail('INVALID_CLOUDFLARE_RESPONSE', 'version list is empty or unbounded');
+  }
+  return versions.map(item => ({
+    versionId: match(item?.id, SAFE_ID, 'version.id', 'INVALID_CLOUDFLARE_RESPONSE'),
+    createdOn: timestamp(item?.metadata?.created_on, 'version.metadata.created_on'),
+    source: boundedText(item?.metadata?.source, 'version.metadata.source'),
+  }));
 }
 
 export function reconcileDeployment(input) {

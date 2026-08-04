@@ -4,6 +4,8 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 workflow="$repo_root/.github/workflows/deploy.yml"
+capability_workflow="$repo_root/.github/workflows/cloudflare-capability.yml"
+ci_workflow="$repo_root/.github/workflows/ci.yml"
 workflows_dir="$repo_root/.github/workflows"
 
 fail() {
@@ -322,6 +324,27 @@ wrangler_deploy_matches=$(grep -RInF --include='*.yml' --include='*.yaml' -- 'wr
   fail "only preview CI may deploy before WP7: $wrangler_deploy_matches"
 [[ "$wrangler_deploy_matches" == *'.github/workflows/ci.yml:'*'wrangler deploy --env preview'* ]] ||
   fail "remaining Wrangler deploy is not preview-only: $wrangler_deploy_matches"
+
+[[ -s "$capability_workflow" ]] || fail 'Cloudflare capability workflow is missing'
+for literal in \
+  'workflow_dispatch:' \
+  'group: bugdrop-shared-preview' \
+  'cancel-in-progress: false' \
+  'test "$DISPATCH_REF" = '\''refs/heads/main'\''' \
+  'git -C controller merge-base --is-ancestor "$SHA_A" "$SHA_B"' \
+  'persist-credentials: false' \
+  'node controller/scripts/release/cloudflare-capability-drill.mjs' \
+  'CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}' \
+  'CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}' \
+  'if: always()'; do
+  grep -Fq -- "$literal" "$capability_workflow" ||
+    fail "Cloudflare capability workflow lacks: $literal"
+done
+grep -Fq 'group: bugdrop-shared-preview' "$ci_workflow" ||
+  fail 'merge-queue preview and capability drill must share one mutation lock'
+if grep -Eq 'environment: production|contents: write|issues: write|DISCORD_|BUGDROP_CANARY_' "$capability_workflow"; then
+  fail 'Cloudflare capability workflow receives unrelated or production authority'
+fi
 
 (
   cd "$repo_root"
