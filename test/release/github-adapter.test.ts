@@ -7,6 +7,7 @@ import {
   createRequestPlanFromGithub,
   GithubAdapterError,
   loadPublishedReleaseAssets,
+  observeMergeQueuePreflight,
   observeGithubState,
   paginateGithub,
 } from '../../scripts/release/github-adapter.mjs';
@@ -70,6 +71,51 @@ function observationEntries() {
 }
 
 describe('GitHub release-state observation', () => {
+  it('proves preflight from merge-queue runs without observing the active release run', async () => {
+    const path = `/repos/${REPOSITORY}/actions/runs?head_sha=${SHA.target}&event=merge_group&per_page=100&page=1`;
+    const transport = transportFor({
+      [path]: {
+        data: {
+          workflow_runs: [
+            {
+              head_sha: SHA.target,
+              event: 'merge_group',
+              status: 'completed',
+              conclusion: 'success',
+            },
+          ],
+        },
+        hasNext: false,
+      },
+    });
+
+    await expect(observeMergeQueuePreflight(transport, REPOSITORY, SHA.target)).resolves.toBe(true);
+    expect(transport.request).toHaveBeenCalledWith(path);
+  });
+
+  it('fails preflight closed when the exact merge-queue run failed', async () => {
+    const path = `/repos/${REPOSITORY}/actions/runs?head_sha=${SHA.target}&event=merge_group&per_page=100&page=1`;
+    const transport = transportFor({
+      [path]: {
+        data: {
+          workflow_runs: [
+            {
+              head_sha: SHA.target,
+              event: 'merge_group',
+              status: 'completed',
+              conclusion: 'failure',
+            },
+          ],
+        },
+        hasNext: false,
+      },
+    });
+
+    await expect(observeMergeQueuePreflight(transport, REPOSITORY, SHA.target)).resolves.toBe(
+      false
+    );
+  });
+
   it('builds a deterministic request plan from complete authenticated observations', async () => {
     const entries = observationEntries();
     entries[`/repos/${REPOSITORY}/compare/${SHA.release}...${SHA.target}`] = {
@@ -103,10 +149,20 @@ describe('GitHub release-state observation', () => {
         data: { status: 'ahead' },
         hasNext: false,
       },
-      [`/repos/${REPOSITORY}/commits/${SHA.target}/check-runs?per_page=100&page=1`]: {
-        data: { check_runs: [{ status: 'completed', conclusion: 'success' }] },
-        hasNext: false,
-      },
+      [`/repos/${REPOSITORY}/actions/runs?head_sha=${SHA.target}&event=merge_group&per_page=100&page=1`]:
+        {
+          data: {
+            workflow_runs: [
+              {
+                head_sha: SHA.target,
+                event: 'merge_group',
+                status: 'completed',
+                conclusion: 'success',
+              },
+            ],
+          },
+          hasNext: false,
+        },
       [`/repos/${REPOSITORY}/compare/${SHA.target}...main`]: {
         data: { status: 'identical' },
         hasNext: false,

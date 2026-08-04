@@ -326,27 +326,29 @@ async function observePullRequests(transport, repository, commits) {
   return [...pulls.values()];
 }
 
-async function observeChecks(transport, repository, targetSha) {
+export async function observeMergeQueuePreflight(transport, repository, targetSha) {
   const records = [];
   for (let page = 1; page <= 100; page += 1) {
     const result = await transport.request(
-      `/repos/${repository}/commits/${targetSha}/check-runs?per_page=100&page=${page}`
+      `/repos/${repository}/actions/runs?head_sha=${targetSha}&event=merge_group&per_page=100&page=${page}`
     );
-    if (!Array.isArray(result?.data?.check_runs)) {
-      fail('GITHUB_API_INCOMPLETE', 'check-run response is incomplete');
+    if (!Array.isArray(result?.data?.workflow_runs)) {
+      fail('GITHUB_API_INCOMPLETE', 'merge-queue workflow response is incomplete');
     }
-    records.push(...result.data.check_runs);
+    records.push(...result.data.workflow_runs);
     if (result.hasNext === false) break;
     if (result.hasNext !== true || page === 100) {
-      fail('GITHUB_API_INCOMPLETE', 'check-run pagination is incomplete');
+      fail('GITHUB_API_INCOMPLETE', 'merge-queue workflow pagination is incomplete');
     }
   }
   return (
     records.length > 0 &&
     records.every(
-      check =>
-        check?.status === 'completed' &&
-        ['success', 'neutral', 'skipped'].includes(check.conclusion)
+      run =>
+        run?.head_sha === targetSha &&
+        run?.event === 'merge_group' &&
+        run?.status === 'completed' &&
+        run?.conclusion === 'success'
     )
   );
 }
@@ -394,7 +396,7 @@ export async function createRequestPlanFromGithub({
   if (!frontier) fail('FRONTIER_MISSING', 'no stable published Release is available');
   const [remoteMain, preflightSuccessful] = await Promise.all([
     requestRecord(transport, `/repos/${dispatch.repository}/commits/main`, 'remote main'),
-    observeChecks(transport, dispatch.repository, dispatch.targetSha),
+    observeMergeQueuePreflight(transport, dispatch.repository, dispatch.targetSha),
   ]);
   const git = gitObserver({
     repositoryDir: context.repositoryDir,
