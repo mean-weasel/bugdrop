@@ -126,6 +126,19 @@ for literal in \
   grep -Fq -- "$literal" <<< "$guard_block" || fail "guard-and-plan lacks: $literal"
 done
 
+for literal in \
+  "request_key=\$(jq -er '.planIdentity[7:]' request-plan.json)" \
+  "request_key=\$(jq -er '.requestIdentity[7:]' request-plan.json)" \
+  "version=\$(jq -er '.tag[1:]' request-plan.json)" \
+  "version=\$(jq -er '.request.nextTag[1:]' request-plan.json)" \
+  "plan_key=\$(jq -er '.finalPlan.planIdentity[7:]' state2-bundle.json)"; do
+  grep -Fq -- "$literal" "$workflow" || fail "release outputs lack fail-closed assignment: $literal"
+done
+require_absent 'ltrimstr(\"'
+require_absent 'echo "request_key=$(jq'
+require_absent 'echo "version=$(jq'
+require_absent 'echo "plan_key=$(jq'
+
 checkout_count=$(grep -Fc 'uses: actions/checkout@v5' "$workflow")
 persist_count=$(grep -Fc 'persist-credentials: false' "$workflow")
 [[ "$checkout_count" -ge 6 ]] || fail "expected immutable controller/candidate checkouts; found $checkout_count"
