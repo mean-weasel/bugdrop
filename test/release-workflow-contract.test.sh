@@ -165,6 +165,10 @@ for literal in \
   'base64: ($widget | @base64)' \
   'base64: ($versions | @base64)' \
   'node controller/scripts/release/workflow.mjs bundle' \
+  'install -d "$RUNNER_TEMP/release-plan/static-package"' \
+  'cp state2-bundle.json "$RUNNER_TEMP/release-plan/state2-bundle.json"' \
+  'cp -R "$RUNNER_TEMP/static-package/." "$RUNNER_TEMP/release-plan/static-package/"' \
+  'path: ${{ runner.temp }}/release-plan/' \
   'static-package/versions.json' \
   'retention-days: 14'; do
   grep -Fq -- "$literal" <<< "$verify_block" || fail "verify-candidate lacks: $literal"
@@ -175,6 +179,9 @@ fi
 if grep -Fq -- '--arg base64 "$(base64' <<< "$verify_block" ||
   grep -Fq -- '--arg versionsBase64 "$(base64' <<< "$verify_block"; then
   fail 'release artifact bytes must not be passed through the process argument list'
+fi
+if grep -Fq '          path: |' <<< "$verify_block"; then
+  fail 'State 2 evidence must upload from one root so consumers receive canonical flat paths'
 fi
 
 bundle_shape=$(jq -n \
