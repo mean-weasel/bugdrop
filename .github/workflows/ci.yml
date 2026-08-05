@@ -162,7 +162,7 @@ jobs:
         run: make build-all
 
       - name: Preserve unit coverage report
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: unit-coverage-${{ github.run_id }}-${{ github.run_attempt }}
           path: coverage/lcov.info
@@ -184,7 +184,7 @@ jobs:
           persist-credentials: false
 
       - name: Download unit coverage report
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: unit-coverage-${{ github.run_id }}-${{ github.run_attempt }}
           path: coverage
