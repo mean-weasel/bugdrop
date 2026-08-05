@@ -62,6 +62,19 @@
       "prettier --write"
     ]
   },
+  "overrides": {
+    "jsdom": {
+      "undici": "7.29.0"
+    },
+    "miniflare": {
+      "sharp": "0.35.2",
+      "undici": "7.29.0",
+      "ws": "8.21.0"
+    },
+    "wrangler": {
+      "esbuild": "0.28.1"
+    }
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241127.0",
     "@commitlint/cli": "^20.5.0",
@@ -69,8 +82,8 @@
     "@eslint/js": "^9.39.2",
     "@playwright/test": "^1.49.0",
     "@types/node": "^22.10.2",
-    "@vitest/coverage-v8": "^4.1.6",
-    "esbuild": "^0.28.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "esbuild": "^0.28.1",
     "eslint": "^9.39.2",
     "globals": "^16.5.0",
     "husky": "^9.1.7",
@@ -80,11 +93,11 @@
     "prettier": "^3.8.1",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.50.0",
-    "vitest": "^4.1.6",
-    "wrangler": "^4.92.0"
+    "vitest": "^4.1.10",
+    "wrangler": "^4.98.0"
   },
   "dependencies": {
-    "hono": "^4.12.19",
+    "hono": "^4.13.0",
     "html-to-image": "^1.11.13"
   }
 }
