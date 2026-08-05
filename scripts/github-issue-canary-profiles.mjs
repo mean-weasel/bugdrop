@@ -29,6 +29,14 @@ const CANARY_PROFILE_NAMES = Object.freeze(Object.keys(PROFILES));
 export const PREVIEW_CANARY_PROFILE = PROFILES.preview;
 export const PRODUCTION_CANARY_PROFILE = PROFILES.production;
 
+export function isSameGitHubRepository(left, right) {
+  return (
+    typeof left === 'string' &&
+    typeof right === 'string' &&
+    left.toLowerCase() === right.toLowerCase()
+  );
+}
+
 export function isGitHubIssueUrlForRepository(value, repo, number) {
   if (typeof value !== 'string' || !Number.isInteger(number) || number <= 0) return false;
   const repositoryParts = repo.split('/');

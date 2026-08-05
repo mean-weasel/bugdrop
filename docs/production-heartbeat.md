@@ -49,7 +49,11 @@ Before configuration:
 3. Install the self-hosted BugDrop GitHub App on that test repository. Record its Issue author login,
    normally `<app-slug>[bot]`.
 4. Deploy a fixed HTTPS test venue whose page loads
-   `https://<your-worker-origin>/widget.js` and targets the synthetic test repository.
+   `https://<your-worker-origin>/widget.js` and targets the synthetic test repository. If the Worker
+   uses `AUTH_TOKEN_SECRET` or `AUTH_TOKEN_ADDITIONAL_SECRETS`, the venue must also configure
+   `data-auth-token-provider` to return a valid short-lived token during the automated run. Keep the
+   signing secret server-side and protect the provider endpoint with the venue's access control; see
+   [Requiring Host-App Auth Tokens](../SELF_HOSTING.md#requiring-host-app-auth-tokens-recommended-for-private-apps).
 5. Confirm `https://<your-worker-origin>/api/health` reports `environment=production` and a full
    lowercase 40-character `buildSha`. The deployment process must set `ENVIRONMENT=production` and
    `BUILD_SHA` to the deployed source commit.
@@ -65,7 +69,7 @@ Set these repository variables under **Settings > Secrets and variables > Action
 | `BUGDROP_HEARTBEAT_VENUE_ORIGIN` | Yes | HTTPS origin of the fixed test venue, without a path |
 | `BUGDROP_HEARTBEAT_TEST_REPO` | Yes | Dedicated synthetic repository as `owner/repository` |
 | `BUGDROP_HEARTBEAT_EXPECTED_AUTHOR` | Yes | GitHub App Issue author, normally `<app-slug>[bot]` |
-| `BUGDROP_HEARTBEAT_EXPECTED_LABELS` | No | Exact comma-separated labels; defaults to `bug,bugdrop` |
+| `BUGDROP_HEARTBEAT_EXPECTED_LABELS` | No | Exact comma-separated labels including `bugdrop`; defaults to `bug,bugdrop` |
 | `BUGDROP_PRODUCTION_HEARTBEAT_MODE` | Later | Leave unset until staged activation |
 
 Set `BUGDROP_CANARY_GITHUB_TOKEN` as a repository Actions secret. Use a fine-grained credential with

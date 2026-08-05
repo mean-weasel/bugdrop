@@ -5,6 +5,7 @@ import { expect, type Page, type Request, type Route } from '@playwright/test';
 import {
   getCanaryProfile,
   isGitHubIssueUrlForRepository,
+  isSameGitHubRepository,
   resolveBrowserCanaryProfile,
 } from '../scripts/github-issue-canary-profiles.mjs';
 import {
@@ -80,11 +81,10 @@ export async function runIssueCanary(page: Page): Promise<void> {
     const payload = outgoing.postDataJSON() as Record<string, unknown>;
     expect(payload.submissionId).toEqual(expect.any(String));
     canarySubmissionId = String(payload.submissionId);
-    expect(payload.repo).toBe(environment.profile.repo);
+    expect(isSameGitHubRepository(payload.repo, environment.profile.repo)).toBe(true);
     expect(payload).toMatchObject({
       kind: 'bugdrop.variant-submission',
       schemaVersion: 1,
-      repo: environment.profile.repo,
       variantId: environment.profile.variantId,
       issue: {
         title: `${environment.profile.titlePrefix} ${environment.marker}`,

@@ -115,10 +115,22 @@ function labelList(value) {
     .split(',')
     .map(label => label.trim())
     .filter(Boolean);
-  if (labels.length === 0 || labels.some(label => label.length > 50 || /[\r\n]/.test(label))) {
+  if (
+    labels.length === 0 ||
+    labels.some(label => label.length > 50 || /[\u0000-\u001f\u007f]/.test(label))
+  ) {
     throw new Error('BUGDROP_HEARTBEAT_EXPECTED_LABELS must be a comma-separated label list');
   }
-  return [...new Set(labels)];
+  const uniqueLabels = [...new Set(labels)];
+  if (new Set(uniqueLabels.map(label => label.toLowerCase())).size !== uniqueLabels.length) {
+    throw new Error(
+      'BUGDROP_HEARTBEAT_EXPECTED_LABELS must not repeat labels with different casing'
+    );
+  }
+  if (!uniqueLabels.includes('bugdrop')) {
+    throw new Error('BUGDROP_HEARTBEAT_EXPECTED_LABELS must include bugdrop');
+  }
+  return uniqueLabels;
 }
 
 function text(value) {

@@ -64,6 +64,18 @@ describe('production heartbeat configuration', () => {
         BUGDROP_HEARTBEAT_VENUE_ORIGIN: SELF_HOSTED.BUGDROP_HEARTBEAT_WIDGET_ORIGIN,
       },
     ],
+    [
+      'expected labels without the invariant bugdrop label',
+      { ...SELF_HOSTED, BUGDROP_HEARTBEAT_EXPECTED_LABELS: 'synthetic' },
+    ],
+    [
+      'expected labels containing control characters',
+      { ...SELF_HOSTED, BUGDROP_HEARTBEAT_EXPECTED_LABELS: 'bugdrop,synthetic\tlabel' },
+    ],
+    [
+      'case-aliased duplicate expected labels',
+      { ...SELF_HOSTED, BUGDROP_HEARTBEAT_EXPECTED_LABELS: 'bug,BugDrop,bugdrop' },
+    ],
     ['repository traversal', { ...SELF_HOSTED, BUGDROP_HEARTBEAT_TEST_REPO: 'acme/..' }],
   ])('rejects %s', (_description, variables) => {
     expect(() =>
