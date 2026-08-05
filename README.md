@@ -1,7 +1,7 @@
 # BugDrop 🐛
 
 [![CI](https://github.com/mean-weasel/bugdrop/actions/workflows/ci.yml/badge.svg)](https://github.com/mean-weasel/bugdrop/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-1.11.0-14b8a6)](./CHANGELOG.md)
+[![Latest Release](https://img.shields.io/github/v/release/mean-weasel/bugdrop?sort=semver)](https://github.com/mean-weasel/bugdrop/releases/latest)
 [![Security Policy](https://img.shields.io/badge/Security-Policy-blue)](./SECURITY.md)
 [![Live Demo](https://img.shields.io/badge/Demo-Try_It_Live-ff9e64)](https://bugdrop-widget-test.vercel.app)
 [![GitHub Marketplace](https://img.shields.io/badge/GitHub%20Marketplace-Install-2ea44f?logo=github)](https://github.com/marketplace/bugdrop-in-app-feedback-to-github-issues)
@@ -144,6 +144,29 @@ User clicks bug button → Widget captures screenshot → Worker authenticates v
 2. **Screenshot** captured client-side using html-to-image
 3. **Worker** (Cloudflare) exchanges GitHub App credentials for an installation token
 4. **GitHub API** creates the issue with the screenshot stored in `.bugdrop/` on a dedicated `bugdrop-screenshots` branch (auto-created on first use)
+
+## Reliable by design
+
+Reliability is something BugDrop users should be able to inspect, not simply take on trust. We test
+the complete path from the browser to Cloudflare, the GitHub App, and the resulting GitHub Issue.
+
+- **Every merge is tested in preview.** The merge queue deploys the candidate Worker, loads the real
+  widget in a browser, submits feedback, creates a real GitHub Issue, independently verifies its
+  contents and deployment identity, and cleans it up before the change can merge.
+- **Production is tested every four hours.** A scheduled heartbeat exercises the complete production
+  widget and GitHub Issue lifecycle. Failures create or update one deduplicated incident Issue in
+  this repository, and recovery is verified automatically.
+- **Checks fail closed.** Deployment identity, browser behavior, Issue verification, cleanup,
+  diagnostics, and incident reconciliation must all succeed.
+- **Synthetic activity is isolated.** Preview and production use separate markers, cleanup
+  boundaries, and concurrency controls so their tests cannot interfere with each other.
+
+This coverage has grown from pre-merge preview validation into scheduled production verification.
+We will keep turning new failure modes and operational lessons into repeatable checks, with public
+workflow history as evidence. Inspect the [merge-queue checks](https://github.com/mean-weasel/bugdrop/actions/workflows/ci.yml)
+and [production heartbeat](https://github.com/mean-weasel/bugdrop/actions/workflows/production-heartbeat.yml),
+or read the detailed [preview canary](docs/merge-queue-issue-canary.md) and
+[production heartbeat](docs/production-heartbeat.md) designs.
 
 ## Live Demo
 
