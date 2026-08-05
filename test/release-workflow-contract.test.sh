@@ -129,6 +129,7 @@ for literal in \
   'CONTROLLER_SHA: ${{ github.workflow_sha }}' \
   'partial retry requires all three resume inputs or none of them.' \
   'plan_controller_sha=$plan_controller_sha' \
+  '--arg resumePlanIdentity "$RESUME_PLAN_IDENTITY"' \
   'node controller/scripts/release/workflow.mjs guard' \
   'node controller/scripts/release/github-adapter.mjs plan' \
   '--arg repositoryDir "$GITHUB_WORKSPACE/controller"' \
@@ -136,6 +137,8 @@ for literal in \
   "echo 'completed=true'"; do
   grep -Fq -- "$literal" <<< "$guard_block" || fail "guard-and-plan lacks: $literal"
 done
+[[ $(grep -Fc 'RESUME_PLAN_IDENTITY:' "$workflow") -eq 3 ]] ||
+  fail 'resume plan identity must be exported to guard, initial planning, and approval revalidation'
 
 for literal in \
   "request_key=\$(jq -er '.planIdentity[7:]' request-plan.json)" \
@@ -195,6 +198,7 @@ for literal in \
 done
 [[ $(grep -Fc 'test "$(jq -er '\''.nextAction.kind'\'' partial-inspection.json)" != '\''create-tag'\''' "$workflow") -eq 2 ]] ||
   fail 'partial retry must reject pristine publication state before dry-run success and mutation'
+require_literal 'Existing tag and Release state was inspected read-only.'
 if grep -Fq -- '{$requestPlan:' <<< "$verify_block"; then
   fail 'slurped request plan must be a literal requestPlan field, not a dynamic object key'
 fi

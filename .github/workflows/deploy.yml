@@ -164,6 +164,7 @@ jobs:
           OPERATOR_NOTES: ${{ inputs.operator_notes }}
           RATIONALE: ${{ inputs.rationale }}
           RELEASE_REASON: ${{ inputs.release_reason }}
+          RESUME_PLAN_IDENTITY: ${{ steps.guard.outputs.resume_plan_identity }}
           RESUMING: ${{ steps.guard.outputs.resuming }}
           TARGET_SHA: ${{ inputs.target_sha }}
         run: |
@@ -195,12 +196,13 @@ jobs:
             --argjson dryRun "$DRY_RUN" \
             --argjson candidateReachableFromMain "$candidate_reachable" \
             --arg identityMainSha "$IDENTITY_MAIN_SHA" \
+            --arg resumePlanIdentity "$RESUME_PLAN_IDENTITY" \
             --argjson identityMainReachableFromCurrent "$identity_main_reachable_from_current" \
             --argjson retentionBootstrap "$RETENTION_BOOTSTRAP" \
             --argjson controllerReachableFromCurrent "$controller_reachable_from_current" \
             --arg retentionOutputDir "$GITHUB_WORKSPACE/retention-input" \
             --argjson resuming "$RESUMING" \
-            '{$repositoryDir, $eventName, $ref, $workflowSha, $candidateReachableFromMain, $retentionBootstrap, $retentionOutputDir, dispatch: {$repository, $workflowRef, $targetSha, $controllerSha, $bump, $releaseReason, $rationale, $operatorNotes, $dryRun}} + (if $resuming then {$identityMainSha, $identityMainReachableFromCurrent, $controllerReachableFromCurrent} else {} end)' \
+            '{$repositoryDir, $eventName, $ref, $workflowSha, $candidateReachableFromMain, $retentionBootstrap, $retentionOutputDir, dispatch: {$repository, $workflowRef, $targetSha, $controllerSha, $bump, $releaseReason, $rationale, $operatorNotes, $dryRun}} + (if $resuming then {$identityMainSha, $resumePlanIdentity, $identityMainReachableFromCurrent, $controllerReachableFromCurrent} else {} end)' \
             > request-context.json
           node controller/scripts/release/workflow.mjs guard request-context.json > guard.json
           node controller/scripts/release/github-adapter.mjs plan request-context.json > request-plan.json
@@ -405,6 +407,7 @@ jobs:
       - name: Report verified State 2
         env:
           PLAN_IDENTITY: ${{ needs.verify-candidate.outputs.plan_identity }}
+          RESUMING: ${{ needs.guard-and-plan.outputs.resuming }}
           TARGET_SHA: ${{ inputs.target_sha }}
           TAG: ${{ needs.verify-candidate.outputs.tag }}
         run: |
@@ -413,7 +416,11 @@ jobs:
             echo "Plan: \`$PLAN_IDENTITY\`  "
             echo "Candidate: \`$TARGET_SHA\`  "
             echo "Release: \`$TAG\`"
-            echo 'No production environment, secret, deployment, tag, Release, or notification was accessed.'
+            if [ "$RESUMING" = true ]; then
+              echo 'No production environment, production secret, deployment, tag or Release mutation, or notification was accessed. Existing tag and Release state was inspected read-only.'
+            else
+              echo 'No production environment, secret, deployment, tag, Release, or notification was accessed.'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   completed-summary:
@@ -516,6 +523,7 @@ jobs:
           BUMP: ${{ inputs.bump }}
           CONTROLLER_SHA: ${{ needs.guard-and-plan.outputs.plan_controller_sha }}
           IDENTITY_MAIN_SHA: ${{ needs.guard-and-plan.outputs.identity_main_sha }}
+          RESUME_PLAN_IDENTITY: ${{ needs.guard-and-plan.outputs.resume_plan_identity }}
           RETENTION_BOOTSTRAP: ${{ inputs.retention_bootstrap }}
           OPERATOR_NOTES: ${{ inputs.operator_notes }}
           RATIONALE: ${{ inputs.rationale }}
@@ -542,11 +550,12 @@ jobs:
             --arg rationale "$RATIONALE" \
             --arg operatorNotes "$OPERATOR_NOTES" \
             --arg identityMainSha "$IDENTITY_MAIN_SHA" \
+            --arg resumePlanIdentity "$RESUME_PLAN_IDENTITY" \
             --argjson identityMainReachableFromCurrent "$identity_main_reachable_from_current" \
             --argjson retentionBootstrap "$RETENTION_BOOTSTRAP" \
             --argjson controllerReachableFromCurrent "$controller_reachable_from_current" \
             --argjson resuming "$RESUMING" \
-            '{$repositoryDir, $retentionBootstrap, dispatch: {$repository, $workflowRef, $targetSha, $controllerSha, $bump, $releaseReason, $rationale, $operatorNotes, dryRun: false}} + (if $resuming then {$identityMainSha, $identityMainReachableFromCurrent, $controllerReachableFromCurrent} else {} end)' \
+            '{$repositoryDir, $retentionBootstrap, dispatch: {$repository, $workflowRef, $targetSha, $controllerSha, $bump, $releaseReason, $rationale, $operatorNotes, dryRun: false}} + (if $resuming then {$identityMainSha, $resumePlanIdentity, $identityMainReachableFromCurrent, $controllerReachableFromCurrent} else {} end)' \
             > revalidation-context.json
           node controller/scripts/release/github-adapter.mjs plan revalidation-context.json > revalidated-plan.json
           expected_plan=$(jq -er '.finalPlan.planIdentity' approved/state2-bundle.json)

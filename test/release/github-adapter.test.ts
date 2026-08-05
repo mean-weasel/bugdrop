@@ -445,6 +445,7 @@ describe('GitHub release-state observation', () => {
         controllerReachableFromCurrent: true,
         identityMainReachableFromCurrent: true,
         identityMainSha: storedMain,
+        resumePlanIdentity: `sha256:${'e'.repeat(64)}`,
         repositoryDir: '/controller',
         dispatch: {
           repository: REPOSITORY,
@@ -640,6 +641,58 @@ describe('GitHub release-state observation', () => {
       tag: bundle.finalPlan.tag,
       targetSha: bundle.finalPlan.targetSha,
     });
+    expect(gitObserver).not.toHaveBeenCalled();
+
+    const recoveryContext = {
+      ...workflowContext(false),
+      controllerReachableFromCurrent: true,
+      identityMainReachableFromCurrent: true,
+      identityMainSha: bundle.requestPlan.source.remoteMainSha,
+      resumePlanIdentity: bundle.finalPlan.planIdentity,
+    };
+    await expect(
+      createRequestPlanFromGithub({
+        transport,
+        gitObserver,
+        context: recoveryContext,
+      })
+    ).resolves.toMatchObject({
+      status: 'completed',
+      planIdentity: bundle.finalPlan.planIdentity,
+    });
+    await expect(
+      createRequestPlanFromGithub({
+        transport,
+        gitObserver,
+        context: {
+          ...recoveryContext,
+          resumePlanIdentity: `sha256:${'f'.repeat(64)}`,
+        },
+      })
+    ).rejects.toThrow(/COMPLETED_PLAN_CONFLICT/);
+    await expect(
+      createRequestPlanFromGithub({
+        transport,
+        gitObserver,
+        context: {
+          ...recoveryContext,
+          identityMainSha: 'd'.repeat(40),
+        },
+      })
+    ).rejects.toThrow(/COMPLETED_PLAN_CONFLICT/);
+    await expect(
+      createRequestPlanFromGithub({
+        transport,
+        gitObserver,
+        context: {
+          ...recoveryContext,
+          dispatch: {
+            ...recoveryContext.dispatch,
+            controllerSha: 'e'.repeat(40),
+          },
+        },
+      })
+    ).rejects.toThrow(/COMPLETED_PLAN_CONFLICT/);
     expect(gitObserver).not.toHaveBeenCalled();
   });
 
