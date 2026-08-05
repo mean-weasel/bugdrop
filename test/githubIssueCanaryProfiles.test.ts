@@ -82,4 +82,34 @@ describe('GitHub Issue canary profiles', () => {
       resolveBrowserCanaryProfile({ ...valid, expectedWorkerSha: 'b'.repeat(40) })
     ).toThrow('expected Worker SHA');
   });
+
+  it('binds the production profile to a complete self-hosted runtime configuration', () => {
+    const environment = {
+      BUGDROP_CANARY_REPO: 'acme/bugdrop-heartbeat-test',
+      PLAYWRIGHT_BASE_URL: 'https://heartbeat.example.com',
+      EXPECTED_WIDGET_ORIGIN: 'https://bugdrop.example.com',
+      BUGDROP_CANARY_EXPECTED_AUTHOR: 'acme-bugdrop[bot]',
+      BUGDROP_CANARY_EXPECTED_LABELS_JSON: '["bug","bugdrop"]',
+    };
+    const profile = resolveBrowserCanaryProfile({
+      profile: 'production',
+      repo: environment.BUGDROP_CANARY_REPO,
+      venueOrigin: environment.PLAYWRIGHT_BASE_URL,
+      widgetOrigin: environment.EXPECTED_WIDGET_ORIGIN,
+      marker: `bugdrop-production-heartbeat:123:1:${SHA}`,
+      expectedWorkerSha: SHA,
+      environment,
+    });
+    expect(profile).toMatchObject({
+      repo: 'acme/bugdrop-heartbeat-test',
+      expectedAuthor: 'acme-bugdrop[bot]',
+      expectedLabels: ['bug', 'bugdrop'],
+    });
+  });
+
+  it('rejects a partial self-hosted runtime configuration', () => {
+    expect(() => getCanaryProfile('production', { BUGDROP_CANARY_REPO: 'acme/test' })).toThrow(
+      'runtime configuration is incomplete'
+    );
+  });
 });

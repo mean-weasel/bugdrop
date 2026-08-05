@@ -14,13 +14,14 @@ export async function transitionHeartbeatIncident({
   runUrl,
   details,
   apiBaseUrl = API_BASE,
+  repo = INCIDENT_REPO,
 }) {
   requireToken(token);
   if (outcome !== 'failure' && outcome !== 'recovery') {
     throw new Error('outcome must be failure or recovery');
   }
   const body = incidentComment({ outcome, runUrl, details });
-  let matches = await listIncidents({ fetchImpl, token, apiBaseUrl });
+  let matches = await listIncidents({ fetchImpl, token, apiBaseUrl, repo });
   if (matches.length > 1) {
     throw new Error(`Expected at most one heartbeat incident; found ${matches.length}`);
   }
@@ -32,12 +33,12 @@ export async function transitionHeartbeatIncident({
         requestJson({
           fetchImpl,
           token,
-          url: issuesUrl(apiBaseUrl),
+          url: issuesUrl(apiBaseUrl, repo),
           method: 'POST',
           body: { title: INCIDENT_TITLE, body },
         }),
       reconcile: async () => {
-        matches = await listIncidents({ fetchImpl, token, apiBaseUrl });
+        matches = await listIncidents({ fetchImpl, token, apiBaseUrl, repo });
         return matches.length === 1 ? matches[0] : undefined;
       },
       token,
@@ -52,33 +53,40 @@ export async function transitionHeartbeatIncident({
       fetchImpl,
       token,
       apiBaseUrl,
+      repo,
       number: incident.number,
       state: 'open',
     });
-    await addComment({ fetchImpl, token, apiBaseUrl, number: incident.number, body });
+    await addComment({ fetchImpl, token, apiBaseUrl, repo, number: incident.number, body });
     return { action: 'reopened', issueNumber: incident.number, state: incident.state };
   }
   if (outcome === 'failure') {
-    await addComment({ fetchImpl, token, apiBaseUrl, number: incident.number, body });
+    await addComment({ fetchImpl, token, apiBaseUrl, repo, number: incident.number, body });
     return { action: 'updated', issueNumber: incident.number, state: incident.state };
   }
   if (incident.state === 'closed') {
     return { action: 'none', issueNumber: incident.number, state: incident.state };
   }
-  await addComment({ fetchImpl, token, apiBaseUrl, number: incident.number, body });
+  await addComment({ fetchImpl, token, apiBaseUrl, repo, number: incident.number, body });
   incident = await setIssueState({
     fetchImpl,
     token,
     apiBaseUrl,
+    repo,
     number: incident.number,
     state: 'closed',
   });
   return { action: 'closed', issueNumber: incident.number, state: incident.state };
 }
 
-export async function listIncidents({ fetchImpl = fetch, token, apiBaseUrl = API_BASE }) {
+export async function listIncidents({
+  fetchImpl = fetch,
+  token,
+  apiBaseUrl = API_BASE,
+  repo = INCIDENT_REPO,
+}) {
   requireToken(token);
-  let next = new URL(issuesUrl(apiBaseUrl));
+  let next = new URL(issuesUrl(apiBaseUrl, repo));
   next.searchParams.set('state', 'all');
   next.searchParams.set('per_page', '100');
   const matches = [];
@@ -91,18 +99,18 @@ export async function listIncidents({ fetchImpl = fetch, token, apiBaseUrl = API
   return matches;
 }
 
-async function addComment({ fetchImpl, token, apiBaseUrl, number, body }) {
+async function addComment({ fetchImpl, token, apiBaseUrl, repo, number, body }) {
   await mutateAndReconcile({
     mutate: () =>
       requestJson({
         fetchImpl,
         token,
-        url: `${issueUrl(apiBaseUrl, number)}/comments`,
+        url: `${issueUrl(apiBaseUrl, repo, number)}/comments`,
         method: 'POST',
         body: { body },
       }),
     reconcile: async () => {
-      let next = new URL(`${issueUrl(apiBaseUrl, number)}/comments`);
+      let next = new URL(`${issueUrl(apiBaseUrl, repo, number)}/comments`);
       next.searchParams.set('per_page', '100');
       while (next) {
         const { response, data } = await requestJson({
@@ -120,13 +128,13 @@ async function addComment({ fetchImpl, token, apiBaseUrl, number, body }) {
   });
 }
 
-async function setIssueState({ fetchImpl, token, apiBaseUrl, number, state }) {
+async function setIssueState({ fetchImpl, token, apiBaseUrl, repo, number, state }) {
   return mutateAndReconcile({
     mutate: () =>
       requestJson({
         fetchImpl,
         token,
-        url: issueUrl(apiBaseUrl, number),
+        url: issueUrl(apiBaseUrl, repo, number),
         method: 'PATCH',
         body: { state, ...(state === 'closed' ? { state_reason: 'completed' } : {}) },
       }),
@@ -134,7 +142,7 @@ async function setIssueState({ fetchImpl, token, apiBaseUrl, number, state }) {
       const { data } = await requestJson({
         fetchImpl,
         token,
-        url: issueUrl(apiBaseUrl, number),
+        url: issueUrl(apiBaseUrl, repo, number),
       });
       return data?.state === state ? data : undefined;
     },
@@ -200,13 +208,22 @@ function incidentComment({ outcome, runUrl, details }) {
   ].join('\n');
 }
 
-function issuesUrl(apiBaseUrl) {
-  return new URL(`/repos/${INCIDENT_REPO}/issues`, apiBaseUrl).toString();
+function issuesUrl(apiBaseUrl, repo) {
+  return new URL(`/repos/${repositoryPath(repo)}/issues`, apiBaseUrl).toString();
 }
 
-function issueUrl(apiBaseUrl, number) {
+function issueUrl(apiBaseUrl, repo, number) {
   if (!Number.isInteger(number) || number < 1) throw new Error('invalid incident Issue number');
-  return new URL(`/repos/${INCIDENT_REPO}/issues/${number}`, apiBaseUrl).toString();
+  return new URL(`/repos/${repositoryPath(repo)}/issues/${number}`, apiBaseUrl).toString();
+}
+
+function repositoryPath(repo) {
+  const value = requireText(repo, 'incident repository');
+  const match = value.match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/);
+  if (!match || match.slice(1).some(part => part === '.' || part === '..')) {
+    throw new Error('incident repository must be an owner/repository slug');
+  }
+  return `${encodeURIComponent(match[1])}/${encodeURIComponent(match[2])}`;
 }
 
 function nextLink(value) {
@@ -248,6 +265,7 @@ async function main() {
     outcome,
     runUrl: options['--run-url'],
     details: options['--details'],
+    repo: process.env.BUGDROP_HEARTBEAT_INCIDENT_REPO || process.env.GITHUB_REPOSITORY,
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }

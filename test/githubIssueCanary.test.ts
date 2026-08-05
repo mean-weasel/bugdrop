@@ -157,6 +157,48 @@ describe('GitHub Issue canary discovery and verification', () => {
     expect(verified.number).toBe(42);
   });
 
+  it('verifies self-hosted production author and labels from the runtime profile', async () => {
+    const repo = 'acme/bugdrop-heartbeat-test';
+    const marker = `bugdrop-production-heartbeat:123:1:${SHA}`;
+    const submissionId = 'submission-95a970ec-e4fa-41da-9a29-f4b62fb941ca';
+    const candidate = issue({
+      html_url: `https://github.com/${repo}/issues/42`,
+      title: `[BugDrop production heartbeat] ${marker}`,
+      body: issue().body.replaceAll(MARKER, marker).replace(`ci:${marker}`, submissionId),
+      labels: [{ name: 'synthetic' }],
+      user: { login: 'acme-bugdrop[bot]' },
+    });
+    const profileEnvironment = {
+      BUGDROP_CANARY_REPO: repo,
+      PLAYWRIGHT_BASE_URL: 'https://heartbeat.example.com',
+      EXPECTED_WIDGET_ORIGIN: 'https://bugdrop.example.com',
+      BUGDROP_CANARY_EXPECTED_AUTHOR: 'acme-bugdrop[bot]',
+      BUGDROP_CANARY_EXPECTED_LABELS_JSON: '["synthetic"]',
+    };
+
+    await expect(
+      verifyCanaryIssue({
+        fetchImpl: issueFetch([candidate], candidate),
+        repo,
+        token: TOKEN,
+        marker,
+        expectedSha: SHA,
+        result: {
+          marker,
+          kind: 'structured',
+          presentation: 'modal',
+          submissionId,
+          issueNumber: 42,
+          issueUrl: `https://github.com/${repo}/issues/42`,
+          workerSha: SHA,
+        },
+        profile: 'production',
+        profileEnvironment,
+        sleepImpl: noWait,
+      })
+    ).resolves.toMatchObject({ number: 42 });
+  });
+
   it.each([
     ['missing rendered identity', renderedResult({ submissionId: undefined })],
     ['non-rendered identity', renderedResult({ submissionId: `ci:${MARKER}` })],

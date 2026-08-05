@@ -150,6 +150,20 @@ until separately authorized production setup is complete. Self-hosters should us
 environment. Do not copy its production settings or assume that creating a tag or Release activates
 it. Maintainers of the canonical service should follow [the release runbook](docs/releasing.md).
 
+### Optional Production Heartbeat
+
+Self-hosted deployments do not automatically run BugDrop's production heartbeat. The workflow is
+inert until explicitly enabled, and canonical service defaults are accepted only in the upstream
+`mean-weasel/bugdrop` repository. A private fork or copy must provide its own Worker origin, fixed
+test venue, separate synthetic-Issue repository, GitHub App author, and narrowly scoped verification
+credential.
+
+After the deployment is stable, follow the
+[self-hosted and private repository heartbeat runbook](docs/production-heartbeat.md#self-hosted-and-private-repositories).
+It covers production build identity, private-repository Actions settings, required variables and
+secret, a controlled incident exercise, scheduled soak, and four-hour activation. Do not enable the
+schedule before the manual success, controlled-failure, and recovery runs pass.
+
 ## Configuration
 
 ### Environment Variables

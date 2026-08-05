@@ -20,12 +20,13 @@ const DEFAULT_CONSISTENCY_DELAY_MS = 2_000;
 const MAX_CONSISTENCY_ATTEMPTS = 20;
 const MAX_CONSISTENCY_DELAY_MS = 10_000;
 
-export function canaryTitle(marker, profileName = 'preview') {
+export function canaryTitle(marker, profileName = 'preview', environment = process.env) {
   requireNonempty(marker, 'marker');
   const { profile } = validateCanarySelector({
     profile: profileName,
-    repo: getCanaryProfile(profileName).repo,
+    repo: getCanaryProfile(profileName, environment).repo,
     marker,
+    environment,
   });
   return `${profile.titlePrefix} ${marker}`;
 }
@@ -38,8 +39,15 @@ export async function listMatchingIssues({
   marker,
   prefix,
   profile = 'preview',
+  profileEnvironment = process.env,
 }) {
-  const selector = validateCanarySelector({ profile, repo, marker, prefix });
+  const selector = validateCanarySelector({
+    profile,
+    repo,
+    marker,
+    prefix,
+    environment: profileEnvironment,
+  });
   const issues = await listRepositoryIssues({ fetchImpl, apiBaseUrl, repo, token });
   return issues.filter(candidate => {
     if (candidate.pull_request) return false;
@@ -60,19 +68,23 @@ export async function verifyCanaryIssue({
   marker,
   expectedSha,
   result,
-  expectedLabels = DEFAULT_LABELS,
-  expectedAuthor = DEFAULT_AUTHOR,
+  expectedLabels,
+  expectedAuthor,
   consistencyAttempts = DEFAULT_CONSISTENCY_ATTEMPTS,
   consistencyDelayMs = DEFAULT_CONSISTENCY_DELAY_MS,
   sleepImpl = sleep,
   profile = 'preview',
+  profileEnvironment = process.env,
 }) {
   const target = validateCanarySelector({
     profile,
     repo,
     marker,
     expectedWorkerSha: expectedSha,
+    environment: profileEnvironment,
   });
+  const requiredAuthor = expectedAuthor ?? target.profile.expectedAuthor ?? DEFAULT_AUTHOR;
+  const requiredLabels = expectedLabels ?? target.profile.expectedLabels ?? DEFAULT_LABELS;
   requireNonempty(expectedSha, 'expectedSha');
   const consistency = validateConsistencyOptions({
     consistencyAttempts,
@@ -105,6 +117,7 @@ export async function verifyCanaryIssue({
     token,
     marker,
     profile,
+    profileEnvironment,
     consistency,
   });
   const numbers = matches.map(candidate => candidate.number);
@@ -142,13 +155,13 @@ export async function verifyCanaryIssue({
   }
   if (candidate.body?.includes('## Screenshot')) failures.push('Issue contains a screenshot');
   if (candidate.state !== 'open') failures.push(`Issue state is ${candidate.state}, not open`);
-  if (candidate.user?.login !== expectedAuthor) {
-    failures.push(`Issue author is ${candidate.user?.login ?? 'missing'}, not ${expectedAuthor}`);
+  if (candidate.user?.login !== requiredAuthor) {
+    failures.push(`Issue author is ${candidate.user?.login ?? 'missing'}, not ${requiredAuthor}`);
   }
   const actualLabels = normalizeLabels(candidate.labels);
-  if (!sameStringSet(actualLabels, expectedLabels)) {
+  if (!sameStringSet(actualLabels, requiredLabels)) {
     failures.push(
-      `Issue labels are [${actualLabels.join(', ')}], not [${[...expectedLabels].sort().join(', ')}]`
+      `Issue labels are [${actualLabels.join(', ')}], not [${[...requiredLabels].sort().join(', ')}]`
     );
   }
 
@@ -172,12 +185,20 @@ export async function closeMatchingIssues({
   consistencyDelayMs = DEFAULT_CONSISTENCY_DELAY_MS,
   sleepImpl = sleep,
   profile = 'preview',
+  profileEnvironment = process.env,
 }) {
-  const selector = validateCanarySelector({ profile, repo, marker, prefix });
+  const selector = validateCanarySelector({
+    profile,
+    repo,
+    marker,
+    prefix,
+    environment: profileEnvironment,
+  });
   const boundSelector = {
     marker: selector.marker,
     prefix: selector.prefix,
     profile: selector.profile.id,
+    profileEnvironment,
   };
   const consistency = validateConsistencyOptions({
     consistencyAttempts,
@@ -264,6 +285,7 @@ export async function runCli(
       repo: options.repo,
       marker: command === 'verify' || command === 'cleanup' ? options.marker : undefined,
       prefix: command === 'preflight' || command === 'sweep' ? options.prefix : undefined,
+      environment: env,
     });
     requireNonempty(token, 'BUGDROP_CANARY_GITHUB_TOKEN');
     let output;
@@ -283,6 +305,7 @@ export async function runCli(
         consistencyAttempts,
         consistencyDelayMs,
         sleepImpl,
+        profileEnvironment: env,
       });
       output = { verified: true, issueNumber: candidate.number, issueUrl: candidate.html_url };
     } else if (command === 'cleanup') {
@@ -296,6 +319,7 @@ export async function runCli(
         consistencyAttempts,
         consistencyDelayMs,
         sleepImpl,
+        profileEnvironment: env,
       });
     } else if (command === 'preflight' || command === 'sweep') {
       requireNonempty(options.prefix, '--prefix');
@@ -308,6 +332,7 @@ export async function runCli(
         consistencyAttempts,
         consistencyDelayMs,
         sleepImpl,
+        profileEnvironment: env,
       });
     } else {
       throw new Error(`Unknown command: ${command || '(missing)'}`);

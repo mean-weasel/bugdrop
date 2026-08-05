@@ -1,8 +1,11 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { expect, type Page, type Request } from '@playwright/test';
+import { expect, type Page, type Request, type Route } from '@playwright/test';
 
-import { resolveBrowserCanaryProfile } from '../scripts/github-issue-canary-profiles.mjs';
+import {
+  getCanaryProfile,
+  resolveBrowserCanaryProfile,
+} from '../scripts/github-issue-canary-profiles.mjs';
 import {
   assertExactPreviewWidgetResponse,
   waitForPreviewWidgetResponse,
@@ -31,7 +34,7 @@ type FeedbackResult = {
 
 export async function runIssueCanary(page: Page): Promise<void> {
   const environment = requireCanaryEnvironment();
-  await installVercelBypass(page);
+  await installVercelBypass(page, environment.baseUrl);
 
   const widgetResponsePromise = waitForPreviewWidgetResponse(
     page,
@@ -165,11 +168,12 @@ function requireCanaryEnvironment(): CanaryEnvironment {
   const resultFile = requireEnvironment('BUGDROP_CANARY_RESULT_FILE');
   const profile = resolveBrowserCanaryProfile({
     profile: profileName,
-    repo: 'mean-weasel/bugdrop-widget-test',
+    repo: getCanaryProfile(profileName, process.env).repo,
     venueOrigin: new URL(baseUrl).origin,
     widgetOrigin: expectedWidgetOrigin,
     marker,
     expectedWorkerSha,
+    environment: process.env,
   });
   if (new URL(baseUrl).origin !== baseUrl) {
     throw new Error('PLAYWRIGHT_BASE_URL must be an origin without a path');
@@ -247,15 +251,31 @@ function requireEnvironment(name: string): string {
   return value;
 }
 
-async function installVercelBypass(page: Page): Promise<void> {
+async function installVercelBypass(page: Page, venueOrigin: string): Promise<void> {
   const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
   if (!bypassSecret) return;
-  await page.route('**/*.vercel.app/**', async route => {
-    await route.continue({
-      headers: {
-        ...route.request().headers(),
-        'x-vercel-protection-bypass': bypassSecret,
-      },
-    });
+  await page.route('**/*', async route => {
+    await routeVenueRequest(route, venueOrigin, bypassSecret);
+  });
+}
+
+export function isVenueRequest(requestUrl: string, venueOrigin: string): boolean {
+  return new URL(requestUrl).origin === venueOrigin;
+}
+
+export async function routeVenueRequest(
+  route: Route,
+  venueOrigin: string,
+  bypassSecret: string
+): Promise<void> {
+  if (!isVenueRequest(route.request().url(), venueOrigin)) {
+    await route.fallback();
+    return;
+  }
+  await route.continue({
+    headers: {
+      ...route.request().headers(),
+      'x-vercel-protection-bypass': bypassSecret,
+    },
   });
 }
