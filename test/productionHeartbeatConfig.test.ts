@@ -57,6 +57,13 @@ describe('production heartbeat configuration', () => {
       'case-aliased operational repo reused as test repo',
       { ...SELF_HOSTED, BUGDROP_HEARTBEAT_TEST_REPO: 'ACME/BugDrop' },
     ],
+    [
+      'venue and widget sharing an origin',
+      {
+        ...SELF_HOSTED,
+        BUGDROP_HEARTBEAT_VENUE_ORIGIN: SELF_HOSTED.BUGDROP_HEARTBEAT_WIDGET_ORIGIN,
+      },
+    ],
     ['repository traversal', { ...SELF_HOSTED, BUGDROP_HEARTBEAT_TEST_REPO: 'acme/..' }],
   ])('rejects %s', (_description, variables) => {
     expect(() =>

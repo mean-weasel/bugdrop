@@ -31,9 +31,12 @@ describe('Issue canary venue routing', () => {
     expect(continueRequest).not.toHaveBeenCalled();
   });
 
-  it('adds the bypass header only to venue requests', async () => {
+  it('fulfills one venue response without carrying the bypass header across redirects', async () => {
     const fallback = vi.fn(async () => {});
     const continueRequest = vi.fn(async () => {});
+    const response = {};
+    const fetchRequest = vi.fn(async () => response);
+    const fulfill = vi.fn(async () => {});
     const route = {
       request: () => ({
         url: () => 'https://heartbeat.example.com/',
@@ -41,16 +44,21 @@ describe('Issue canary venue routing', () => {
       }),
       fallback,
       continue: continueRequest,
+      fetch: fetchRequest,
+      fulfill,
     } as unknown as Route;
 
     await routeVenueRequest(route, 'https://heartbeat.example.com', 'bypass-secret');
 
-    expect(continueRequest).toHaveBeenCalledWith({
+    expect(fetchRequest).toHaveBeenCalledWith({
       headers: {
         accept: 'text/html',
         'x-vercel-protection-bypass': 'bypass-secret',
       },
+      maxRedirects: 0,
     });
+    expect(fulfill).toHaveBeenCalledWith({ response });
+    expect(continueRequest).not.toHaveBeenCalled();
     expect(fallback).not.toHaveBeenCalled();
   });
 });

@@ -46,9 +46,16 @@ export function resolveProductionHeartbeatConfig({ repository, variables = {} })
   if (sameRepository(testRepo, currentRepository)) {
     throw new Error('BUGDROP_HEARTBEAT_TEST_REPO must be separate from GITHUB_REPOSITORY');
   }
+  const widgetOrigin = httpsOrigin(supplied.widgetOrigin, VARIABLE_NAMES.widgetOrigin);
+  const venueOrigin = httpsOrigin(supplied.venueOrigin, VARIABLE_NAMES.venueOrigin);
+  if (widgetOrigin === venueOrigin) {
+    throw new Error(
+      'BUGDROP_HEARTBEAT_WIDGET_ORIGIN and BUGDROP_HEARTBEAT_VENUE_ORIGIN must differ'
+    );
+  }
   return {
-    widgetOrigin: httpsOrigin(supplied.widgetOrigin, VARIABLE_NAMES.widgetOrigin),
-    venueOrigin: httpsOrigin(supplied.venueOrigin, VARIABLE_NAMES.venueOrigin),
+    widgetOrigin,
+    venueOrigin,
     testRepo,
     expectedAuthor: githubLogin(supplied.expectedAuthor, VARIABLE_NAMES.expectedAuthor),
     expectedLabels: labelList(supplied.expectedLabels || 'bug,bugdrop'),

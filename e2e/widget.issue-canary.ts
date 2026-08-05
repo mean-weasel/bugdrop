@@ -4,6 +4,7 @@ import { expect, type Page, type Request, type Route } from '@playwright/test';
 
 import {
   getCanaryProfile,
+  isGitHubIssueUrlForRepository,
   resolveBrowserCanaryProfile,
 } from '../scripts/github-issue-canary-profiles.mjs';
 import {
@@ -132,8 +133,10 @@ export async function runIssueCanary(page: Page): Promise<void> {
     Number.isInteger(responseResult.issueNumber) && Number(responseResult.issueNumber) > 0
   ).toBe(true);
   const issueNumber = Number(responseResult.issueNumber);
-  const issueUrl = `https://github.com/${environment.profile.repo}/issues/${issueNumber}`;
-  expect(responseResult.issueUrl).toBe(issueUrl);
+  expect(
+    isGitHubIssueUrlForRepository(responseResult.issueUrl, environment.profile.repo, issueNumber)
+  ).toBe(true);
+  const issueUrl = String(responseResult.issueUrl);
 
   await page.waitForTimeout(1_000);
   expect(rejectedRequest).toBeUndefined();
@@ -272,10 +275,12 @@ export async function routeVenueRequest(
     await route.fallback();
     return;
   }
-  await route.continue({
+  const response = await route.fetch({
     headers: {
       ...route.request().headers(),
       'x-vercel-protection-bypass': bypassSecret,
     },
+    maxRedirects: 0,
   });
+  await route.fulfill({ response });
 }

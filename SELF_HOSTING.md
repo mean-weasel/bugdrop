@@ -162,7 +162,8 @@ After the deployment is stable, follow the
 [self-hosted and private repository heartbeat runbook](docs/production-heartbeat.md#self-hosted-and-private-repositories).
 It covers production build identity, private-repository Actions settings, required variables and
 secret, a controlled incident exercise, scheduled soak, and four-hour activation. Do not enable the
-schedule before the manual success, controlled-failure, and recovery runs pass.
+schedule before the manual success and recovery runs pass and the controlled-failure exercise
+produces its expected failed conclusion and incident.
 
 ## Configuration
 

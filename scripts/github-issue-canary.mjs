@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import {
   PREVIEW_CANARY_PROFILE,
   getCanaryProfile,
+  isGitHubIssueUrlForRepository,
   validateCanarySelector,
 } from './github-issue-canary-profiles.mjs';
 
@@ -127,7 +128,7 @@ export async function verifyCanaryIssue({
     );
   }
 
-  const canonicalUrl = canonicalIssueUrl(repo, candidate.number);
+  const canonicalUrl = candidate.html_url;
   const failures = [];
   if (matches[0].number !== candidate.number) {
     failures.push(
@@ -137,7 +138,9 @@ export async function verifyCanaryIssue({
   if (!Number.isInteger(candidate.number) || candidate.number <= 0) {
     failures.push('Issue number is not a positive integer');
   }
-  if (candidate.html_url !== canonicalUrl) failures.push('Issue URL is not canonical');
+  if (!isGitHubIssueUrlForRepository(candidate.html_url, repo, candidate.number)) {
+    failures.push('Issue URL is not canonical');
+  }
   if (candidate.title !== `${target.profile.titlePrefix} ${marker}`) {
     failures.push('Issue title does not match exactly');
   }
@@ -549,7 +552,7 @@ function validateBrowserResultReference({ failures, result, marker, expectedSha,
   validateBrowserSubmissionId({ failures, result, marker });
   if (!Number.isInteger(result.issueNumber) || result.issueNumber <= 0) {
     failures.push('Browser result Issue number is not a positive integer');
-  } else if (result.issueUrl !== canonicalIssueUrl(repo, result.issueNumber)) {
+  } else if (!isGitHubIssueUrlForRepository(result.issueUrl, repo, result.issueNumber)) {
     failures.push('Browser result Issue URL is not canonical');
   }
   if (result.workerSha !== expectedSha) failures.push('Browser result Worker SHA differs');
@@ -606,11 +609,6 @@ function parseRepo(repo) {
     throw new Error('repo must use owner/name format');
   }
   return { owner: parts[0], name: parts[1] };
-}
-
-function canonicalIssueUrl(repo, number) {
-  parseRepo(repo);
-  return `https://github.com/${repo}/issues/${number}`;
 }
 
 function issueApiUrl(apiBaseUrl, repo, number) {

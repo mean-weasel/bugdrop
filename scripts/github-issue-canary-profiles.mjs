@@ -29,6 +29,31 @@ const CANARY_PROFILE_NAMES = Object.freeze(Object.keys(PROFILES));
 export const PREVIEW_CANARY_PROFILE = PROFILES.preview;
 export const PRODUCTION_CANARY_PROFILE = PROFILES.production;
 
+export function isGitHubIssueUrlForRepository(value, repo, number) {
+  if (typeof value !== 'string' || !Number.isInteger(number) || number <= 0) return false;
+  const repositoryParts = repo.split('/');
+  if (repositoryParts.length !== 2 || repositoryParts.some(part => !part)) return false;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  const pathParts = url.pathname.split('/');
+  return (
+    url.origin === 'https://github.com' &&
+    !url.username &&
+    !url.password &&
+    !url.search &&
+    !url.hash &&
+    pathParts.length === 5 &&
+    pathParts[1].toLowerCase() === repositoryParts[0].toLowerCase() &&
+    pathParts[2].toLowerCase() === repositoryParts[1].toLowerCase() &&
+    pathParts[3] === 'issues' &&
+    pathParts[4] === String(number)
+  );
+}
+
 export function getCanaryProfile(name, environment = process.env) {
   const profile = name === 'production' ? runtimeProductionProfile(environment) : PROFILES[name];
   if (!profile) {

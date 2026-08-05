@@ -4,6 +4,7 @@ import {
   PREVIEW_CANARY_PROFILE,
   PRODUCTION_CANARY_PROFILE,
   getCanaryProfile,
+  isGitHubIssueUrlForRepository,
   resolveBrowserCanaryProfile,
   validateCanarySelector,
 } from '../scripts/github-issue-canary-profiles.mjs';
@@ -111,5 +112,25 @@ describe('GitHub Issue canary profiles', () => {
     expect(() => getCanaryProfile('production', { BUGDROP_CANARY_REPO: 'acme/test' })).toThrow(
       'runtime configuration is incomplete'
     );
+  });
+
+  it('matches canonical GitHub Issue URLs without requiring repository display casing', () => {
+    expect(
+      isGitHubIssueUrlForRepository(
+        'https://github.com/acme/heartbeat-test/issues/42',
+        'Acme/Heartbeat-Test',
+        42
+      )
+    ).toBe(true);
+  });
+
+  it.each([
+    'https://example.com/acme/heartbeat-test/issues/42',
+    'https://github.com/acme/other/issues/42',
+    'https://github.com/acme/heartbeat-test/issues/43',
+    'https://github.com/acme/heartbeat-test/issues/42?tracked=true',
+    'https://github.com/acme/heartbeat-test/issues/42/',
+  ])('rejects non-canonical Issue URL %s', issueUrl => {
+    expect(isGitHubIssueUrlForRepository(issueUrl, 'acme/heartbeat-test', 42)).toBe(false);
   });
 });
