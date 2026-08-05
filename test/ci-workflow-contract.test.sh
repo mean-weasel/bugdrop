@@ -4,6 +4,8 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ci_workflow="$repo_root/.github/workflows/ci.yml"
+coverage_config="$repo_root/vitest.config.ts"
+codecov_config="$repo_root/codecov.yml"
 live_workflow="$repo_root/.github/workflows/live-tests.yml"
 canary_spec="$repo_root/e2e/widget.issue-canary.spec.ts"
 canary_engine="$repo_root/e2e/widget.issue-canary.ts"
@@ -62,6 +64,58 @@ require_literal "$ci_workflow" 'run: npm run verify:legacy-compat'
 unit_block=$(job_block "$ci_workflow" test)
 grep -Fq 'fetch-depth: 0' <<< "$unit_block" ||
   fail 'the provenance job must fetch tag history before verification'
+grep -Fq 'run: npm test -- --coverage' <<< "$unit_block" ||
+  fail 'the required unit job must generate coverage'
+grep -Fq 'path: coverage/lcov.info' <<< "$unit_block" ||
+  fail 'the required unit job must preserve the LCOV report'
+grep -Fq 'if-no-files-found: error' <<< "$unit_block" ||
+  fail 'a missing LCOV report must fail the required unit job'
+if grep -Fq 'id-token: write' <<< "$unit_block"; then
+  fail 'pull-request code execution must not receive OIDC permission'
+fi
+
+coverage_block=$(job_block "$ci_workflow" coverage)
+grep -Fq 'name: Coverage Upload' <<< "$coverage_block" || fail 'coverage upload job is missing'
+grep -Fq 'needs: [check, test]' <<< "$coverage_block" ||
+  fail 'coverage upload must wait for the required unit job'
+grep -Fq "needs.check.outputs.full_ci != 'false'" <<< "$coverage_block" ||
+  fail 'documentation-only changes must not upload coverage'
+grep -Fq "needs.test.result == 'success'" <<< "$coverage_block" ||
+  fail 'coverage upload must require successful unit tests and build'
+grep -Fq 'contents: read' <<< "$coverage_block" || fail 'coverage upload needs read-only checkout'
+grep -Fq 'id-token: write' <<< "$coverage_block" || fail 'coverage upload lacks OIDC permission'
+grep -Fq 'persist-credentials: false' <<< "$coverage_block" ||
+  fail 'coverage checkout must not persist repository credentials'
+grep -Fq 'codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0' <<< "$coverage_block" ||
+  fail 'Codecov action must use the reviewed immutable v7.0.0 commit'
+grep -Fq 'files: coverage/lcov.info' <<< "$coverage_block" ||
+  fail 'Codecov upload must select the exact LCOV report'
+grep -Fq 'disable_search: true' <<< "$coverage_block" ||
+  fail 'Codecov must not discover unintended reports'
+grep -Fq 'plugins: noop' <<< "$coverage_block" ||
+  fail 'Codecov discovery plugins must remain disabled'
+grep -Fq 'use_oidc: true' <<< "$coverage_block" || fail 'Codecov upload must use OIDC'
+grep -Fq 'fail_ci_if_error: false' <<< "$coverage_block" ||
+  fail 'the reporting-only rollout must remain fail-open'
+grep -Fq 'continue-on-error: true' <<< "$coverage_block" ||
+  fail 'the reporting-only rollout must tolerate action-level failures'
+if grep -Fq 'CODECOV_TOKEN' "$ci_workflow"; then
+  fail 'Codecov must not use a long-lived repository token'
+fi
+[[ $(grep -Fc 'id-token: write' "$ci_workflow") -eq 1 ]] ||
+  fail 'OIDC permission must exist only on the coverage upload job'
+
+require_literal "$coverage_config" "include: ['src/**/*.ts', 'scripts/**/*.{js,mjs,ts}']"
+require_literal "$coverage_config" "reporter: ['text', 'json', 'json-summary', 'html', 'lcov']"
+require_literal "$coverage_config" "'**/*.d.ts'"
+require_literal "$codecov_config" 'target: auto'
+require_literal "$codecov_config" 'threshold: 1%'
+require_literal "$codecov_config" 'target: 80%'
+require_literal "$codecov_config" "- 'src/**'"
+require_literal "$codecov_config" 'comment: false'
+require_literal "$codecov_config" 'annotations: false'
+[[ $(grep -Fc 'informational: true' "$codecov_config") -eq 2 ]] ||
+  fail 'project and patch Codecov statuses must both remain informational'
 
 e2e_block=$(job_block "$ci_workflow" e2e)
 if grep -Eq '^    if:' <<< "$e2e_block"; then

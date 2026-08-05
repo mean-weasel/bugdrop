@@ -1,0 +1,20 @@
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+        informational: true
+    patch:
+      default:
+        target: 80%
+        threshold: 0%
+        informational: true
+        only_pulls: true
+        paths:
+          - 'src/**'
+
+comment: false
+
+github_checks:
+  annotations: false
