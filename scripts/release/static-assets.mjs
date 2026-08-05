@@ -49,6 +49,21 @@ function compareVersions(left, right) {
   return 0;
 }
 
+function stableAliasTargets(artifacts) {
+  const targets = new Map();
+  for (const [artifactKey, artifact] of Object.entries(artifacts)) {
+    const version = artifactKey.slice(1);
+    const [major, minor] = parseVersion(version);
+    for (const line of [`${major}`, `${major}.${minor}`]) {
+      const previous = targets.get(line);
+      if (!previous || compareVersions(previous.version, version) < 0) {
+        targets.set(line, { filename: artifact.filename, version });
+      }
+    }
+  }
+  return [...targets.entries()].sort(([left], [right]) => compareText(left, right));
+}
+
 function timestamp(value, field = 'timestamp') {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value ?? '')) {
     fail('INVALID_TIMESTAMP', `${field} must be a normalized UTC second timestamp`);
@@ -242,15 +257,8 @@ function validatePackageInput(input) {
 export async function createReleaseStaticPackage(input) {
   validatePackageInput(input);
   await copyStaticTree(input.sourcePublicDir, input.outputDir);
-  const [major, minor] = parseVersion(input.version);
   const exactFilename = `widget.v${input.version}.js`;
-  const aliases = [
-    'widget.js',
-    `widget.v${major}.js`,
-    `widget.v${major}.${minor}.js`,
-    exactFilename,
-  ];
-  for (const filename of aliases)
+  for (const filename of ['widget.js', exactFilename])
     await writeFile(join(input.outputDir, filename), input.bundleBytes, { flag: 'wx' });
   const artifacts =
     input.retentionMode === 'disabled' ? {} : await stageRetainedAssets(input, input.outputDir);
@@ -263,14 +271,21 @@ export async function createReleaseStaticPackage(input) {
     sha256: bundleHash,
     targetSha: input.targetSha,
   };
+  const aliasTargets = stableAliasTargets(artifacts);
+  for (const [line, target] of aliasTargets) {
+    await writeFile(
+      join(input.outputDir, `widget.v${line}.js`),
+      await readFile(join(input.outputDir, target.filename)),
+      { flag: 'wx' }
+    );
+  }
   const versions = Object.fromEntries(
     [
       ...Object.values(artifacts).map(artifact => [
         `v${artifact.filename.slice(8, -3)}`,
         artifact.filename,
       ]),
-      [`v${major}`, `widget.v${major}.js`],
-      [`v${major}.${minor}`, `widget.v${major}.${minor}.js`],
+      ...aliasTargets.map(([line]) => [`v${line}`, `widget.v${line}.js`]),
     ].sort(([left], [right]) => compareText(left, right))
   );
   const manifest = {

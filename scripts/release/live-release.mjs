@@ -25,6 +25,7 @@ const PROTOCOL = 'bugdrop.live-release/v1';
 const SHA = /^[0-9a-f]{40}$/;
 const IDENTITY = /^sha256:[0-9a-f]{64}$/;
 const TAG = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+const VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 
 export class LiveReleaseError extends Error {
   constructor(code, message) {
@@ -43,6 +44,24 @@ function match(value, pattern, field) {
 }
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+
+function newestArtifactForLine(artifacts, line) {
+  const prefix = `${line}.`;
+  return Object.entries(artifacts ?? {})
+    .map(([key, artifact]) => ({ artifact, version: key.slice(1) }))
+    .filter(({ artifact, version }) => {
+      if (!VERSION.test(version) || artifact?.filename !== `widget.v${version}.js`) return false;
+      return line.includes('.') ? version.startsWith(prefix) : version.split('.')[0] === line;
+    })
+    .sort((left, right) => {
+      const a = left.version.split('.').map(BigInt);
+      const b = right.version.split('.').map(BigInt);
+      for (let index = 0; index < 3; index += 1) {
+        if (a[index] !== b[index]) return a[index] < b[index] ? 1 : -1;
+      }
+      return 0;
+    })[0];
+}
 
 function hydratedBundle(bundle) {
   if (!bundle?.assets) return bundle;
@@ -116,6 +135,23 @@ export async function buildExpectedLive({ bundle: rawBundle, origin, staticPacka
       );
     }
   }
+  for (const [versionLine, aliasFilename] of Object.entries(manifest.versions ?? {})) {
+    const line = versionLine.slice(1);
+    if (!/^v(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*))?$/.test(versionLine)) continue;
+    if (aliases.includes(aliasFilename)) continue;
+    if (aliasFilename !== `widget.v${line}.js`) {
+      fail('INVALID_STATIC_PACKAGE', `retained alias ${versionLine} is not canonical`);
+    }
+    const target = newestArtifactForLine(manifest.artifacts, line);
+    if (!target || !/^[0-9a-f]{64}$/.test(target.artifact.sha256 ?? '')) {
+      fail('INVALID_STATIC_PACKAGE', `retained alias ${versionLine} lacks an artifact target`);
+    }
+    const aliasBytes = await readFile(resolve(staticPackageDir, aliasFilename));
+    if (sha256(aliasBytes) !== target.artifact.sha256) {
+      fail('INVALID_STATIC_PACKAGE', `retained alias ${versionLine} bytes differ from its target`);
+    }
+    retainedAssets[aliasFilename] = target.artifact.sha256;
+  }
   return {
     protocol: PROTOCOL,
     aliasFilenames: aliases,
@@ -131,18 +167,33 @@ export async function buildExpectedLive({ bundle: rawBundle, origin, staticPacka
 }
 
 async function inspectAuthoritative(client, origin, observe = collectRecoveryIdentity) {
-  const deployment = client.inspectStatus();
-  if (deployment.status !== 'succeeded' || !deployment.value) {
-    fail('PRODUCTION_INSPECTION_FAILED', 'current deployment status is unavailable');
-  }
-  const version = client.inspectVersion(deployment.value.versionId);
-  if (version.status !== 'succeeded' || !version.value) {
-    fail('PRODUCTION_INSPECTION_FAILED', 'current version identity is unavailable');
+  const inspectMetadata = () => {
+    const deployment = client.inspectStatus();
+    if (deployment.status !== 'succeeded' || !deployment.value) {
+      fail('PRODUCTION_INSPECTION_FAILED', 'current deployment status is unavailable');
+    }
+    const version = client.inspectVersion(deployment.value.versionId);
+    if (version.status !== 'succeeded' || !version.value) {
+      fail('PRODUCTION_INSPECTION_FAILED', 'current version identity is unavailable');
+    }
+    return { deployment: deployment.value, version: version.value };
+  };
+  const before = inspectMetadata();
+  const live = await observe(origin);
+  const after = inspectMetadata();
+  if (
+    canonicalize(before.deployment) !== canonicalize(after.deployment) ||
+    canonicalize(before.version) !== canonicalize(after.version) ||
+    (before.version.buildSha ?? null) !== (live.buildSha ?? null)
+  ) {
+    fail(
+      'UNSTABLE_PRODUCTION_BASELINE',
+      'production identity changed or disagreed during observation'
+    );
   }
   return {
-    deployment: deployment.value,
-    live: await observe(origin),
-    version: version.value,
+    ...before,
+    live,
   };
 }
 
@@ -422,6 +473,10 @@ async function jsonFile(path) {
 }
 
 async function cloudflareClient(input) {
+  const bundle = await jsonFile(input.bundlePath);
+  if (bundle.requestPlan?.protocol === 'release-plan/v2') {
+    await assertStaticTree(resolve(input.candidateAssets), bundle.releaseContent?.staticPackage);
+  }
   return createProductionCloudflareClient({
     accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
     apiToken: process.env.CLOUDFLARE_API_TOKEN,

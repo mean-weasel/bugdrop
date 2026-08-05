@@ -138,6 +138,29 @@ describe('deterministic release static package', () => {
     expect(manifest.current).toBe('1.56.0');
   });
 
+  it('preserves the newest retained minor alias across a minor release', async () => {
+    const result = await packageOnce('retained-minor-alias');
+    const manifest = JSON.parse(await readFile(join(result.outputDir, 'versions.json'), 'utf8'));
+    expect(result.fileHashes['widget.v1.55.js']).toBe(result.fileHashes['widget.v1.55.0.js']);
+    expect(manifest.versions['v1.55']).toBe('widget.v1.55.js');
+    expect(result.fileHashes['widget.v1.js']).toBe(result.fileHashes['widget.v1.56.0.js']);
+  });
+
+  it('preserves retained major and minor aliases across a major release', async () => {
+    const result = await packageOnce('retained-major-alias', {
+      version: '2.0.0',
+      bundleBytes: Buffer.from("'use strict';\nglobalThis.BugDrop='2.0.0';\n"),
+      currentArchiveUrl:
+        'https://github.com/mean-weasel/bugdrop/releases/download/v2.0.0/widget.v2.0.0.js',
+    });
+    const manifest = JSON.parse(await readFile(join(result.outputDir, 'versions.json'), 'utf8'));
+    expect(result.fileHashes['widget.v1.js']).toBe(result.fileHashes['widget.v1.55.0.js']);
+    expect(result.fileHashes['widget.v1.55.js']).toBe(result.fileHashes['widget.v1.55.0.js']);
+    expect(manifest.versions['v1']).toBe('widget.v1.js');
+    expect(manifest.versions['v1.55']).toBe('widget.v1.55.js');
+    expect(result.fileHashes['widget.v2.js']).toBe(result.fileHashes['widget.v2.0.0.js']);
+  });
+
   it('preserves the historical v1 current-only manifest while retention is disabled', async () => {
     const result = await packageOnce('disabled-v1', {
       retentionMode: 'disabled',

@@ -71,7 +71,7 @@ on:
         required: false
         type: string
       retained_assets_json:
-        description: JSON object of retained exact filenames to SHA-256 values
+        description: JSON object of retained exact and stable alias filenames to SHA-256 values
         required: false
         type: string
   schedule:
@@ -86,6 +86,7 @@ jobs:
   live-tests:
     name: Live E2E Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       LIVE_TARGET: ${{ github.event_name == 'schedule' && 'preview' || inputs.target || 'preview' }}
       PLAYWRIGHT_BASE_URL: ${{ inputs.target == 'production' && 'https://bugdrop-widget-test.vercel.app' || 'https://bugdrop-widget-test-git-preview-jermwatts-projects.vercel.app' }}

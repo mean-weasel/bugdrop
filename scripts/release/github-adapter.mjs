@@ -19,13 +19,12 @@ import {
 } from './plan.mjs';
 import { validatePublicationBundle } from './publication.mjs';
 import { deriveRetentionRequest, writeRetentionInput } from './retention.mjs';
+import { MAX_RETAINED_BYTES, MAX_SNAPSHOT_BYTES, MAX_WIDGET_BYTES } from './limits.mjs';
 
 const API_VERSION = '2022-11-28';
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const TAG_PATTERN = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
-const MAX_ASSET_BYTES = 16 * 1024 * 1024;
-const MAX_RETAINED_BYTES = 512 * 1024 * 1024;
 const ASSET_TIMEOUT_MS = 30_000;
 const sha256Bytes = bytes => createHash('sha256').update(bytes).digest('hex');
 
@@ -60,6 +59,29 @@ function compareReleaseTags(left, right) {
     if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1;
   }
   return 0;
+}
+
+function activeAliasTargets(artifacts) {
+  const lines = new Map();
+  for (const artifact of Object.values(artifacts)) {
+    const [major, minor] = artifact.version.split('.');
+    for (const line of [`${major}`, `${major}.${minor}`]) {
+      const previous = lines.get(line);
+      if (!previous || compareReleaseTags({ tag: previous.tag }, { tag: artifact.tag }) < 0) {
+        lines.set(line, artifact);
+      }
+    }
+  }
+  return lines;
+}
+
+function activeManifestVersions(artifacts) {
+  const versions = Object.fromEntries(
+    Object.values(artifacts).map(artifact => [`v${artifact.version}`, artifact.filename])
+  );
+  const lines = activeAliasTargets(artifacts);
+  for (const line of lines.keys()) versions[`v${line}`] = `widget.v${line}.js`;
+  return versions;
 }
 
 export function createGithubTransport({
@@ -177,7 +199,7 @@ export function createGithubTransport({
             status: response.status,
           });
         }
-        const maxBytes = Math.min(options.maxBytes ?? MAX_ASSET_BYTES, MAX_ASSET_BYTES);
+        const maxBytes = Math.min(options.maxBytes ?? MAX_WIDGET_BYTES, MAX_WIDGET_BYTES);
         return await boundedBytes(response, { expectedSize: options.expectedSize, maxBytes });
       } catch (error) {
         if (error instanceof GithubAdapterError) throw error;
@@ -303,7 +325,6 @@ function validateActiveManifest({
   exactSha256,
 }) {
   const version = release.tag.slice(1);
-  const [major, minor] = version.split('.');
   const retention = requestPlan.retention;
   const artifacts = Object.fromEntries([
     ...retention.releases.map(prior => [
@@ -329,11 +350,15 @@ function validateActiveManifest({
       },
     ],
   ]);
-  const versions = Object.fromEntries([
-    ...Object.values(artifacts).map(artifact => [`v${artifact.version}`, artifact.filename]),
-    [`v${major}`, `widget.v${major}.js`],
-    [`v${major}.${minor}`, `widget.v${major}.${minor}.js`],
-  ]);
+  const versions = activeManifestVersions(artifacts);
+  const staticHashes = releaseContent.staticPackage?.fileHashes ?? {};
+  const aliasesMatch = [
+    ['widget.js', exactSha256],
+    ...[...activeAliasTargets(artifacts)].map(([line, artifact]) => [
+      `widget.v${line}.js`,
+      artifact.sha256,
+    ]),
+  ].every(([filename, digest]) => staticHashes[filename] === digest);
   const expected = {
     artifacts,
     authoritative: true,
@@ -350,6 +375,7 @@ function validateActiveManifest({
   if (
     !['bootstrap', 'continue'].includes(retention.mode) ||
     canonicalize(manifest) !== canonicalize(expected) ||
+    !aliasesMatch ||
     releaseContent.publicationAssetHashes?.['versions.json'] !== manifestSha256 ||
     releaseContent.staticPackage?.fileHashes?.['versions.json'] !== manifestSha256 ||
     releaseContent.staticPackage?.fileHashes?.[exact.name] !== exactSha256
@@ -426,14 +452,14 @@ export async function loadPublishedReleaseAssets({
     ) {
       fail('PUBLISHED_ASSET_INVALID', 'published Release asset authority is incomplete');
     }
-    if (budget.used + asset.size > MAX_RETAINED_BYTES) {
+    if (budget.used + asset.size > MAX_SNAPSHOT_BYTES) {
       fail('PUBLISHED_ASSET_INVALID', 'published Release assets exceed the cumulative byte limit');
     }
     assets[asset.name] = await transport.requestBytes(asset.apiUrl, {
       repository,
       assetId: asset.id,
       expectedSize: asset.size,
-      maxBytes: Math.min(MAX_ASSET_BYTES, MAX_RETAINED_BYTES - budget.used),
+      maxBytes: Math.min(MAX_WIDGET_BYTES, MAX_SNAPSHOT_BYTES - budget.used),
     });
     budget.used += assets[asset.name].length;
   }

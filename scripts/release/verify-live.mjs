@@ -4,15 +4,17 @@ import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
 import { canonicalHash } from './canonical-json.mjs';
+import {
+  MAX_HEALTH_BYTES,
+  MAX_MANIFEST_BYTES,
+  MAX_SNAPSHOT_BYTES,
+  MAX_WIDGET_BYTES,
+} from './limits.mjs';
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const ASSET_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
-const MAX_HEALTH_BYTES = 64 * 1024;
-const MAX_MANIFEST_BYTES = 1024 * 1024;
-const MAX_WIDGET_BYTES = 16 * 1024 * 1024;
-const MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024;
 const MAX_BASELINE_OBSERVATION_MS = 2 * 60 * 1000;
 
 export class LiveVerificationError extends Error {
@@ -92,6 +94,25 @@ function requireHash(snapshot, filename, expected) {
     fail('LIVE_IDENTITY_MISMATCH', `${filename} expected ${expected}, observed ${actual}`);
   }
 }
+
+function newestManifestArtifact(artifacts, line) {
+  return Object.entries(artifacts ?? {})
+    .map(([key, artifact]) => ({ artifact, version: key.slice(1) }))
+    .filter(({ artifact, version }) => {
+      if (!VERSION_PATTERN.test(version) || artifact?.filename !== `widget.v${version}.js`) {
+        return false;
+      }
+      return line.includes('.') ? version.startsWith(`${line}.`) : version.split('.')[0] === line;
+    })
+    .sort((left, right) => {
+      const a = left.version.split('.').map(BigInt);
+      const b = right.version.split('.').map(BigInt);
+      for (let index = 0; index < 3; index += 1) {
+        if (a[index] !== b[index]) return a[index] < b[index] ? 1 : -1;
+      }
+      return 0;
+    })[0];
+}
 export function verifyLiveSnapshot(input, snapshot) {
   const expected = normalizeExpected(input);
   if (snapshot?.health?.status !== 'ok') fail('LIVE_HEALTH_MISMATCH', 'health is not ok');
@@ -140,8 +161,33 @@ export function verifyLiveSnapshot(input, snapshot) {
       fail('LIVE_MANIFEST_MISMATCH', `manifest version alias ${key} is inconsistent`);
     }
   }
+  for (const [versionLine, filename] of Object.entries(manifest.versions ?? {})) {
+    const version = versionLine.slice(1);
+    if (!/^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*))?$/.test(version)) continue;
+    if (expected.aliasFilenames.includes(filename)) continue;
+    const target = newestManifestArtifact(manifest.artifacts, version);
+    if (
+      filename !== `widget.v${version}.js` ||
+      !target ||
+      expected.retainedAssets[filename] !== target.artifact.sha256
+    ) {
+      fail('LIVE_MANIFEST_MISMATCH', `manifest retained alias v${version} is inconsistent`);
+    }
+  }
   for (const [filename, digest] of Object.entries(expected.retainedAssets)) {
     const version = filename.slice('widget.v'.length, -'.js'.length);
+    const components = version.split('.').length;
+    if (components < 3) {
+      const target = newestManifestArtifact(manifest.artifacts, version);
+      if (
+        !target ||
+        manifest.versions?.[`v${version}`] !== filename ||
+        target.artifact.sha256 !== digest
+      ) {
+        fail('LIVE_MANIFEST_MISMATCH', `manifest retained alias v${version} is inconsistent`);
+      }
+      continue;
+    }
     const retained = manifest.artifacts?.[`v${version}`];
     if (
       retained?.filename !== filename ||
@@ -163,13 +209,16 @@ export function verifyLiveSnapshot(input, snapshot) {
   };
 }
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
-async function fetchOk(url, fetchImpl, timeoutMs) {
-  const signal = AbortSignal.timeout(timeoutMs);
+async function fetchOk(url, fetchImpl, timeoutMs, overallSignal) {
+  const requestSignal = AbortSignal.timeout(timeoutMs);
+  const signal = overallSignal ? AbortSignal.any([requestSignal, overallSignal]) : requestSignal;
   let response;
   try {
     response = await fetchImpl(url, { redirect: 'error', signal });
   } catch (error) {
-    if (signal.aborted) fail('LIVE_FETCH_TIMEOUT', `${url} exceeded ${timeoutMs}ms`);
+    if (requestSignal.aborted && !overallSignal?.aborted) {
+      fail('LIVE_FETCH_TIMEOUT', `${url} exceeded ${timeoutMs}ms`);
+    }
     throw error;
   }
   if (!response.ok) fail('LIVE_FETCH_FAILED', `${url} returned ${response.status}`);
@@ -211,7 +260,8 @@ async function collectSnapshot(
   timeoutMs,
   manifestErrorCode,
   manifestFilenames = () => [],
-  totalTimeoutMs = null
+  totalTimeoutMs = null,
+  signal
 ) {
   const budget = { used: 0 };
   const deadline = totalTimeoutMs === null ? null : Date.now() + totalTimeoutMs;
@@ -225,7 +275,7 @@ async function collectSnapshot(
   };
   const healthUrl = `${origin}/api/health`;
   const healthBytes = await readBoundedBytes(
-    await fetchOk(healthUrl, fetchImpl, requestTimeout()),
+    await fetchOk(healthUrl, fetchImpl, requestTimeout(), signal),
     healthUrl,
     MAX_HEALTH_BYTES,
     budget
@@ -243,7 +293,7 @@ async function collectSnapshot(
   for (let index = 0; index < queue.length; index += 1) {
     const filename = queue[index];
     const url = `${origin}/${filename}`;
-    const response = await fetchOk(url, fetchImpl, requestTimeout());
+    const response = await fetchOk(url, fetchImpl, requestTimeout(), signal);
     const payload = await readBoundedBytes(
       response,
       url,
@@ -267,7 +317,6 @@ async function collectSnapshot(
   }
   return { assetHashes, health, manifest };
 }
-
 function baselineManifestFilenames(manifest) {
   if (
     !manifest ||
@@ -298,7 +347,7 @@ function baselineManifestFilenames(manifest) {
   }
   return ['widget.js', ...filenames];
 }
-async function collectLiveSnapshot(expectedInput, fetchImpl = fetch, timeoutMs = 10000) {
+async function collectLiveSnapshot(expectedInput, fetchImpl = fetch, timeoutMs = 10000, signal) {
   const expected = normalizeExpected(expectedInput);
   return collectSnapshot(
     expected.origin,
@@ -310,16 +359,33 @@ async function collectLiveSnapshot(expectedInput, fetchImpl = fetch, timeoutMs =
     ],
     fetchImpl,
     timeoutMs,
-    'LIVE_MANIFEST_MISMATCH'
+    'LIVE_MANIFEST_MISMATCH',
+    () => [],
+    null,
+    signal
   );
 }
+
+function sleepUntil(milliseconds, { signal } = {}) {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', cancel);
+      resolve();
+    }, milliseconds);
+    const cancel = () => clearTimeout(timer);
+    signal?.addEventListener('abort', cancel, { once: true });
+  });
+}
+
 export async function pollLiveVerification({
   expected,
   snapshotProvider,
   maxAttempts = 30,
   intervalMs = 5000,
+  overallTimeoutMs = 10 * 60 * 1000,
   requestTimeoutMs = 10000,
-  sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
+  sleep = sleepUntil,
 }) {
   if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 100) {
     fail('INVALID_INPUT', 'maxAttempts must be between 1 and 100');
@@ -327,16 +393,61 @@ export async function pollLiveVerification({
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 60000) {
     fail('INVALID_INPUT', 'requestTimeoutMs must be between 1 and 60000');
   }
+  if (
+    !Number.isSafeInteger(overallTimeoutMs) ||
+    overallTimeoutMs < 1 ||
+    overallTimeoutMs > 30 * 60 * 1000
+  ) {
+    fail('INVALID_INPUT', 'overallTimeoutMs must be between 1 and 1800000');
+  }
   const normalizedExpected = normalizeExpected(expected);
   const provider =
-    snapshotProvider ?? (() => collectLiveSnapshot(normalizedExpected, fetch, requestTimeoutMs));
+    snapshotProvider ??
+    ((_attempt, { signal } = {}) =>
+      collectLiveSnapshot(normalizedExpected, fetch, requestTimeoutMs, signal));
+  const deadlineSignal = AbortSignal.timeout(overallTimeoutMs);
+  const withinDeadline = promise => {
+    if (deadlineSignal.aborted) {
+      return Promise.reject(
+        new LiveVerificationError('LIVE_OVERALL_TIMEOUT', 'live verification deadline expired')
+      );
+    }
+    let rejectAtDeadline;
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        rejectAtDeadline = () =>
+          reject(
+            new LiveVerificationError('LIVE_OVERALL_TIMEOUT', 'live verification deadline expired')
+          );
+        deadlineSignal.addEventListener('abort', rejectAtDeadline, { once: true });
+      }),
+    ]).finally(() => deadlineSignal.removeEventListener('abort', rejectAtDeadline));
+  };
   let lastError;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      return verifyLiveSnapshot(normalizedExpected, await provider(attempt));
+      return verifyLiveSnapshot(
+        normalizedExpected,
+        await withinDeadline(
+          Promise.resolve().then(() => provider(attempt, { signal: deadlineSignal }))
+        )
+      );
     } catch (error) {
       lastError = error;
-      if (attempt < maxAttempts) await sleep(intervalMs);
+      if (error?.code === 'LIVE_OVERALL_TIMEOUT') break;
+      if (attempt < maxAttempts) {
+        try {
+          await withinDeadline(
+            Promise.resolve(
+              sleep(Math.min(intervalMs, overallTimeoutMs), { signal: deadlineSignal })
+            )
+          );
+        } catch (sleepError) {
+          lastError = sleepError;
+          break;
+        }
+      }
     }
   }
   fail('LIVE_VERIFICATION_TIMEOUT', `live identity did not match after ${maxAttempts} attempts`, {

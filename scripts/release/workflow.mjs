@@ -159,14 +159,36 @@ async function validateStaticPackageSemantics(input, staticPackage) {
   if (!same(exactPaths, expectedExactPaths)) {
     fail('RETAINED_SET_MISMATCH', 'static exact-version paths differ from the approved set');
   }
-  const [major, minor] = version.split('.');
+  const aliasTargets = new Map();
+  for (const candidate of [...expectedRetained, version]) {
+    const [major, minor] = candidate.split('.');
+    for (const line of [major, `${major}.${minor}`]) {
+      const previous = aliasTargets.get(line);
+      const currentParts = candidate.split('.').map(BigInt);
+      const previousParts = previous?.split('.').map(BigInt);
+      if (
+        !previousParts ||
+        currentParts.some(
+          (part, index) =>
+            part > previousParts[index] &&
+            currentParts.slice(0, index).every((value, prior) => value === previousParts[prior])
+        )
+      ) {
+        aliasTargets.set(line, candidate);
+      }
+    }
+  }
   const expectedVersions = Object.fromEntries(
     [
       ...expectedExactPaths.map(path => [`v${path.slice(8, -3)}`, path]),
-      [`v${major}`, `widget.v${major}.js`],
-      [`v${major}.${minor}`, `widget.v${major}.${minor}.js`],
+      ...[...aliasTargets.keys()].map(line => [`v${line}`, `widget.v${line}.js`]),
     ].sort(([left], [right]) => compareUtf8(left, right))
   );
+  for (const [line, targetVersion] of aliasTargets) {
+    if (hashes[`widget.v${line}.js`] !== hashes[`widget.v${targetVersion}.js`]) {
+      fail('STATIC_ALIAS_MISMATCH', `stable alias v${line} differs from its newest exact asset`);
+    }
+  }
   if (!same(manifest.versions, expectedVersions)) {
     fail('RETENTION_MANIFEST_MISMATCH', 'manifest version map differs from approved paths');
   }

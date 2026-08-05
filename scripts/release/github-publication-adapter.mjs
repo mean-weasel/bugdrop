@@ -1,3 +1,5 @@
+import { MAX_SNAPSHOT_BYTES, MAX_WIDGET_BYTES } from './limits.mjs';
+
 const API_VERSION = '2022-11-28';
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const TAG = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
@@ -5,8 +7,6 @@ const SHA = /^[0-9a-f]{40}$/;
 const ASSET = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
 const RELEASE_ID = /^[1-9]\d*$/;
 const TOKEN = /^[A-Za-z0-9_.-]{16,4096}$/;
-const MAX_ASSET_BYTES = 16 * 1024 * 1024;
-const MAX_RELEASE_BYTES = 512 * 1024 * 1024;
 const RELEASES_PER_PAGE = 100;
 const MAX_RELEASE_PAGES = 100;
 const ASSET_TIMEOUT_MS = 30_000;
@@ -181,7 +181,7 @@ export function createGithubPublicationAdapter({
         const { done, value } = await reader.read();
         if (done) break;
         total += value.byteLength;
-        if (total > MAX_ASSET_BYTES || total > expectedSize) {
+        if (total > MAX_WIDGET_BYTES || total > expectedSize) {
           await reader.cancel();
           fail('INVALID_RESPONSE', 'asset exceeds its authenticated byte bound');
         }
@@ -263,8 +263,8 @@ export function createGithubPublicationAdapter({
           typeof asset?.url !== 'string' ||
           !Number.isSafeInteger(asset?.size) ||
           asset.size < 0 ||
-          asset.size > MAX_ASSET_BYTES ||
-          totalBytes + asset.size > MAX_RELEASE_BYTES
+          asset.size > MAX_WIDGET_BYTES ||
+          totalBytes + asset.size > MAX_SNAPSHOT_BYTES
         ) {
           fail('INVALID_RESPONSE', 'release asset identity is invalid');
         }
