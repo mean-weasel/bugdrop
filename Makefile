@@ -97,6 +97,7 @@ knip:
 
 check-actions-node24:
 	npm run check:actions-node24
+	bash test/github-actions-pinning.test.sh
 
 check-ci-scope:
 	bash test/ci-scope.test.sh

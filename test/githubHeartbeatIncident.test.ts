@@ -56,6 +56,12 @@ describe('heartbeat incident discovery', () => {
       );
     await expect(listIncidents({ fetchImpl, token: TOKEN })).resolves.toHaveLength(1);
   });
+
+  it('scopes incident discovery to the configured private operational repository', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response([]));
+    await listIncidents({ fetchImpl, token: TOKEN, repo: 'acme/private-bugdrop' });
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('/repos/acme/private-bugdrop/issues');
+  });
 });
 
 describe('heartbeat incident lifecycle', () => {

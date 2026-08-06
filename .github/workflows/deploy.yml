@@ -133,7 +133,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Checkout immutable controller
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ steps.guard.outputs.controller_sha }}
           path: controller
@@ -141,7 +141,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '22'
           cache: npm
@@ -232,7 +232,7 @@ jobs:
           fi
 
       - name: Upload immutable request plan
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: request-plan-${{ steps.plan.outputs.request_key }}
           path: |
@@ -254,20 +254,20 @@ jobs:
       tag: ${{ steps.bundle.outputs.tag }}
     steps:
       - name: Checkout immutable controller
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
           path: controller
           persist-credentials: false
 
       - name: Checkout immutable candidate
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ inputs.target_sha }}
           path: candidate
           persist-credentials: false
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '22'
 
@@ -283,7 +283,7 @@ jobs:
           npm run build
 
       - name: Download authenticated request plan
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: request-plan-${{ needs.guard-and-plan.outputs.request_key }}
           path: request
@@ -362,7 +362,7 @@ jobs:
 
       - name: Upload immutable candidate and State 2 evidence
         id: upload
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: release-plan-${{ steps.bundle.outputs.plan_key }}
           path: ${{ runner.temp }}/release-plan/
@@ -377,14 +377,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout immutable controller
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
           path: controller
           persist-credentials: false
 
       - name: Download exact State 2 artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           artifact-ids: ${{ needs.verify-candidate.outputs.artifact_id }}
           path: approved
@@ -478,7 +478,7 @@ jobs:
       widget_sha256: ${{ steps.expected.outputs.widget_sha256 }}
     steps:
       - name: Checkout immutable controller
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
           path: controller
@@ -487,13 +487,13 @@ jobs:
           fetch-tags: true
 
       - name: Checkout immutable candidate source
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ inputs.target_sha }}
           path: candidate
           persist-credentials: false
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '22'
 
@@ -503,7 +503,7 @@ jobs:
           npm --prefix candidate ci --ignore-scripts
 
       - name: Download exact approved State 2 artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           artifact-ids: ${{ needs.verify-candidate.outputs.artifact_id }}
           path: approved
@@ -651,7 +651,7 @@ jobs:
       - name: Upload exact approval and baseline evidence
         if: steps.revalidate.outputs.proceed == 'true'
         id: upload
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: release-baseline-${{ needs.verify-candidate.outputs.plan_key }}
           path: |
@@ -673,20 +673,20 @@ jobs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - name: Checkout immutable controller
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
           path: controller
           persist-credentials: false
 
       - name: Checkout immutable candidate source
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ inputs.target_sha }}
           path: candidate
           persist-credentials: false
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '22'
 
@@ -696,7 +696,7 @@ jobs:
           npm --prefix candidate ci --ignore-scripts
 
       - name: Download exact State 2 and approved baseline artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           artifact-ids: ${{ needs.verify-candidate.outputs.artifact_id }},${{ needs.approval-baseline.outputs.artifact_id }}
           path: release-state
@@ -737,7 +737,7 @@ jobs:
       - name: Upload authoritative deployment outcome
         if: always()
         id: upload
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: release-deployment-${{ needs.verify-candidate.outputs.plan_key }}
           path: deployment.json
@@ -776,13 +776,13 @@ jobs:
       notify: ${{ steps.publish.outputs.notify }}
     steps:
       - name: Checkout immutable controller
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
           path: controller
           persist-credentials: false
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '22'
 
@@ -790,7 +790,7 @@ jobs:
         run: npm --prefix controller ci --ignore-scripts
 
       - name: Download exact State 2 and approved authorization
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           artifact-ids: ${{ needs.verify-candidate.outputs.artifact_id }},${{ needs.approval-baseline.outputs.artifact_id }}
           path: release-state
@@ -818,7 +818,7 @@ jobs:
       - name: Upload authoritative publication outcome
         if: always()
         id: upload
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: release-publication-${{ needs.verify-candidate.outputs.plan_key }}
           path: publication.json
@@ -863,7 +863,7 @@ jobs:
     steps:
       - name: Checkout immutable controller
         if: ${{ needs.deploy-candidate.result != 'skipped' }}
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
           path: controller
@@ -871,13 +871,13 @@ jobs:
 
       - name: Checkout immutable candidate source
         if: ${{ needs.deploy-candidate.result != 'skipped' }}
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ inputs.target_sha }}
           path: candidate
           persist-credentials: false
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         if: ${{ needs.deploy-candidate.result != 'skipped' }}
         with:
           node-version: '22'
@@ -890,7 +890,7 @@ jobs:
 
       - name: Download exact State 2 and baseline evidence
         if: ${{ needs.deploy-candidate.result != 'skipped' }}
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           artifact-ids: ${{ needs.verify-candidate.outputs.artifact_id }},${{ needs.approval-baseline.outputs.artifact_id }}
           path: release-state
@@ -899,7 +899,7 @@ jobs:
       - name: Download deployment evidence when available
         if: ${{ needs.deploy-candidate.result != 'skipped' }}
         continue-on-error: true
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: release-deployment-${{ needs.verify-candidate.outputs.plan_key }}
           path: release-state
