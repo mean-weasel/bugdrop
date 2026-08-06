@@ -37,7 +37,7 @@ jobs:
           test "$SHA_A" != "$SHA_B"
 
       - name: Checkout immutable controller
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ github.workflow_sha }}
           path: controller
@@ -54,20 +54,20 @@ jobs:
           git -C controller merge-base --is-ancestor "$SHA_A" "$SHA_B"
 
       - name: Checkout immutable candidate A
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ inputs.candidate_a_sha }}
           path: candidate-a
           persist-credentials: false
 
       - name: Checkout immutable candidate B
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ inputs.candidate_b_sha }}
           path: candidate-b
           persist-credentials: false
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '22'
 
@@ -149,7 +149,7 @@ jobs:
 
       - name: Upload capability evidence
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: cloudflare-preview-capability-${{ github.run_id }}
           path: capability-proof.json

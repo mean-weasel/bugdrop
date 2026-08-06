@@ -119,7 +119,7 @@ for job in \
 done
 
 guard_block=$(job_block guard-and-plan)
-first_checkout_line=$(line_of 'uses: actions/checkout@v5')
+first_checkout_line=$(line_of 'uses: actions/checkout@')
 guard_line=$(line_of 'Reject non-main or malformed dispatch before checkout')
 [[ "$guard_line" -lt "$first_checkout_line" ]] || fail 'main/SHA guard must run before checkout'
 for literal in \
@@ -153,7 +153,7 @@ require_absent 'echo "request_key=$(jq'
 require_absent 'echo "version=$(jq'
 require_absent 'echo "plan_key=$(jq'
 
-checkout_count=$(grep -Fc 'uses: actions/checkout@v5' "$workflow")
+checkout_count=$(grep -Fc 'uses: actions/checkout@' "$workflow")
 persist_count=$(grep -Fc 'persist-credentials: false' "$workflow")
 [[ "$checkout_count" -ge 6 ]] || fail "expected immutable controller/candidate checkouts; found $checkout_count"
 [[ "$persist_count" -eq "$checkout_count" ]] || fail 'every checkout must discard credentials'
