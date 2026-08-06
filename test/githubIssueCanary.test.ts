@@ -172,7 +172,7 @@ describe('GitHub Issue canary discovery and verification', () => {
       BUGDROP_CANARY_REPO: repo,
       PLAYWRIGHT_BASE_URL: 'https://heartbeat.example.com',
       EXPECTED_WIDGET_ORIGIN: 'https://bugdrop.example.com',
-      BUGDROP_CANARY_EXPECTED_AUTHOR: 'acme-bugdrop[bot]',
+      BUGDROP_CANARY_EXPECTED_AUTHOR: 'ACME-BUGDROP[bot]',
       BUGDROP_CANARY_EXPECTED_LABELS_JSON: '["synthetic"]',
     };
 

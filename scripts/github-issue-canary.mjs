@@ -158,7 +158,7 @@ export async function verifyCanaryIssue({
   }
   if (candidate.body?.includes('## Screenshot')) failures.push('Issue contains a screenshot');
   if (candidate.state !== 'open') failures.push(`Issue state is ${candidate.state}, not open`);
-  if (candidate.user?.login !== requiredAuthor) {
+  if (!sameGitHubLogin(candidate.user?.login, requiredAuthor)) {
     failures.push(`Issue author is ${candidate.user?.login ?? 'missing'}, not ${requiredAuthor}`);
   }
   const actualLabels = normalizeLabels(candidate.labels);
@@ -590,6 +590,14 @@ function sameStringSet(left, right) {
   return (
     left.length === normalizedRight.length &&
     left.every((value, index) => value === normalizedRight[index])
+  );
+}
+
+function sameGitHubLogin(left, right) {
+  return (
+    typeof left === 'string' &&
+    typeof right === 'string' &&
+    left.toLowerCase() === right.toLowerCase()
   );
 }
 
