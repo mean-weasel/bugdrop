@@ -9,8 +9,9 @@ export default defineConfig({
     exclude: ['e2e/**', 'node_modules/**'],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'html'],
-      exclude: ['node_modules/', 'test/', 'e2e/', 'dist/', '*.config.ts'],
+      include: ['src/**/*.ts', 'scripts/**/*.{js,mjs,ts}'],
+      reporter: ['text', 'json', 'json-summary', 'html', 'lcov'],
+      exclude: ['**/*.d.ts', 'node_modules/**', 'test/**', 'e2e/**', 'dist/**', '**/*.config.ts'],
     },
   },
 });
