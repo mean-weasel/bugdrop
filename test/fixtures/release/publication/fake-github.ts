@@ -71,6 +71,22 @@ export class FakeGitHubPublicationAdapter {
     return clonePublicationState(this.state);
   }
 
+  async inspectRelease(releaseId: string, tag?: string) {
+    this.log.push(`inspect-release:${releaseId}`);
+    if (this.inspectFails || (this.failInspectAfterApplied && this.applied.length)) {
+      throw new Error('inspection unavailable');
+    }
+    const state = clonePublicationState(this.state);
+    const exact = state.releases?.find(release => release.id === releaseId);
+    if (!exact || (tag !== undefined && exact.tag !== tag)) {
+      throw new Error('exact release identity mismatch');
+    }
+    const matching =
+      state.releases?.filter(release => tag === undefined || release.tag === tag) ?? [];
+    state.releases = matching.length > 1 ? matching : [exact];
+    return state;
+  }
+
   private lose(point: LossPoint, phase: 'before' | 'after') {
     const set = phase === 'before' ? this.loseBefore : this.loseAfter;
     if (!set.delete(point)) return;
@@ -93,6 +109,7 @@ export class FakeGitHubPublicationAdapter {
     };
     this.applied.push(point);
     this.lose(point, 'after');
+    return { objectSha };
   }
 
   async createDraft(input: Record<string, unknown>) {
@@ -102,7 +119,7 @@ export class FakeGitHubPublicationAdapter {
     if (this.state.releases?.length) throw new Error('duplicate Release attempted');
     this.state.releases = [
       {
-        id: 'release-1',
+        id: '123',
         tag: input.tag,
         targetSha: input.targetSha,
         draft: true,
@@ -116,6 +133,7 @@ export class FakeGitHubPublicationAdapter {
     ];
     this.applied.push(point);
     this.lose(point, 'after');
+    return { releaseId: '123' };
   }
 
   async uploadAsset(input: { releaseId: string; name: string; bytes: Buffer }) {

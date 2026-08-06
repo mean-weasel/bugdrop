@@ -160,6 +160,197 @@ describe('GitHub publication inspection', () => {
     );
   });
 
+  it('hydrates one same-invocation release by exact ID and separately proves global uniqueness', async () => {
+    const publicationMarker = { planIdentity: `sha256:${'4'.repeat(64)}` };
+    const bodyMarker = `<!-- bugdrop-publication ${Buffer.from(JSON.stringify(publicationMarker)).toString('base64url')} -->`;
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/git/ref/tags/v1.2.3')) {
+        return response({ object: { type: 'tag', sha: TAG_OBJECT_SHA } });
+      }
+      if (url.pathname.endsWith(`/git/tags/${TAG_OBJECT_SHA}`)) {
+        return response({ message: 'annotation', object: { type: 'commit', sha: SHA } });
+      }
+      if (url.pathname.endsWith('/releases/456')) {
+        const release = {
+          id: 456,
+          tag_name: 'v1.2.3',
+          body: bodyMarker,
+          draft: true,
+          prerelease: false,
+          published_at: null,
+          assets: [],
+        };
+        return response(release);
+      }
+      if (url.pathname.endsWith('/releases')) {
+        return response([{ id: 456, tag_name: 'v1.2.3' }]);
+      }
+      throw new Error(`unexpected ${url.pathname}`);
+    });
+
+    await expect(adapter(fetchImpl).inspectRelease('456', 'v1.2.3')).resolves.toMatchObject({
+      complete: true,
+      releases: [{ id: '456', tag: 'v1.2.3', marker: publicationMarker, draft: true }],
+    });
+    const paths = fetchImpl.mock.calls.map(([input]) => new URL(String(input)).pathname);
+    expect(paths.indexOf('/repos/mean-weasel/bugdrop/releases/456')).toBeLessThan(
+      paths.indexOf('/repos/mean-weasel/bugdrop/releases')
+    );
+  });
+
+  it('returns complete duplicate identities after exact-ID hydration', async () => {
+    const paths: string[] = [];
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      paths.push(url.pathname);
+      if (url.pathname.endsWith('/git/ref/tags/v1.2.3')) {
+        return response({ object: { type: 'tag', sha: TAG_OBJECT_SHA } });
+      }
+      if (url.pathname.endsWith(`/git/tags/${TAG_OBJECT_SHA}`)) {
+        return response({ message: 'annotation', object: { type: 'commit', sha: SHA } });
+      }
+      if (url.pathname.endsWith('/releases/456')) {
+        return response({
+          id: 456,
+          tag_name: 'v1.2.3',
+          body: '',
+          draft: true,
+          prerelease: false,
+          published_at: null,
+          assets: [],
+        });
+      }
+      if (url.pathname.endsWith('/releases')) {
+        return response([
+          { id: 456, tag_name: 'v1.2.3' },
+          { id: 789, tag_name: 'v1.2.3' },
+        ]);
+      }
+      throw new Error(`unexpected ${url.pathname}`);
+    });
+
+    await expect(adapter(fetchImpl).inspectRelease('456', 'v1.2.3')).resolves.toMatchObject({
+      complete: true,
+      releases: [
+        { id: '456', tag: 'v1.2.3' },
+        { id: '789', tag: 'v1.2.3' },
+      ],
+    });
+    expect(paths.indexOf('/repos/mean-weasel/bugdrop/releases/456')).toBeLessThan(
+      paths.indexOf('/repos/mean-weasel/bugdrop/releases')
+    );
+  });
+
+  it.each([
+    ['zero global matches', []],
+    ['an alternate global ID', [{ id: 789, tag_name: 'v1.2.3' }]],
+  ])('rejects %s after exact-ID hydration', async (_name, globalMatches) => {
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/git/ref/tags/v1.2.3')) {
+        return response({ object: { type: 'tag', sha: TAG_OBJECT_SHA } });
+      }
+      if (url.pathname.endsWith(`/git/tags/${TAG_OBJECT_SHA}`)) {
+        return response({ message: 'annotation', object: { type: 'commit', sha: SHA } });
+      }
+      if (url.pathname.endsWith('/releases/456')) {
+        return response({
+          id: 456,
+          tag_name: 'v1.2.3',
+          body: '',
+          draft: true,
+          prerelease: false,
+          published_at: null,
+          assets: [],
+        });
+      }
+      if (url.pathname.endsWith('/releases')) return response(globalMatches);
+      throw new Error(`unexpected ${url.pathname}`);
+    });
+
+    await expect(adapter(fetchImpl).inspectRelease('456', 'v1.2.3')).rejects.toBeInstanceOf(
+      GithubPublicationAdapterError
+    );
+  });
+
+  it('rejects a mismatched exact-ID response before global listing', async () => {
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/git/ref/tags/v1.2.3')) {
+        return response({ object: { type: 'tag', sha: TAG_OBJECT_SHA } });
+      }
+      if (url.pathname.endsWith(`/git/tags/${TAG_OBJECT_SHA}`)) {
+        return response({ message: 'annotation', object: { type: 'commit', sha: SHA } });
+      }
+      if (url.pathname.endsWith('/releases/456')) {
+        return response({ id: 789, tag_name: 'v1.2.3', assets: [] });
+      }
+      throw new Error(`unexpected ${url.pathname}`);
+    });
+
+    await expect(adapter(fetchImpl).inspectRelease('456', 'v1.2.3')).rejects.toBeInstanceOf(
+      GithubPublicationAdapterError
+    );
+    expect(
+      fetchImpl.mock.calls.some(([input]) => new URL(String(input)).pathname.endsWith('/releases'))
+    ).toBe(false);
+  });
+
+  it('rejects unavailable global same-tag evidence after exact hydration', async () => {
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/git/ref/tags/v1.2.3')) {
+        return response({ object: { type: 'tag', sha: TAG_OBJECT_SHA } });
+      }
+      if (url.pathname.endsWith(`/git/tags/${TAG_OBJECT_SHA}`)) {
+        return response({ message: 'annotation', object: { type: 'commit', sha: SHA } });
+      }
+      if (url.pathname.endsWith('/releases/456')) {
+        return response({
+          id: 456,
+          tag_name: 'v1.2.3',
+          body: '',
+          draft: true,
+          prerelease: false,
+          published_at: null,
+          assets: [],
+        });
+      }
+      if (url.pathname.endsWith('/releases')) return response({ message: 'unavailable' }, 500);
+      throw new Error(`unexpected ${url.pathname}`);
+    });
+
+    await expect(adapter(fetchImpl).inspectRelease('456', 'v1.2.3')).rejects.toBeInstanceOf(
+      GithubPublicationAdapterError
+    );
+  });
+
+  it('rejects an exact-ID release whose tag differs from the expected publication', async () => {
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/git/ref/tags/v1.2.3')) {
+        return response({ object: { type: 'tag', sha: TAG_OBJECT_SHA } });
+      }
+      if (url.pathname.endsWith(`/git/tags/${TAG_OBJECT_SHA}`)) {
+        return response({ message: 'annotation', object: { type: 'commit', sha: SHA } });
+      }
+      return response({
+        id: 456,
+        tag_name: 'v9.9.9',
+        body: '',
+        draft: true,
+        prerelease: false,
+        published_at: null,
+        assets: [],
+      });
+    });
+
+    await expect(adapter(fetchImpl).inspectRelease('456', 'v1.2.3')).rejects.toBeInstanceOf(
+      GithubPublicationAdapterError
+    );
+  });
+
   it('uses pagination authority and accepts an exactly full final bounded page', async () => {
     let releasePageCalls = 0;
     const fetchImpl = vi.fn(async (input: URL | RequestInfo) => {
@@ -240,11 +431,13 @@ describe('GitHub publication mutations', () => {
         ? response({ sha: TAG_OBJECT_SHA }, 201)
         : response({ ref: 'refs/tags/v1.2.3' }, 201);
     });
-    await adapter(fetchImpl).createAnnotatedTag({
-      tag: 'v1.2.3',
-      targetSha: SHA,
-      annotation: 'exact annotation',
-    });
+    await expect(
+      adapter(fetchImpl).createAnnotatedTag({
+        tag: 'v1.2.3',
+        targetSha: SHA,
+        annotation: 'exact annotation',
+      })
+    ).resolves.toEqual({ objectSha: TAG_OBJECT_SHA });
     expect(calls).toEqual([
       {
         method: 'POST',
@@ -277,12 +470,14 @@ describe('GitHub publication mutations', () => {
       return response({ id: 123 }, 201);
     });
     const client = adapter(fetchImpl);
-    await client.createDraft({
-      tag: 'v1.2.3',
-      targetSha: SHA,
-      name: 'BugDrop 1.2.3',
-      body: 'notes',
-    });
+    await expect(
+      client.createDraft({
+        tag: 'v1.2.3',
+        targetSha: SHA,
+        name: 'BugDrop 1.2.3',
+        body: 'notes',
+      })
+    ).resolves.toEqual({ releaseId: '123' });
     await client.uploadAsset({ releaseId: '123', name: 'widget.js', bytes: Buffer.from('asset') });
     await client.publishDraft({ releaseId: '123' });
     expect(calls.map(call => [call.method, call.url])).toEqual([

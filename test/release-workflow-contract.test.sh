@@ -127,9 +127,8 @@ for literal in \
   '[[ "$CONTROLLER_SHA" =~ ^[0-9a-f]{40}$ ]]' \
   '[[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]' \
   'CONTROLLER_SHA: ${{ github.workflow_sha }}' \
-  'partial retry requires all three resume inputs or none of them.' \
-  'plan_controller_sha=$plan_controller_sha' \
-  '--arg resumePlanIdentity "$RESUME_PLAN_IDENTITY"' \
+  'if [ -n "$RESUME_CONTROLLER_SHA$RESUME_REMOTE_MAIN_SHA$RESUME_PLAN_IDENTITY" ]; then' \
+  'Legacy resume inputs are disabled; use reviewed reset-and-replay recovery.' \
   'node controller/scripts/release/workflow.mjs guard' \
   'node controller/scripts/release/github-adapter.mjs plan' \
   '--arg repositoryDir "$GITHUB_WORKSPACE/controller"' \
@@ -137,8 +136,38 @@ for literal in \
   "echo 'completed=true'"; do
   grep -Fq -- "$literal" <<< "$guard_block" || fail "guard-and-plan lacks: $literal"
 done
-[[ $(grep -Fc 'RESUME_PLAN_IDENTITY:' "$workflow") -eq 3 ]] ||
-  fail 'resume plan identity must be exported to guard, initial planning, and approval revalidation'
+[[ $(grep -Fc 'RESUME_PLAN_IDENTITY:' "$workflow") -eq 1 ]] ||
+  fail 'resume plan identity must exist only in the first pre-checkout guard'
+
+guard_script=$(awk '
+  /- name: Reject non-main or malformed dispatch before checkout/ { found = 1 }
+  found && /^        run: \|$/ { capture = 1; next }
+  capture && /^      - name: Checkout immutable controller$/ { exit }
+  capture { sub(/^          /, ""); print }
+' "$workflow")
+for mask in 0 1 2 3 4 5 6 7; do
+  resume_controller=''
+  resume_main=''
+  resume_plan=''
+  ((mask & 1)) && resume_controller='a'
+  ((mask & 2)) && resume_main='b'
+  ((mask & 4)) && resume_plan='c'
+  if output=$(env \
+    CONTROLLER_SHA="$(printf 'a%.0s' {1..40})" \
+    DISPATCH_REF='refs/heads/main' \
+    GITHUB_OUTPUT=/dev/null \
+    RESUME_CONTROLLER_SHA="$resume_controller" \
+    RESUME_PLAN_IDENTITY="$resume_plan" \
+    RESUME_REMOTE_MAIN_SHA="$resume_main" \
+    TARGET_SHA="$(printf 'b%.0s' {1..40})" \
+    bash -c "$guard_script" 2>&1); then
+    [[ "$mask" -eq 0 ]] || fail "resume combination $mask reached beyond the first guard"
+  else
+    [[ "$mask" -ne 0 ]] || fail 'fresh all-empty dispatch failed the first guard'
+    grep -Fq 'Legacy resume inputs are disabled; use reviewed reset-and-replay recovery.' <<< "$output" ||
+      fail "resume combination $mask did not return the stable reset-and-replay rejection"
+  fi
+done
 
 for literal in \
   "request_key=\$(jq -er '.planIdentity[7:]' request-plan.json)" \
@@ -190,15 +219,13 @@ for literal in \
   'retention-days: 14'; do
   grep -Fq -- "$literal" <<< "$verify_block" || fail "verify-candidate lacks: $literal"
 done
-for literal in \
-  "if: needs.guard-and-plan.outputs.resuming == 'true'" \
-  'node controller/scripts/release/live-release.mjs inspect-publication' \
-  "test \"\$(jq -er '.status' partial-inspection.json)\" = 'partial-resumable'"; do
-  grep -Fq -- "$literal" <<< "$verify_block" || fail "partial retry verification lacks: $literal"
+for removed_resume_path in \
+  'RESUMING' \
+  'resumePlanIdentity' \
+  'Authenticate exact partial-publication retry' \
+  'partial-inspection'; do
+  require_absent "$removed_resume_path"
 done
-[[ $(grep -Fc 'test "$(jq -er '\''.nextAction.kind'\'' partial-inspection.json)" != '\''create-tag'\''' "$workflow") -eq 2 ]] ||
-  fail 'partial retry must reject pristine publication state before dry-run success and mutation'
-require_literal 'Existing tag and Release state was inspected read-only.'
 if grep -Fq -- '{$requestPlan:' <<< "$verify_block"; then
   fail 'slurped request plan must be a literal requestPlan field, not a dynamic object key'
 fi
