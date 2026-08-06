@@ -223,9 +223,44 @@ export function createGithubPublicationAdapter({
       },
     };
   };
-  const inspect = async requestedTag => {
-    const tag = match(requestedTag, TAG, 'tag');
-    const tagState = await inspectTag(tag);
+  const hydrateRelease = async (release, tag, tagState) => {
+    if (release.tag_name !== tag || !RELEASE_ID.test(String(release.id ?? ''))) {
+      fail('INVALID_RESPONSE', 'release identity is invalid');
+    }
+    if (!Array.isArray(release.assets)) fail('INVALID_RESPONSE', 'release assets are incomplete');
+    const assets = [];
+    let totalBytes = 0;
+    for (const asset of release.assets) {
+      if (
+        !ASSET.test(asset?.name ?? '') ||
+        !RELEASE_ID.test(String(asset?.id ?? '')) ||
+        typeof asset?.url !== 'string' ||
+        !Number.isSafeInteger(asset?.size) ||
+        asset.size < 0 ||
+        asset.size > MAX_WIDGET_BYTES ||
+        totalBytes + asset.size > MAX_SNAPSHOT_BYTES
+      ) {
+        fail('INVALID_RESPONSE', 'release asset identity is invalid');
+      }
+      assets.push({
+        name: asset.name,
+        bytes: await requestBytes(asset.url, asset.size, String(asset.id)),
+      });
+      totalBytes += asset.size;
+    }
+    return {
+      ...marker(release.body),
+      assets,
+      body: String(release.body ?? ''),
+      draft: release.draft === true,
+      id: String(release.id),
+      prerelease: release.prerelease === true,
+      published: release.draft === false && release.published_at !== null,
+      tag,
+      targetSha: tagState.tagObject?.targetSha,
+    };
+  };
+  const listMatchingReleases = async tag => {
     const matchingReleases = [];
     for (let page = 1; page <= MAX_RELEASE_PAGES; page += 1) {
       const releasePage = await request(
@@ -239,57 +274,54 @@ export function createGithubPublicationAdapter({
         fail('INVALID_RESPONSE', 'release pagination exceeded its authenticated bound');
       }
     }
-    if (matchingReleases.length > 1) {
-      const releases = matchingReleases.map(release => {
-        if (release.tag_name !== tag || !RELEASE_ID.test(String(release.id ?? ''))) {
-          fail('INVALID_RESPONSE', 'release identity is invalid');
-        }
-        return { id: String(release.id), tag };
-      });
-      return { complete: true, ...tagState, releases };
-    }
-    const releases = [];
-    for (const release of matchingReleases) {
+    return matchingReleases;
+  };
+  const duplicateObservation = (matchingReleases, tag, tagState) => {
+    const releases = matchingReleases.map(release => {
       if (release.tag_name !== tag || !RELEASE_ID.test(String(release.id ?? ''))) {
         fail('INVALID_RESPONSE', 'release identity is invalid');
       }
-      if (!Array.isArray(release.assets)) fail('INVALID_RESPONSE', 'release assets are incomplete');
-      const assets = [];
-      let totalBytes = 0;
-      for (const asset of release.assets) {
-        if (
-          !ASSET.test(asset?.name ?? '') ||
-          !RELEASE_ID.test(String(asset?.id ?? '')) ||
-          typeof asset?.url !== 'string' ||
-          !Number.isSafeInteger(asset?.size) ||
-          asset.size < 0 ||
-          asset.size > MAX_WIDGET_BYTES ||
-          totalBytes + asset.size > MAX_SNAPSHOT_BYTES
-        ) {
-          fail('INVALID_RESPONSE', 'release asset identity is invalid');
-        }
-        assets.push({
-          name: asset.name,
-          bytes: await requestBytes(asset.url, asset.size, String(asset.id)),
-        });
-        totalBytes += asset.size;
-      }
-      releases.push({
-        ...marker(release.body),
-        assets,
-        body: String(release.body ?? ''),
-        draft: release.draft === true,
-        id: String(release.id),
-        prerelease: release.prerelease === true,
-        published: release.draft === false && release.published_at !== null,
-        tag,
-        targetSha: tagState.tagObject?.targetSha,
-      });
+      return { id: String(release.id), tag };
+    });
+    return { complete: true, ...tagState, releases };
+  };
+  const inspect = async requestedTag => {
+    const tag = match(requestedTag, TAG, 'tag');
+    const tagState = await inspectTag(tag);
+    const matchingReleases = await listMatchingReleases(tag);
+    if (matchingReleases.length > 1) {
+      return duplicateObservation(matchingReleases, tag, tagState);
+    }
+    const releases = [];
+    for (const release of matchingReleases) {
+      releases.push(await hydrateRelease(release, tag, tagState));
     }
     return { complete: true, ...tagState, releases };
   };
   return {
     inspect,
+    async inspectRelease(requestedReleaseId, requestedTag) {
+      const releaseId = match(String(requestedReleaseId ?? ''), RELEASE_ID, 'releaseId');
+      const tag = match(requestedTag, TAG, 'tag');
+      const tagState = await inspectTag(tag);
+      const release = await request('GET', `/repos/${repository}/releases/${releaseId}`);
+      if (String(release.id ?? '') !== releaseId) {
+        fail('INVALID_RESPONSE', 'exact release ID does not match the requested ID');
+      }
+      const hydrated = await hydrateRelease(release, tag, tagState);
+      const matchingReleases = await listMatchingReleases(tag);
+      if (matchingReleases.length > 1) {
+        return duplicateObservation(matchingReleases, tag, tagState);
+      }
+      if (matchingReleases.length !== 1 || String(matchingReleases[0]?.id ?? '') !== releaseId) {
+        fail('INVALID_RESPONSE', 'global same-tag release identity is not uniquely owned');
+      }
+      return {
+        complete: true,
+        ...tagState,
+        releases: [hydrated],
+      };
+    },
     async createAnnotatedTag(action) {
       const tag = match(action.tag, TAG, 'tag');
       const targetSha = match(action.targetSha, SHA, 'targetSha');
@@ -300,9 +332,10 @@ export function createGithubPublicationAdapter({
       await request('POST', `/repos/${repository}/git/refs`, {
         body: { ref: `refs/tags/${tag}`, sha: objectSha },
       });
+      return { objectSha };
     },
     async createDraft(action) {
-      await request('POST', `/repos/${repository}/releases`, {
+      const created = await request('POST', `/repos/${repository}/releases`, {
         body: {
           body: String(action.body ?? ''),
           draft: true,
@@ -313,6 +346,7 @@ export function createGithubPublicationAdapter({
           target_commitish: match(action.targetSha, SHA, 'targetSha'),
         },
       });
+      return { releaseId: match(String(created.id ?? ''), RELEASE_ID, 'created release ID') };
     },
     async uploadAsset(action) {
       const releaseId = match(String(action.releaseId ?? ''), RELEASE_ID, 'releaseId');

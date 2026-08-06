@@ -120,6 +120,15 @@ For `manual-recovery-required`, do not guess a version or run an ad hoc rollback
 deployment, publication, and live identity artifacts; obtain explicit incident authority; then use a
 reviewed recovery action appropriate to the observed state. Preserve the failed run as evidence.
 
+### Reset-and-replay recovery
+
+Partial publication is not executable resume authority. The legacy `resume_controller_sha`,
+`resume_remote_main_sha`, and `resume_plan_identity` workflow inputs remain only as compatibility
+tombstones: any non-empty value is rejected by the first dispatch guard before checkout, planning,
+environment access, or mutation. After preserving incident evidence, use a separately reviewed
+reset-and-replay procedure to restore a pristine publication state. Only then dispatch a fresh release
+with all three legacy resume inputs empty.
+
 ## Notification-Only Retry
 
 Re-running the production release for an already published exact plan is a core no-op and deliberately

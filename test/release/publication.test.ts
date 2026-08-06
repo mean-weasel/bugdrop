@@ -100,6 +100,76 @@ async function publishedAdapter() {
   return { adapter, bundle };
 }
 
+type DelayedMutation = 'create-tag' | 'create-draft' | 'upload-asset' | 'publish-draft';
+type InspectionObservation = FakeGitHubPublicationAdapter['state'] | Error;
+
+function queueMutationInspections(
+  adapter: FakeGitHubPublicationAdapter,
+  point: DelayedMutation,
+  observations: (
+    before: FakeGitHubPublicationAdapter['state'],
+    after: FakeGitHubPublicationAdapter['state']
+  ) => InspectionObservation[]
+) {
+  const method = {
+    'create-tag': 'createAnnotatedTag',
+    'create-draft': 'createDraft',
+    'upload-asset': 'uploadAsset',
+    'publish-draft': 'publishDraft',
+  }[point] as 'createAnnotatedTag' | 'createDraft' | 'uploadAsset' | 'publishDraft';
+  const mutate = adapter[method].bind(adapter) as (input: never) => Promise<unknown>;
+  const inspect = adapter.inspect.bind(adapter);
+  const inspectRelease = adapter.inspectRelease.bind(adapter);
+  let queued: InspectionObservation[] = [];
+
+  adapter[method] = (async (input: never) => {
+    const before = clonePublicationState(adapter.state);
+    const appliedBefore = adapter.applied.length;
+    try {
+      return await mutate(input);
+    } finally {
+      if (adapter.applied.length > appliedBefore) {
+        queued = observations(before, clonePublicationState(adapter.state));
+      }
+    }
+  }) as (typeof adapter)[typeof method];
+  const queuedInspection = async (log: string, fallback: () => Promise<unknown>) => {
+    const observation = queued.shift();
+    if (!observation) return fallback();
+    adapter.log.push(log);
+    if (observation instanceof Error) throw observation;
+    return clonePublicationState(observation);
+  };
+  adapter.inspect = async () => queuedInspection('inspect', inspect) as ReturnType<typeof inspect>;
+  adapter.inspectRelease = async (releaseId: string, tag?: string) =>
+    queuedInspection(`inspect-release:${releaseId}`, () =>
+      inspectRelease(releaseId, tag)
+    ) as ReturnType<typeof inspectRelease>;
+  return adapter;
+}
+
+function delayMutationVisibility(
+  adapter: FakeGitHubPublicationAdapter,
+  point: DelayedMutation,
+  inspections: number
+) {
+  const count = Number.isFinite(inspections) ? inspections : 10;
+  return queueMutationInspections(adapter, point, before =>
+    Array.from({ length: count }, () => clonePublicationState(before))
+  );
+}
+
+async function preexistingDraftAdapter(bundle = publicationBundle()) {
+  const published = new FakeGitHubPublicationAdapter();
+  await expect(executePublication({ adapter: published, bundle })).resolves.toMatchObject({
+    status: 'published',
+  });
+  const state = clonePublicationState(published.state);
+  state.releases![0].draft = true;
+  state.releases![0].published = false;
+  return new FakeGitHubPublicationAdapter({ state });
+}
+
 describe('complete publication and exact retry', () => {
   it('creates only the canonical tag, matched draft, absent assets, and explicit publish', async () => {
     const { adapter, bundle } = await publishedAdapter();
@@ -113,7 +183,12 @@ describe('complete publication and exact retry', () => {
       ...bundle.finalPlan.requiredAssets.map(name => `upload-asset:${name}`),
       'publish-draft',
     ]);
-    expect(adapter.log.filter(item => item === 'inspect').length).toBe(adapter.applied.length + 1);
+    expect(adapter.log.filter(item => item.startsWith('inspect')).length).toBe(
+      adapter.applied.length + 1
+    );
+    expect(adapter.log.filter(item => item === 'inspect-release:123')).toHaveLength(
+      adapter.applied.length - 1
+    );
     expect(adapter.log.join(' ')).not.toMatch(/force|move|delete|overwrite|increment/);
   });
 
@@ -127,7 +202,7 @@ describe('complete publication and exact retry', () => {
     expect(adapter.applied).toEqual(before);
   });
 
-  it.each(['create-tag', 'create-draft', 'upload-asset', 'publish-draft'] as const)(
+  it.each(['upload-asset', 'publish-draft'] as const)(
     'recovers an applied %s mutation after its response is lost',
     async point => {
       const bundle = publicationBundle();
@@ -138,27 +213,426 @@ describe('complete publication and exact retry', () => {
       expect(adapter.applied.filter(item => item.startsWith(point))).toHaveLength(
         point === 'upload-asset' ? bundle.finalPlan.requiredAssets.length : 1
       );
+      expect(adapter.log.filter(item => item.startsWith(point))).toHaveLength(
+        point === 'upload-asset' ? bundle.finalPlan.requiredAssets.length : 1
+      );
+    }
+  );
+
+  it.each(['create-tag', 'create-draft'] as const)(
+    'fails closed after an applied %s response is lost without claiming fresh ownership',
+    async point => {
+      const bundle = publicationBundle();
+      const adapter = new FakeGitHubPublicationAdapter({ loseAfter: [point] });
+      await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+        status: 'unknown-critical',
+        reason: expect.stringContaining('mutation-outcome-unobserved'),
+      });
+      expect(adapter.log.filter(item => item.startsWith(point))).toHaveLength(1);
+      if (point === 'create-tag') expect(adapter.log).not.toContain('create-draft');
+      if (point === 'create-draft') {
+        expect(adapter.log.some(item => item.startsWith('upload-asset'))).toBe(false);
+      }
+    }
+  );
+
+  it('fails closed when a lost tag response is followed by the correct tag becoming visible', async () => {
+    const bundle = publicationBundle();
+    const adapter = delayMutationVisibility(
+      new FakeGitHubPublicationAdapter({ loseAfter: ['create-tag'] }),
+      'create-tag',
+      2
+    );
+
+    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      status: 'unknown-critical',
+      reason: expect.stringContaining('mutation-outcome-unobserved:create-tag'),
+    });
+    expect(adapter.log.filter(item => item === 'create-tag')).toHaveLength(1);
+    expect(adapter.applied.filter(item => item === 'create-tag')).toHaveLength(1);
+    expect(adapter.log.filter(item => item === 'create-draft')).toHaveLength(0);
+    expect(adapter.log.filter(item => item.startsWith('upload-asset'))).toHaveLength(0);
+    expect(adapter.log.filter(item => item === 'publish-draft')).toHaveLength(0);
+  });
+
+  it('fails closed when an unapplied lost tag is followed by a matching tag observation', async () => {
+    const bundle = publicationBundle();
+    const expected = validatePublicationBundle(bundle);
+    const adapter = new FakeGitHubPublicationAdapter({ loseBefore: ['create-tag'] });
+    const inspect = adapter.inspect.bind(adapter);
+    let inspections = 0;
+    adapter.inspect = async () => {
+      inspections += 1;
+      if (inspections === 1) return inspect();
+      adapter.log.push('inspect');
+      return {
+        complete: true,
+        tagRef: { objectSha: '7'.repeat(40) },
+        tagObject: {
+          kind: 'annotated',
+          objectSha: '7'.repeat(40),
+          targetType: 'commit',
+          targetSha: bundle.finalPlan.targetSha,
+          annotation: expected.tagAnnotation,
+        },
+        releases: [],
+      };
+    };
+
+    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      status: 'unknown-critical',
+      reason: expect.stringContaining('mutation-outcome-unobserved:create-tag'),
+    });
+    expect(adapter.log.filter(item => item === 'create-tag')).toHaveLength(1);
+    expect(adapter.applied.filter(item => item === 'create-tag')).toHaveLength(0);
+    expect(adapter.log.filter(item => item === 'create-draft')).toHaveLength(0);
+    expect(adapter.log.filter(item => item.startsWith('upload-asset'))).toHaveLength(0);
+    expect(adapter.log.filter(item => item === 'publish-draft')).toHaveLength(0);
+  });
+
+  it('fails closed on a mismatched tag object after one successful tag mutation', async () => {
+    const bundle = publicationBundle();
+    const adapter = queueMutationInspections(
+      new FakeGitHubPublicationAdapter(),
+      'create-tag',
+      (_before, after) => {
+        const mismatch = clonePublicationState(after);
+        mismatch.tagRef!.objectSha = '8'.repeat(40);
+        return [mismatch];
+      }
+    );
+
+    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      status: 'conflict',
+      reason: 'tag-identity-mismatch',
+    });
+    expect(adapter.log.filter(item => item === 'create-tag')).toHaveLength(1);
+    expect(adapter.applied.filter(item => item === 'create-tag')).toHaveLength(1);
+    expect(adapter.log.filter(item => item === 'create-draft')).toHaveLength(0);
+    expect(adapter.log.filter(item => item.startsWith('upload-asset'))).toHaveLength(0);
+    expect(adapter.log.filter(item => item === 'publish-draft')).toHaveLength(0);
+  });
+
+  it.each(['create-tag', 'create-draft', 'upload-asset', 'publish-draft'] as const)(
+    'converges delayed %s visibility without repeating the mutation',
+    async point => {
+      const bundle = publicationBundle();
+      const adapter = delayMutationVisibility(new FakeGitHubPublicationAdapter(), point, 2);
+      await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+        status: 'published',
+      });
+      expect(adapter.applied.filter(item => item.startsWith(point))).toHaveLength(
+        point === 'upload-asset' ? bundle.finalPlan.requiredAssets.length : 1
+      );
+      expect(adapter.log.filter(item => item.startsWith(point))).toHaveLength(
+        point === 'upload-asset' ? bundle.finalPlan.requiredAssets.length : 1
+      );
+    }
+  );
+
+  it.each(['upload-asset', 'publish-draft'] as const)(
+    'converges a lost %s response through delayed visibility without repeating the mutation',
+    async point => {
+      const bundle = publicationBundle();
+      const adapter = delayMutationVisibility(
+        new FakeGitHubPublicationAdapter({ loseAfter: [point] }),
+        point,
+        2
+      );
+      await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+        status: 'published',
+      });
+      expect(adapter.applied.filter(item => item.startsWith(point))).toHaveLength(
+        point === 'upload-asset' ? bundle.finalPlan.requiredAssets.length : 1
+      );
     }
   );
 
   it.each(['create-tag', 'create-draft', 'upload-asset', 'publish-draft'] as const)(
-    'returns a safe partial after an unapplied %s response loss and resumes exactly',
+    'fails closed when successful %s visibility never converges',
+    async point => {
+      const bundle = publicationBundle();
+      const adapter = delayMutationVisibility(
+        new FakeGitHubPublicationAdapter(),
+        point,
+        Number.POSITIVE_INFINITY
+      );
+      await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+        status: 'unknown-critical',
+        reason: expect.stringContaining('mutation-outcome-unobserved'),
+        recovery: { automaticGitHubCleanup: false },
+      });
+      expect(adapter.applied.filter(item => item.startsWith(point))).toHaveLength(1);
+      expect(adapter.log.filter(item => item.startsWith(point))).toHaveLength(1);
+      if (point === 'create-tag') {
+        expect(adapter.log.filter(item => item === 'create-draft')).toHaveLength(0);
+        expect(adapter.log.filter(item => item.startsWith('upload-asset'))).toHaveLength(0);
+        expect(adapter.log.filter(item => item === 'publish-draft')).toHaveLength(0);
+      }
+    }
+  );
+
+  it('fails closed when exact-ID inspection returns a different release', async () => {
+    const bundle = publicationBundle();
+    const adapter = queueMutationInspections(
+      new FakeGitHubPublicationAdapter(),
+      'create-draft',
+      (_before, after) => {
+        const mismatch = clonePublicationState(after);
+        mismatch.releases![0].id = '456';
+        return Array.from({ length: 4 }, () => clonePublicationState(mismatch));
+      }
+    );
+
+    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      status: 'unknown-critical',
+      reason: expect.stringContaining('mutation-outcome-unobserved:create-draft'),
+    });
+    expect(adapter.log.filter(item => item === 'create-tag')).toHaveLength(1);
+    expect(adapter.log.filter(item => item === 'create-draft')).toHaveLength(1);
+    expect(adapter.applied.filter(item => item === 'create-draft')).toHaveLength(1);
+    expect(adapter.log.filter(item => item.startsWith('upload-asset'))).toHaveLength(0);
+    expect(adapter.log.filter(item => item === 'publish-draft')).toHaveLength(0);
+  });
+
+  it('detects a duplicate appearing after draft creation before the first upload', async () => {
+    const bundle = publicationBundle();
+    const adapter = queueMutationInspections(
+      new FakeGitHubPublicationAdapter(),
+      'create-draft',
+      (_before, after) => {
+        const duplicate = clonePublicationState(after.releases![0]);
+        duplicate.id = '456';
+        after.releases!.push(duplicate);
+        return [after];
+      }
+    );
+
+    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      status: 'conflict',
+      reason: 'duplicate-release',
+    });
+    expect(adapter.log.filter(item => item === 'create-draft')).toHaveLength(1);
+    expect(adapter.log.filter(item => item.startsWith('upload-asset'))).toHaveLength(0);
+    expect(adapter.log.filter(item => item === 'publish-draft')).toHaveLength(0);
+  });
+
+  it('detects a duplicate appearing between asset uploads before the next upload', async () => {
+    const bundle = publicationBundle();
+    const adapter = queueMutationInspections(
+      new FakeGitHubPublicationAdapter(),
+      'upload-asset',
+      (_before, after) => {
+        const duplicate = clonePublicationState(after.releases![0]);
+        duplicate.id = '456';
+        after.releases!.push(duplicate);
+        return [after];
+      }
+    );
+
+    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      status: 'conflict',
+      reason: 'duplicate-release',
+    });
+    expect(adapter.log.filter(item => item.startsWith('upload-asset'))).toHaveLength(1);
+    expect(adapter.applied.filter(item => item.startsWith('upload-asset'))).toHaveLength(1);
+    expect(adapter.log.filter(item => item === 'publish-draft')).toHaveLength(0);
+  });
+
+  it('detects a duplicate after the final asset before publish', async () => {
+    const bundle = publicationBundle();
+    const adapter = queueMutationInspections(
+      new FakeGitHubPublicationAdapter(),
+      'upload-asset',
+      (_before, after) => {
+        if (after.releases![0].assets.length !== bundle.finalPlan.requiredAssets.length) return [];
+        const duplicate = clonePublicationState(after.releases![0]);
+        duplicate.id = '456';
+        after.releases!.push(duplicate);
+        return [after];
+      }
+    );
+
+    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      status: 'conflict',
+      reason: 'duplicate-release',
+    });
+    expect(adapter.log.filter(item => item.startsWith('upload-asset'))).toHaveLength(
+      bundle.finalPlan.requiredAssets.length
+    );
+    expect(adapter.applied.filter(item => item.startsWith('upload-asset'))).toHaveLength(
+      bundle.finalPlan.requiredAssets.length
+    );
+    expect(adapter.log.filter(item => item === 'publish-draft')).toHaveLength(0);
+  });
+
+  it('fails closed on a tag-only regression after one publish mutation', async () => {
+    const bundle = publicationBundle();
+    const adapter = queueMutationInspections(
+      new FakeGitHubPublicationAdapter(),
+      'publish-draft',
+      (_before, after) => {
+        const tagOnly = clonePublicationState(after);
+        tagOnly.releases = [];
+        return Array.from({ length: 4 }, () => clonePublicationState(tagOnly));
+      }
+    );
+
+    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      status: 'unknown-critical',
+      reason: expect.stringContaining('mutation-outcome-unobserved:publish-draft'),
+    });
+    expect(adapter.log.filter(item => item === 'publish-draft')).toHaveLength(1);
+    expect(adapter.applied.filter(item => item === 'publish-draft')).toHaveLength(1);
+    expect(adapter.log.filter(item => item === 'create-draft')).toHaveLength(1);
+    expect(adapter.log.filter(item => item.startsWith('upload-asset'))).toHaveLength(
+      bundle.finalPlan.requiredAssets.length
+    );
+  });
+
+  it('fails closed on an earlier-asset regression after one later upload mutation', async () => {
+    const bundle = publicationBundle();
+    const required = bundle.finalPlan.requiredAssets;
+    const current = required[2];
+    const earlier = required[1];
+    const adapter = queueMutationInspections(
+      new FakeGitHubPublicationAdapter(),
+      'upload-asset',
+      (before, after) => {
+        if (before.releases![0].assets.some(asset => asset.name === current)) return [];
+        if (!after.releases![0].assets.some(asset => asset.name === current)) return [];
+        const regressive = clonePublicationState(after);
+        regressive.releases![0].assets = regressive.releases![0].assets.filter(
+          asset => asset.name !== earlier
+        );
+        return Array.from({ length: 4 }, () => clonePublicationState(regressive));
+      }
+    );
+
+    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      status: 'unknown-critical',
+      reason: expect.stringContaining(`mutation-outcome-unobserved:upload-asset:123:${current}`),
+    });
+    expect(adapter.log.filter(item => item === `upload-asset:${current}`)).toHaveLength(1);
+    expect(adapter.applied.filter(item => item === `upload-asset:${current}`)).toHaveLength(1);
+    expect(adapter.log.filter(item => item === `upload-asset:${earlier}`)).toHaveLength(1);
+    expect(adapter.log.filter(item => item === 'publish-draft')).toHaveLength(0);
+  });
+
+  it('does not repeat a mutation when every observation retains the same action key', async () => {
+    const bundle = publicationBundle();
+    const adapter = queueMutationInspections(
+      new FakeGitHubPublicationAdapter(),
+      'create-draft',
+      before => Array.from({ length: 4 }, () => clonePublicationState(before))
+    );
+
+    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      status: 'unknown-critical',
+      reason: expect.stringContaining('mutation-outcome-unobserved:create-draft'),
+    });
+    expect(adapter.log.filter(item => item === 'create-tag')).toHaveLength(1);
+    expect(adapter.log.filter(item => item === 'create-draft')).toHaveLength(1);
+    expect(adapter.applied.filter(item => item === 'create-draft')).toHaveLength(1);
+    expect(adapter.log.filter(item => item.startsWith('upload-asset'))).toHaveLength(0);
+    expect(adapter.log.filter(item => item === 'publish-draft')).toHaveLength(0);
+  });
+
+  it.each(['create-tag', 'create-draft', 'upload-asset', 'publish-draft'] as const)(
+    'fails closed after an unapplied %s response loss without retrying the mutation',
     async point => {
       const bundle = publicationBundle();
       const adapter = new FakeGitHubPublicationAdapter({ loseBefore: [point] });
       await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
-        status: 'partial-resumable',
+        status: 'unknown-critical',
+        reason: expect.stringContaining('mutation-outcome-unobserved'),
         recovery: { production: 'restore-prior-baseline', automaticGitHubCleanup: false },
       });
-      await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
-        status: 'published',
-      });
-      expect(new Set(adapter.state.releases!.map(release => release.tag)).size).toBe(1);
-      expect(new Set(adapter.state.releases![0].assets.map(asset => asset.name)).size).toBe(
-        bundle.finalPlan.requiredAssets.length
-      );
+      expect(adapter.log.filter(item => item.startsWith(point))).toHaveLength(1);
+      if (point === 'create-tag') {
+        expect(adapter.log).not.toContain('create-draft');
+        expect(adapter.applied).toEqual([]);
+      }
     }
   );
+
+  it('ignores transient inspection failures and regressions until forward state is visible', async () => {
+    const bundle = publicationBundle();
+    const adapter = queueMutationInspections(
+      new FakeGitHubPublicationAdapter(),
+      'create-draft',
+      (before, after) => [
+        new Error('transient inspection failure'),
+        clonePublicationState(before),
+        clonePublicationState(after),
+      ]
+    );
+
+    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      status: 'published',
+    });
+    expect(adapter.applied.filter(item => item === 'create-draft')).toHaveLength(1);
+  });
+
+  it('fails closed when transient inspection failures never yield forward state', async () => {
+    const bundle = publicationBundle();
+    const adapter = queueMutationInspections(
+      new FakeGitHubPublicationAdapter(),
+      'create-draft',
+      before => [
+        new Error('transient inspection failure'),
+        clonePublicationState(before),
+        new Error('transient inspection failure'),
+        clonePublicationState(before),
+      ]
+    );
+
+    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      status: 'unknown-critical',
+      reason: expect.stringContaining('mutation-outcome-unobserved'),
+    });
+    expect(adapter.applied.filter(item => item === 'create-draft')).toHaveLength(1);
+    expect(adapter.log.filter(item => item === 'create-draft')).toHaveLength(1);
+  });
+});
+
+describe('pre-existing publication state', () => {
+  it('fails closed on an initial exact tag without mutating', async () => {
+    const { adapter: published, bundle } = await publishedAdapter();
+    const state = clonePublicationState(published.state);
+    state.releases = [];
+    const adapter = new FakeGitHubPublicationAdapter({ state });
+
+    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      status: 'unknown-critical',
+      reason: 'pre-existing-publication-state',
+    });
+    expect(adapter.applied).toEqual([]);
+    expect(adapter.log).not.toContain('create-draft');
+  });
+
+  it('fails closed on an initial missing-asset draft without mutating', async () => {
+    const bundle = publicationBundle();
+    const adapter = await preexistingDraftAdapter(bundle);
+    adapter.state.releases![0].assets = adapter.state.releases![0].assets.filter(
+      asset => asset.name !== bundle.finalPlan.requiredAssets[0]
+    );
+    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      status: 'unknown-critical',
+      reason: 'pre-existing-publication-state',
+    });
+    expect(adapter.applied).toEqual([]);
+  });
+
+  it('fails closed on an initial publish-ready draft without mutating', async () => {
+    const bundle = publicationBundle();
+    const adapter = await preexistingDraftAdapter(bundle);
+    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      status: 'unknown-critical',
+      reason: 'pre-existing-publication-state',
+    });
+    expect(adapter.applied).toEqual([]);
+  });
 });
 
 describe('conflicts, unknown state, and bundle authentication', () => {

@@ -16,6 +16,7 @@ const RECOVERY = Object.freeze({
   preservePublicationState: true,
   production: 'restore-prior-baseline',
 });
+const CONVERGENCE_INSPECTIONS = 4;
 export class PublicationError extends Error {
   constructor(code, message, details = {}) {
     super(`${code}: ${message}`);
@@ -248,7 +249,49 @@ export function classifyPublicationState(expected, observation) {
     },
   };
 }
-const actionKey = action => (action ? `${action.kind}:${action.name ?? ''}` : 'complete');
+function actionKey(action) {
+  if (!action) return 'complete';
+  if (action.kind === 'create-tag' || action.kind === 'create-draft') {
+    return `${action.kind}:${action.tag}`;
+  }
+  if (action.kind === 'upload-asset') {
+    return `${action.kind}:${action.releaseId}:${action.name}`;
+  }
+  if (action.kind === 'publish-draft') return `${action.kind}:${action.releaseId}`;
+  return action.kind;
+}
+function isForwardState(expected, action, state, mutationResult, observation) {
+  if (state.status === 'exact-published') {
+    const releaseId = observation?.releases?.[0]?.id;
+    if (action.kind === 'create-tag') return false;
+    if (action.kind === 'create-draft') return mutationResult?.releaseId === releaseId;
+    return action.releaseId === releaseId;
+  }
+  if (state.status !== 'partial-resumable') return false;
+  const next = state.nextAction;
+  if (action.kind === 'create-tag') {
+    return (
+      next.kind === 'create-draft' &&
+      mutationResult?.objectSha === observation?.tagRef?.objectSha &&
+      observation?.releases?.length === 0
+    );
+  }
+  if (action.kind === 'create-draft') {
+    return (
+      mutationResult?.releaseId === next.releaseId &&
+      (next.kind === 'upload-asset' || next.kind === 'publish-draft')
+    );
+  }
+  if (action.kind === 'upload-asset') {
+    if (next.releaseId !== action.releaseId) return false;
+    if (next.kind === 'publish-draft') return true;
+    if (next.kind !== 'upload-asset') return false;
+    return (
+      expected.requiredAssets.indexOf(next.name) > expected.requiredAssets.indexOf(action.name)
+    );
+  }
+  return false;
+}
 function publicAction(action) {
   if (!action) return null;
   const { bytes: _bytes, body: _body, marker: _marker, ...safe } = action;
@@ -274,16 +317,77 @@ function stopped(expected, state, details = {}) {
 export async function executePublication({ adapter, bundle }) {
   const expected = validatePublicationBundle(bundle);
   const history = [];
+  const attemptedActions = new Set();
   let mutated = false;
-  const inspect = async () => {
+  const inspect = async releaseId => {
     try {
-      return classifyPublicationState(expected, await adapter.inspect(expected.tag));
+      const observation = releaseId
+        ? await adapter.inspectRelease(releaseId, expected.tag)
+        : await adapter.inspect(expected.tag);
+      return { observation, state: classifyPublicationState(expected, observation) };
     } catch (error) {
-      return unknown(error instanceof Error ? error.message : String(error));
+      return {
+        observation: null,
+        state: unknown(error instanceof Error ? error.message : String(error)),
+      };
     }
   };
+  let ownedReleaseId = null;
+  let { observation, state } = await inspect();
+  if (state.status === 'exact-published') {
+    return {
+      status: 'already-published',
+      history,
+      planIdentity: expected.planIdentity,
+      tag: expected.tag,
+    };
+  }
+  if (state.status === 'partial-resumable' && state.nextAction.kind !== 'create-tag') {
+    return stopped(expected, unknown('pre-existing-publication-state'), { history });
+  }
   for (let attempt = 0; attempt < expected.requiredAssets.length + 4; attempt += 1) {
-    const state = await inspect();
+    if (state.status !== 'partial-resumable') return stopped(expected, state, { history });
+    const action = state.nextAction;
+    const key = actionKey(action);
+    if (attemptedActions.has(key)) {
+      return stopped(expected, unknown(`mutation-outcome-unobserved:${key}`), { history });
+    }
+    attemptedActions.add(key);
+    let mutationError;
+    let mutationResult;
+    try {
+      mutationResult = await mutate(adapter, action);
+      mutated = true;
+      history.push({
+        action: publicAction(action),
+        result: 'applied',
+        ...(mutationResult?.releaseId ? { releaseId: mutationResult.releaseId } : {}),
+      });
+      if (action.kind === 'create-draft') ownedReleaseId = mutationResult?.releaseId ?? null;
+    } catch (error) {
+      mutationError = error instanceof Error ? error.message : String(error);
+    }
+    let converged = false;
+    for (let inspection = 0; inspection < CONVERGENCE_INSPECTIONS; inspection += 1) {
+      ({ observation, state } = await inspect(ownedReleaseId));
+      if (state.status === 'conflict') {
+        return stopped(expected, state, { history, ...(mutationError ? { mutationError } : {}) });
+      }
+      if (isForwardState(expected, action, state, mutationResult, observation)) {
+        converged = true;
+        break;
+      }
+    }
+    if (!converged) {
+      return stopped(expected, unknown(`mutation-outcome-unobserved:${key}`), {
+        history,
+        ...(mutationError ? { mutationError } : {}),
+      });
+    }
+    if (mutationError) {
+      mutated = true;
+      history.push({ action: publicAction(action), result: 'confirmed-after-lost-response' });
+    }
     if (state.status === 'exact-published') {
       return {
         status: mutated ? 'published' : 'already-published',
@@ -291,33 +395,6 @@ export async function executePublication({ adapter, bundle }) {
         planIdentity: expected.planIdentity,
         tag: expected.tag,
       };
-    }
-    if (state.status !== 'partial-resumable') return stopped(expected, state, { history });
-    const action = state.nextAction;
-    try {
-      await mutate(adapter, action);
-      mutated = true;
-      history.push({ action: publicAction(action), result: 'applied' });
-    } catch (error) {
-      const after = await inspect();
-      const message = error instanceof Error ? error.message : String(error);
-      if (after.status === 'conflict' || after.status === 'unknown-critical') {
-        return stopped(expected, after, { history, mutationError: message });
-      }
-      if (after.status === 'exact-published' || actionKey(after.nextAction) !== actionKey(action)) {
-        mutated = true;
-        history.push({ action: publicAction(action), result: 'confirmed-after-lost-response' });
-        if (after.status === 'exact-published') {
-          return {
-            status: 'published',
-            history,
-            planIdentity: expected.planIdentity,
-            tag: expected.tag,
-          };
-        }
-        continue;
-      }
-      return stopped(expected, after, { history, mutationError: message });
     }
   }
   return stopped(expected, unknown('transition-limit-exceeded'), { history });
