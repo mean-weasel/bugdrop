@@ -37,7 +37,7 @@ jobs:
           test "$SHA_A" != "$SHA_B"
 
       - name: Checkout immutable controller
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.workflow_sha }}
           path: controller
@@ -54,14 +54,14 @@ jobs:
           git -C controller merge-base --is-ancestor "$SHA_A" "$SHA_B"
 
       - name: Checkout immutable candidate A
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.candidate_a_sha }}
           path: candidate-a
           persist-credentials: false
 
       - name: Checkout immutable candidate B
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.candidate_b_sha }}
           path: candidate-b
