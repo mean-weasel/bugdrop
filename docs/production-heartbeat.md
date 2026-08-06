@@ -1,20 +1,27 @@
 # Production Heartbeat Operations
 
 The `Production Heartbeat` workflow exercises the real production widget, creates one synthetic
-Issue in `mean-weasel/bugdrop-widget-test`, independently verifies it, closes every run-marker match,
-proves zero open production-prefix Issues, and reconciles one incident in `mean-weasel/bugdrop`.
+Issue in a dedicated test repository, independently verifies it, closes every run-marker match,
+proves zero open production-prefix Issues, and reconciles one incident in the repository running the
+workflow. The canonical BugDrop installation uses `mean-weasel/bugdrop-widget-test` for synthetic
+Issues and `mean-weasel/bugdrop` for incidents.
 
 Scheduled events are inert unless `BUGDROP_PRODUCTION_HEARTBEAT_MODE` is exactly `daily` or
 `four-hour`. An unset value, `manual`, or an unknown value skips both cron entries. GitHub cron
 timing is approximate.
+
+The workflow is not automatically configured for a fork or private copy. Built-in service origins
+and repository defaults are accepted only when `GITHUB_REPOSITORY` is `mean-weasel/bugdrop`. Every
+other repository must provide a complete self-hosted configuration. This prevents a partially
+configured fork from accidentally exercising the canonical BugDrop service.
 
 ## Prerequisites
 
 - Protect the `production` GitHub environment with required reviewers for release jobs. The heartbeat
   deliberately does not enter that approval-gated environment, because scheduled monitoring must run
   unattended; it uses only the narrowly scoped repository secrets listed below.
-- Configure `BUGDROP_CANARY_GITHUB_TOKEN` as a fine-grained token limited to
-  `mean-weasel/bugdrop-widget-test` with Issues read/write only.
+- Configure `BUGDROP_CANARY_GITHUB_TOKEN` as a fine-grained token limited to the synthetic test
+  repository with Issues read/write only.
 - Configure `VERCEL_AUTOMATION_BYPASS_SECRET` only if the fixed production venue requires it.
 - Confirm production health reports `environment=production` and a full lowercase 40-character
   `buildSha` before authorization.
@@ -24,6 +31,58 @@ timing is approximate.
 Record token ownership and expiry privately. Rotate before expiry, validate replacement read access,
 then use an explicitly authorized disposable Issue to validate write/close access. Never print a
 token or place it in an artifact.
+
+## Self-hosted and private repositories
+
+Self-hosting the application does not require the heartbeat. The heartbeat is an optional
+operational safeguard that must be deliberately configured after the production deployment works.
+The repository containing this workflow may be private, and the synthetic test repository should
+normally be a separate private repository.
+
+Before configuration:
+
+1. Enable GitHub Actions in the self-hosted repository. The workflow file must be on the default
+   branch for scheduled events to run. GitHub disables Actions workflows in a new fork by default.
+2. Create a dedicated synthetic test repository with Issues enabled and create the labels the Worker
+   will apply, normally `bug` and `bugdrop`. Do not use the operational repository or a repository
+   containing real user Issues.
+3. Install the self-hosted BugDrop GitHub App on that test repository. Record its Issue author login,
+   normally `<app-slug>[bot]`.
+4. Deploy a fixed HTTPS test venue whose page loads
+   `https://<your-worker-origin>/widget.js` and targets the synthetic test repository. If the Worker
+   uses `AUTH_TOKEN_SECRET` or `AUTH_TOKEN_ADDITIONAL_SECRETS`, the venue must also configure
+   `data-auth-token-provider` to return a valid short-lived token during the automated run. Keep the
+   signing secret server-side and protect the provider endpoint with the venue's access control; see
+   [Requiring Host-App Auth Tokens](../SELF_HOSTING.md#requiring-host-app-auth-tokens-recommended-for-private-apps).
+5. Confirm `https://<your-worker-origin>/api/health` reports `environment=production` and a full
+   lowercase 40-character `buildSha`. The deployment process must set `ENVIRONMENT=production` and
+   `BUILD_SHA` to the deployed source commit.
+6. Confirm the self-hosted repository permits the GitHub-maintained Actions used by the workflow and
+   allows its scoped `GITHUB_TOKEN` to write Issues. Private repositories consume the account's
+   applicable GitHub Actions allowance.
+
+Set these repository variables under **Settings > Secrets and variables > Actions > Variables**:
+
+| Variable | Required | Value |
+| --- | --- | --- |
+| `BUGDROP_HEARTBEAT_WIDGET_ORIGIN` | Yes | HTTPS origin of the production Worker, without a path |
+| `BUGDROP_HEARTBEAT_VENUE_ORIGIN` | Yes | HTTPS origin of the fixed test venue, without a path |
+| `BUGDROP_HEARTBEAT_TEST_REPO` | Yes | Dedicated synthetic repository as `owner/repository` |
+| `BUGDROP_HEARTBEAT_EXPECTED_AUTHOR` | Yes | GitHub App Issue author, normally `<app-slug>[bot]` |
+| `BUGDROP_HEARTBEAT_EXPECTED_LABELS` | No | Exact comma-separated labels including `bugdrop`; defaults to `bug,bugdrop` |
+| `BUGDROP_PRODUCTION_HEARTBEAT_MODE` | Later | Leave unset until staged activation |
+
+Set `BUGDROP_CANARY_GITHUB_TOKEN` as a repository Actions secret. Use a fine-grained credential with
+access to only the synthetic repository and Issues read/write permission. This verifier credential is
+separate from the GitHub App private key held by the Worker. Set `VERCEL_AUTOMATION_BYPASS_SECRET`
+only when the chosen venue requires it. Repository secrets do not copy with a fork and should never
+be exposed to untrusted pull-request workflows.
+
+Incidents are opened in the repository running the workflow using its scoped `GITHUB_TOKEN`; no
+separate incident token or repository variable is required. Keep Issues enabled in that repository.
+For a private installation, the incident, workflow logs, and seven-day diagnostics artifacts remain
+visible only to users who can access that repository. This GitHub Issue is not independent paging:
+a GitHub outage can disrupt both the transaction and the incident channel.
 
 ## Staged activation
 

@@ -74,6 +74,8 @@ The guide covers:
 5. **Deploying** -- Publishing the Worker to your Cloudflare account
 6. **Testing** -- Verifying the deployment works end-to-end
 7. **Updating the script tag** -- Pointing your widget to your own Worker URL
+8. **Optional production monitoring** -- Deliberately configuring the production heartbeat for your
+   own origins and private synthetic-Issue repository
 
 ## Updating the Script Tag
 
@@ -103,6 +105,18 @@ If you have configured a custom domain for your Worker:
 ```
 
 All `data-*` attributes work the same regardless of whether you use the hosted or self-hosted version.
+
+## Optional Production Heartbeat
+
+The production heartbeat is not automatically active in a fork or private copy. Once your deployment
+is stable, you can configure it to exercise your own Worker and create, verify, and close a synthetic
+Issue in a separate repository. Canonical BugDrop service defaults are never used by a self-hosted
+repository, and scheduled runs remain inert until you explicitly activate them.
+
+See the
+**[production heartbeat runbook](https://github.com/mean-weasel/bugdrop/blob/main/docs/production-heartbeat.md#self-hosted-and-private-repositories)**
+for the private-repository setup, least-privilege credential, manual incident drill, and staged
+schedule activation.
 
 ## Keeping Up to Date
 

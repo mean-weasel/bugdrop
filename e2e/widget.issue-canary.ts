@@ -1,8 +1,13 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { expect, type Page, type Request } from '@playwright/test';
+import { expect, type Page, type Request, type Route } from '@playwright/test';
 
-import { resolveBrowserCanaryProfile } from '../scripts/github-issue-canary-profiles.mjs';
+import {
+  getCanaryProfile,
+  isGitHubIssueUrlForRepository,
+  isSameGitHubRepository,
+  resolveBrowserCanaryProfile,
+} from '../scripts/github-issue-canary-profiles.mjs';
 import {
   assertExactPreviewWidgetResponse,
   waitForPreviewWidgetResponse,
@@ -31,7 +36,7 @@ type FeedbackResult = {
 
 export async function runIssueCanary(page: Page): Promise<void> {
   const environment = requireCanaryEnvironment();
-  await installVercelBypass(page);
+  await installVercelBypass(page, environment.baseUrl);
 
   const widgetResponsePromise = waitForPreviewWidgetResponse(
     page,
@@ -76,11 +81,10 @@ export async function runIssueCanary(page: Page): Promise<void> {
     const payload = outgoing.postDataJSON() as Record<string, unknown>;
     expect(payload.submissionId).toEqual(expect.any(String));
     canarySubmissionId = String(payload.submissionId);
-    expect(payload.repo).toBe(environment.profile.repo);
+    expect(isSameGitHubRepository(payload.repo, environment.profile.repo)).toBe(true);
     expect(payload).toMatchObject({
       kind: 'bugdrop.variant-submission',
       schemaVersion: 1,
-      repo: environment.profile.repo,
       variantId: environment.profile.variantId,
       issue: {
         title: `${environment.profile.titlePrefix} ${environment.marker}`,
@@ -129,8 +133,10 @@ export async function runIssueCanary(page: Page): Promise<void> {
     Number.isInteger(responseResult.issueNumber) && Number(responseResult.issueNumber) > 0
   ).toBe(true);
   const issueNumber = Number(responseResult.issueNumber);
-  const issueUrl = `https://github.com/${environment.profile.repo}/issues/${issueNumber}`;
-  expect(responseResult.issueUrl).toBe(issueUrl);
+  expect(
+    isGitHubIssueUrlForRepository(responseResult.issueUrl, environment.profile.repo, issueNumber)
+  ).toBe(true);
+  const issueUrl = String(responseResult.issueUrl);
 
   await page.waitForTimeout(1_000);
   expect(rejectedRequest).toBeUndefined();
@@ -165,11 +171,12 @@ function requireCanaryEnvironment(): CanaryEnvironment {
   const resultFile = requireEnvironment('BUGDROP_CANARY_RESULT_FILE');
   const profile = resolveBrowserCanaryProfile({
     profile: profileName,
-    repo: 'mean-weasel/bugdrop-widget-test',
+    repo: getCanaryProfile(profileName, process.env).repo,
     venueOrigin: new URL(baseUrl).origin,
     widgetOrigin: expectedWidgetOrigin,
     marker,
     expectedWorkerSha,
+    environment: process.env,
   });
   if (new URL(baseUrl).origin !== baseUrl) {
     throw new Error('PLAYWRIGHT_BASE_URL must be an origin without a path');
@@ -247,15 +254,33 @@ function requireEnvironment(name: string): string {
   return value;
 }
 
-async function installVercelBypass(page: Page): Promise<void> {
+async function installVercelBypass(page: Page, venueOrigin: string): Promise<void> {
   const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
   if (!bypassSecret) return;
-  await page.route('**/*.vercel.app/**', async route => {
-    await route.continue({
-      headers: {
-        ...route.request().headers(),
-        'x-vercel-protection-bypass': bypassSecret,
-      },
-    });
+  await page.route('**/*', async route => {
+    await routeVenueRequest(route, venueOrigin, bypassSecret);
   });
+}
+
+export function isVenueRequest(requestUrl: string, venueOrigin: string): boolean {
+  return new URL(requestUrl).origin === venueOrigin;
+}
+
+export async function routeVenueRequest(
+  route: Route,
+  venueOrigin: string,
+  bypassSecret: string
+): Promise<void> {
+  if (!isVenueRequest(route.request().url(), venueOrigin)) {
+    await route.fallback();
+    return;
+  }
+  const response = await route.fetch({
+    headers: {
+      ...route.request().headers(),
+      'x-vercel-protection-bypass': bypassSecret,
+    },
+    maxRedirects: 0,
+  });
+  await route.fulfill({ response });
 }

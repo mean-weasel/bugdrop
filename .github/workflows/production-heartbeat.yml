@@ -62,25 +62,39 @@ jobs:
         continue-on-error: true
         run: npm ci
 
+      - name: Validate production heartbeat configuration
+        id: config
+        if: always() && steps.install.outcome == 'success'
+        continue-on-error: true
+        env:
+          BUGDROP_HEARTBEAT_WIDGET_ORIGIN: ${{ vars.BUGDROP_HEARTBEAT_WIDGET_ORIGIN }}
+          BUGDROP_HEARTBEAT_VENUE_ORIGIN: ${{ vars.BUGDROP_HEARTBEAT_VENUE_ORIGIN }}
+          BUGDROP_HEARTBEAT_TEST_REPO: ${{ vars.BUGDROP_HEARTBEAT_TEST_REPO }}
+          BUGDROP_HEARTBEAT_EXPECTED_AUTHOR: ${{ vars.BUGDROP_HEARTBEAT_EXPECTED_AUTHOR }}
+          BUGDROP_HEARTBEAT_EXPECTED_LABELS: ${{ vars.BUGDROP_HEARTBEAT_EXPECTED_LABELS }}
+        run: node scripts/production-heartbeat-config.mjs export
+
       - name: Install Chromium
         id: browser
-        if: always() && steps.install.outcome == 'success'
+        if: >-
+          always() && steps.install.outcome == 'success' &&
+          steps.config.outcome == 'success'
         continue-on-error: true
         run: npx playwright install --with-deps chromium
 
       - name: Observe strict production identity
         id: identity
-        if: always() && steps.install.outcome == 'success'
+        if: >-
+          always() && steps.install.outcome == 'success' &&
+          steps.config.outcome == 'success'
         continue-on-error: true
-        env:
-          EXPECTED_WIDGET_ORIGIN: https://bugdrop.neonwatty.workers.dev
         run: |
           identity_json=$(node scripts/release/verify-live.mjs observe)
           worker_sha=$(jq -er '.buildSha | select(test("^[a-f0-9]{40}$"))' <<< "$identity_json")
           widget_sha=$(jq -er '.widgetSha256 | select(test("^[a-f0-9]{64}$"))' <<< "$identity_json")
           fixture_path="$RUNNER_TEMP/bugdrop-production-widget-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.js"
           candidate_path="$fixture_path.candidate"
-          curl --max-time 30 -sSf https://bugdrop.neonwatty.workers.dev/widget.js -o "$candidate_path"
+          curl --max-time 30 -sSf "$EXPECTED_WIDGET_ORIGIN/widget.js" -o "$candidate_path"
           actual_sha=$(shasum -a 256 "$candidate_path" | awk '{print $1}')
           test "$actual_sha" = "$widget_sha"
           mv "$candidate_path" "$fixture_path"
@@ -91,8 +105,6 @@ jobs:
           echo "BUGDROP_CANARY_RESULT_FILE=$RUNNER_TEMP/production-heartbeat-result.json" >> "$GITHUB_ENV"
           echo "BUGDROP_CANARY_ATTEMPT_FILE=$RUNNER_TEMP/production-heartbeat-attempt" >> "$GITHUB_ENV"
           echo "LIVE_TARGET=production" >> "$GITHUB_ENV"
-          echo "PLAYWRIGHT_BASE_URL=https://bugdrop-widget-test.vercel.app" >> "$GITHUB_ENV"
-          echo "EXPECTED_WIDGET_ORIGIN=https://bugdrop.neonwatty.workers.dev" >> "$GITHUB_ENV"
 
       - name: Preflight production heartbeat cleanup
         id: preflight
@@ -101,7 +113,7 @@ jobs:
         run: >-
           node scripts/github-issue-canary.mjs preflight
           --profile production
-          --repo mean-weasel/bugdrop-widget-test
+          --repo "$BUGDROP_CANARY_REPO"
           --prefix "[BugDrop production heartbeat]"
         env:
           BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
@@ -117,8 +129,8 @@ jobs:
           if [ -n "$VERCEL_AUTOMATION_BYPASS_SECRET" ]; then
             bypass_args=(-H "x-vercel-protection-bypass:${VERCEL_AUTOMATION_BYPASS_SECRET}")
           fi
-          html=$(curl --max-time 30 -sSf "${bypass_args[@]}" https://bugdrop-widget-test.vercel.app)
-          grep -Fq 'https://bugdrop.neonwatty.workers.dev/widget.js' <<< "$html"
+          html=$(curl --max-time 30 -sSf "${bypass_args[@]}" "$PLAYWRIGHT_BASE_URL")
+          grep -Fq "$EXPECTED_WIDGET_ORIGIN/widget.js" <<< "$html"
 
       - name: Run one production Issue canary
         id: canary
@@ -140,7 +152,7 @@ jobs:
         run: >-
           node scripts/github-issue-canary.mjs verify
           --profile production
-          --repo mean-weasel/bugdrop-widget-test
+          --repo "$BUGDROP_CANARY_REPO"
           --marker "$BUGDROP_CANARY_MARKER"
           --expected-sha "$EXPECTED_WORKER_SHA"
           --result-file "$BUGDROP_CANARY_RESULT_FILE"
@@ -158,7 +170,7 @@ jobs:
           fi
           node scripts/github-issue-canary.mjs cleanup \
             --profile production \
-            --repo mean-weasel/bugdrop-widget-test \
+            --repo "$BUGDROP_CANARY_REPO" \
             --marker "$BUGDROP_CANARY_MARKER"
         env:
           BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
@@ -170,7 +182,7 @@ jobs:
         run: >-
           node scripts/github-issue-canary.mjs sweep
           --profile production
-          --repo mean-weasel/bugdrop-widget-test
+          --repo "$BUGDROP_CANARY_REPO"
           --prefix "[BugDrop production heartbeat]"
         env:
           BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
@@ -191,6 +203,7 @@ jobs:
           CHECKOUT: ${{ steps.checkout.outcome }}
           NODE: ${{ steps.node.outcome }}
           INSTALL: ${{ steps.install.outcome }}
+          CONFIG: ${{ steps.config.outcome }}
           BROWSER: ${{ steps.browser.outcome }}
           IDENTITY: ${{ steps.identity.outcome }}
           PREFLIGHT: ${{ steps.preflight.outcome }}
@@ -201,9 +214,9 @@ jobs:
           SWEEP: ${{ steps.sweep.outcome }}
           CONTROLLED: ${{ steps.controlled.outcome }}
         run: |
-          details="checkout=$CHECKOUT,node=$NODE,install=$INSTALL,browser=$BROWSER,identity=$IDENTITY,preflight=$PREFLIGHT,venue=$VENUE,canary=$CANARY,verify=$VERIFY,cleanup=$CLEANUP,sweep=$SWEEP,controlled=$CONTROLLED"
+          details="checkout=$CHECKOUT,node=$NODE,install=$INSTALL,config=$CONFIG,browser=$BROWSER,identity=$IDENTITY,preflight=$PREFLIGHT,venue=$VENUE,canary=$CANARY,verify=$VERIFY,cleanup=$CLEANUP,sweep=$SWEEP,controlled=$CONTROLLED"
           heartbeat_ok=true
-          for outcome in "$CHECKOUT" "$NODE" "$INSTALL" "$BROWSER" "$IDENTITY" "$PREFLIGHT" "$VENUE" "$CANARY" "$VERIFY" "$CLEANUP" "$SWEEP"; do
+          for outcome in "$CHECKOUT" "$NODE" "$INSTALL" "$CONFIG" "$BROWSER" "$IDENTITY" "$PREFLIGHT" "$VENUE" "$CANARY" "$VERIFY" "$CLEANUP" "$SWEEP"; do
             if [ "$outcome" != success ]; then heartbeat_ok=false; fi
           done
           if [ "$CONTROLLED" = failure ]; then heartbeat_ok=false; fi
@@ -217,6 +230,7 @@ jobs:
             --arg checkout "$CHECKOUT" \
             --arg node "$NODE" \
             --arg install "$INSTALL" \
+            --arg config "$CONFIG" \
             --arg browser "$BROWSER" \
             --arg identity "$IDENTITY" \
             --arg preflight "$PREFLIGHT" \
@@ -227,7 +241,7 @@ jobs:
             --arg sweep "$SWEEP" \
             --arg controlled "$CONTROLLED" \
             --arg heartbeatOk "$heartbeat_ok" \
-            '{schemaVersion: $schemaVersion, runId: $runId, runAttempt: $runAttempt, stages: {checkout: $checkout, node: $node, install: $install, browser: $browser, identity: $identity, preflight: $preflight, venue: $venue, canary: $canary, verify: $verify, cleanup: $cleanup, sweep: $sweep, controlled: $controlled}, heartbeatOk: ($heartbeatOk == "true")}' \
+            '{schemaVersion: $schemaVersion, runId: $runId, runAttempt: $runAttempt, stages: {checkout: $checkout, node: $node, install: $install, config: $config, browser: $browser, identity: $identity, preflight: $preflight, venue: $venue, canary: $canary, verify: $verify, cleanup: $cleanup, sweep: $sweep, controlled: $controlled}, heartbeatOk: ($heartbeatOk == "true")}' \
             > "$diagnostics_tmp"
           test -s "$diagnostics_tmp"
           jq -e '
@@ -238,7 +252,7 @@ jobs:
             (.runAttempt | type == "string" and length > 0) and
             (.heartbeatOk | type == "boolean") and
             (.stages | type == "object") and
-            (.stages | keys == ["browser", "canary", "checkout", "cleanup", "controlled", "identity", "install", "node", "preflight", "sweep", "venue", "verify"]) and
+            (.stages | keys == ["browser", "canary", "checkout", "cleanup", "config", "controlled", "identity", "install", "node", "preflight", "sweep", "venue", "verify"]) and
             ([.stages[] | select(. != "success" and . != "failure" and . != "skipped" and . != "cancelled")] | length == 0)
           ' "$diagnostics_tmp" > /dev/null
           mv "$diagnostics_tmp" "$diagnostics_path"
@@ -263,7 +277,7 @@ jobs:
             (.runAttempt | type == "string" and length > 0) and
             (.heartbeatOk | type == "boolean") and
             (.stages | type == "object") and
-            (.stages | keys == ["browser", "canary", "checkout", "cleanup", "controlled", "identity", "install", "node", "preflight", "sweep", "venue", "verify"]) and
+            (.stages | keys == ["browser", "canary", "checkout", "cleanup", "config", "controlled", "identity", "install", "node", "preflight", "sweep", "venue", "verify"]) and
             ([.stages[] | select(. != "success" and . != "failure" and . != "skipped" and . != "cancelled")] | length == 0)
           ' "$diagnostics_path" > /dev/null
           cp "$diagnostics_path" "$artifact_path/diagnostics.json"
@@ -303,6 +317,7 @@ jobs:
           ARTIFACT_PREPARE_OUTCOME: ${{ needs.heartbeat.outputs.artifact_prepare_outcome }}
           ARTIFACT_OUTCOME: ${{ needs.heartbeat.outputs.artifact_outcome }}
           DETAILS: ${{ needs.heartbeat.outputs.details }}
+          BUGDROP_HEARTBEAT_INCIDENT_REPO: ${{ github.repository }}
         run: |
           outcome=failure
           if [ "$HEARTBEAT_OK" = true ] && [ "$SUMMARIZE_OUTCOME" = success ] && [ "$ARTIFACT_PREPARE_OUTCOME" = success ] && [ "$ARTIFACT_OUTCOME" = success ]; then

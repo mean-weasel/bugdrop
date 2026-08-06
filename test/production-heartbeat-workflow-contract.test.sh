@@ -47,8 +47,23 @@ require 'cancel-in-progress: false'
 require 'timeout-minutes: 30'
 require_absent 'environment: production'
 require 'persist-credentials: false'
-require 'https://bugdrop.neonwatty.workers.dev'
-require 'https://bugdrop-widget-test.vercel.app'
+require 'name: Validate production heartbeat configuration'
+require 'node scripts/production-heartbeat-config.mjs export'
+for variable in \
+  BUGDROP_HEARTBEAT_WIDGET_ORIGIN \
+  BUGDROP_HEARTBEAT_VENUE_ORIGIN \
+  BUGDROP_HEARTBEAT_TEST_REPO \
+  BUGDROP_HEARTBEAT_EXPECTED_AUTHOR \
+  BUGDROP_HEARTBEAT_EXPECTED_LABELS; do
+  require "$variable: \${{ vars.$variable }}"
+done
+require 'curl --max-time 30 -sSf "$EXPECTED_WIDGET_ORIGIN/widget.js"'
+require 'curl --max-time 30 -sSf "${bypass_args[@]}" "$PLAYWRIGHT_BASE_URL"'
+require 'grep -Fq "$EXPECTED_WIDGET_ORIGIN/widget.js"'
+require '--repo "$BUGDROP_CANARY_REPO"'
+require_absent '--repo mean-weasel/bugdrop-widget-test'
+require_absent 'https://bugdrop.neonwatty.workers.dev'
+require_absent 'https://bugdrop-widget-test.vercel.app'
 require 'node scripts/release/verify-live.mjs observe'
 require 'bugdrop-production-heartbeat:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${worker_sha}'
 require 'npx playwright test e2e/widget.issue-canary.spec.ts --project=chromium-issue-canary --workers=1 --retries=0'
@@ -76,6 +91,7 @@ require 'ARTIFACT_OUTCOME: ${{ needs.heartbeat.outputs.artifact_outcome }}'
 require 'INCIDENT_JOB: ${{ needs.incident.result }}'
 require 'issues: write'
 require 'GITHUB_TOKEN: ${{ github.token }}'
+require 'BUGDROP_HEARTBEAT_INCIDENT_REPO: ${{ github.repository }}'
 require 'Controlled post-cleanup failure'
 require 'inputs.controlled_failure'
 require 'diagnostics_path="$RUNNER_TEMP/production-heartbeat-diagnostics.json"'
@@ -96,6 +112,8 @@ require_absent 'if-no-files-found: ignore'
 require_absent 'test -f "$diagnostics_path"'
 require_absent '> "$diagnostics_path"'
 require "'{schemaVersion: \$schemaVersion, runId: \$runId, runAttempt: \$runAttempt, stages:"
+require '--arg config "$CONFIG"'
+require '"config"'
 
 summary_block=$(awk '
   /name: Summarize heartbeat stages/ { capture = 1 }

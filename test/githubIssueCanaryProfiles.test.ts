@@ -4,6 +4,8 @@ import {
   PREVIEW_CANARY_PROFILE,
   PRODUCTION_CANARY_PROFILE,
   getCanaryProfile,
+  isGitHubIssueUrlForRepository,
+  isSameGitHubRepository,
   resolveBrowserCanaryProfile,
   validateCanarySelector,
 } from '../scripts/github-issue-canary-profiles.mjs';
@@ -81,5 +83,61 @@ describe('GitHub Issue canary profiles', () => {
     expect(() =>
       resolveBrowserCanaryProfile({ ...valid, expectedWorkerSha: 'b'.repeat(40) })
     ).toThrow('expected Worker SHA');
+  });
+
+  it('binds the production profile to a complete self-hosted runtime configuration', () => {
+    const environment = {
+      BUGDROP_CANARY_REPO: 'acme/bugdrop-heartbeat-test',
+      PLAYWRIGHT_BASE_URL: 'https://heartbeat.example.com',
+      EXPECTED_WIDGET_ORIGIN: 'https://bugdrop.example.com',
+      BUGDROP_CANARY_EXPECTED_AUTHOR: 'acme-bugdrop[bot]',
+      BUGDROP_CANARY_EXPECTED_LABELS_JSON: '["bug","bugdrop"]',
+    };
+    const profile = resolveBrowserCanaryProfile({
+      profile: 'production',
+      repo: environment.BUGDROP_CANARY_REPO,
+      venueOrigin: environment.PLAYWRIGHT_BASE_URL,
+      widgetOrigin: environment.EXPECTED_WIDGET_ORIGIN,
+      marker: `bugdrop-production-heartbeat:123:1:${SHA}`,
+      expectedWorkerSha: SHA,
+      environment,
+    });
+    expect(profile).toMatchObject({
+      repo: 'acme/bugdrop-heartbeat-test',
+      expectedAuthor: 'acme-bugdrop[bot]',
+      expectedLabels: ['bug', 'bugdrop'],
+    });
+  });
+
+  it('rejects a partial self-hosted runtime configuration', () => {
+    expect(() => getCanaryProfile('production', { BUGDROP_CANARY_REPO: 'acme/test' })).toThrow(
+      'runtime configuration is incomplete'
+    );
+  });
+
+  it('matches canonical GitHub Issue URLs without requiring repository display casing', () => {
+    expect(
+      isGitHubIssueUrlForRepository(
+        'https://github.com/acme/heartbeat-test/issues/42',
+        'Acme/Heartbeat-Test',
+        42
+      )
+    ).toBe(true);
+  });
+
+  it('matches GitHub repository identity without requiring display casing', () => {
+    expect(isSameGitHubRepository('Acme/Heartbeat-Test', 'acme/heartbeat-test')).toBe(true);
+    expect(isSameGitHubRepository('acme/other', 'acme/heartbeat-test')).toBe(false);
+    expect(isSameGitHubRepository(undefined, 'acme/heartbeat-test')).toBe(false);
+  });
+
+  it.each([
+    'https://example.com/acme/heartbeat-test/issues/42',
+    'https://github.com/acme/other/issues/42',
+    'https://github.com/acme/heartbeat-test/issues/43',
+    'https://github.com/acme/heartbeat-test/issues/42?tracked=true',
+    'https://github.com/acme/heartbeat-test/issues/42/',
+  ])('rejects non-canonical Issue URL %s', issueUrl => {
+    expect(isGitHubIssueUrlForRepository(issueUrl, 'acme/heartbeat-test', 42)).toBe(false);
   });
 });
