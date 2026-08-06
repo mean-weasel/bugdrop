@@ -181,7 +181,7 @@ jobs:
           fi
 
       - name: Upload immutable request plan
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: request-plan-${{ steps.plan.outputs.request_key }}
           path: |
@@ -294,7 +294,7 @@ jobs:
 
       - name: Upload immutable candidate and State 2 evidence
         id: upload
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-plan-${{ steps.bundle.outputs.plan_key }}
           path: ${{ runner.temp }}/release-plan/
@@ -551,7 +551,7 @@ jobs:
       - name: Upload exact approval and baseline evidence
         if: steps.revalidate.outputs.proceed == 'true'
         id: upload
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-baseline-${{ needs.verify-candidate.outputs.plan_key }}
           path: |
@@ -637,7 +637,7 @@ jobs:
       - name: Upload authoritative deployment outcome
         if: always()
         id: upload
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-deployment-${{ needs.verify-candidate.outputs.plan_key }}
           path: deployment.json
@@ -718,7 +718,7 @@ jobs:
       - name: Upload authoritative publication outcome
         if: always()
         id: upload
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-publication-${{ needs.verify-candidate.outputs.plan_key }}
           path: publication.json

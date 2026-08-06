@@ -162,7 +162,7 @@ jobs:
         run: make build-all
 
       - name: Preserve unit coverage report
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: unit-coverage-${{ github.run_id }}-${{ github.run_attempt }}
           path: coverage/lcov.info
@@ -263,7 +263,7 @@ jobs:
           CI: true
 
       - name: Upload E2E Report
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: needs.check.outputs.full_ci != 'false' && failure()
         with:
           name: playwright-report-shard-${{ matrix.shard }}
@@ -321,7 +321,7 @@ jobs:
           CI: true
 
       - name: Upload Radix E2E Report
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
           name: playwright-radix-report-${{ matrix.browser }}
@@ -531,7 +531,7 @@ jobs:
           BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
 
       - name: Upload preview failure report
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
           name: playwright-preview-critical-report
