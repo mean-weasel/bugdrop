@@ -21,9 +21,12 @@ const approvedReleases = new Map([
   ['actions/cache@caa296126883cff596d87d8935842f9db880ef25', 'v5.1.0'],
   ['actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09', 'v5.1.0'],
   ['actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0', 'v5.0.0'],
+  ['actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3', 'v8.0.0'],
   ['actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd', 'v8.0.0'],
   ['actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444', 'v5.0.0'],
   ['actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4', 'v5.0.0'],
+  ['actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f', 'v7.0.0'],
+  ['codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f', 'v7.0.0'],
 ]);
 
 const failures = [];
