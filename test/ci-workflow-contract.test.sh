@@ -6,6 +6,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ci_workflow="$repo_root/.github/workflows/ci.yml"
 coverage_config="$repo_root/vitest.config.ts"
 codecov_config="$repo_root/codecov.yml"
+playwright_config="$repo_root/playwright.config.ts"
 live_workflow="$repo_root/.github/workflows/live-tests.yml"
 canary_spec="$repo_root/e2e/widget.issue-canary.spec.ts"
 canary_engine="$repo_root/e2e/widget.issue-canary.ts"
@@ -118,8 +119,142 @@ require_literal "$codecov_config" 'target: 80%'
 require_literal "$codecov_config" "- 'src/**'"
 require_literal "$codecov_config" 'comment: false'
 require_literal "$codecov_config" 'annotations: false'
-[[ $(grep -Fc 'informational: true' "$codecov_config") -eq 2 ]] ||
-  fail 'project and patch Codecov statuses must both remain informational'
+[[ $(grep -Fc 'informational: true' "$codecov_config") -eq 3 ]] ||
+  fail 'project, patch, and component Codecov statuses must remain informational'
+
+if ! node --input-type=module - "$codecov_config" <<'NODE'
+import fs from 'node:fs';
+import YAML from 'yaml';
+
+const configPath = process.argv[2];
+const config = YAML.parse(fs.readFileSync(configPath, 'utf8'));
+const expectedComponents = [
+  {
+    component_id: 'widget',
+    name: 'Widget',
+    paths: ['src/widget/**'],
+  },
+  {
+    component_id: 'backend',
+    name: 'Backend',
+    paths: [
+      'src/index.ts',
+      'src/defaults.ts',
+      'src/types.ts',
+      'src/lib/**',
+      'src/middleware/**',
+      'src/routes/**',
+    ],
+  },
+  {
+    component_id: 'scripts',
+    name: 'Scripts',
+    paths: ['scripts/**'],
+  },
+];
+const expectedStatus = [
+  {
+    type: 'project',
+    target: 'auto',
+    threshold: '1%',
+    informational: true,
+  },
+];
+
+function assertExact(actual, expected, label) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${label}: ${JSON.stringify(actual)}`);
+  }
+}
+
+assertExact(config.parsers?.javascript, { enable_partials: true }, 'javascript parser');
+assertExact(config.parsers?.lcov, { partials_as_hits: false }, 'lcov parser');
+assertExact(
+  config.component_management?.default_rules,
+  { flag_regexes: ['^unit$'], statuses: expectedStatus },
+  'component defaults'
+);
+assertExact(
+  config.component_management?.individual_components,
+  expectedComponents,
+  'individual components'
+);
+NODE
+then
+  fail 'Codecov component configuration does not match the unit-only contract'
+fi
+
+require_literal "$playwright_config" "'chromium-live'"
+require_literal "$playwright_config" "'chromium-live-radix'"
+require_literal "$playwright_config" "'chromium-cross-browser-live'"
+require_literal "$playwright_config" "'firefox-cross-browser-live'"
+require_literal "$playwright_config" "'webkit-cross-browser-live'"
+
+local_discovery=$(env -u LIVE_TARGET -u PLAYWRIGHT_BASE_URL \
+  npx playwright test --list --reporter=line 2>&1) ||
+  fail 'local Playwright discovery failed without live inputs'
+grep -Fq '[chromium]' <<< "$local_discovery" || fail 'local Chromium project was not discovered'
+for excluded_project in \
+  chromium-live \
+  chromium-live-radix \
+  chromium-cross-browser-live \
+  firefox-cross-browser-live \
+  webkit-cross-browser-live \
+  chromium-issue-canary; do
+  if grep -Fq "[$excluded_project]" <<< "$local_discovery"; then
+    fail "unqualified Playwright discovery included protected project: $excluded_project"
+  fi
+done
+
+for live_project in \
+  chromium-live \
+  chromium-live-radix \
+  chromium-cross-browser-live \
+  firefox-cross-browser-live \
+  webkit-cross-browser-live; do
+  live_discovery=$(LIVE_TARGET=preview PLAYWRIGHT_BASE_URL=https://example.invalid \
+    npx playwright test --project="$live_project" --list --reporter=line 2>&1) ||
+    fail "complete-input Playwright discovery failed: $live_project"
+  grep -Fq "[$live_project]" <<< "$live_discovery" ||
+    fail "complete-input Playwright discovery omitted project: $live_project"
+done
+
+require_live_input_failure() {
+  local selector=$1
+  local output
+  if output=$(env -u LIVE_TARGET -u PLAYWRIGHT_BASE_URL \
+    npx playwright test --project="$selector" --list --reporter=line 2>&1); then
+    fail "Playwright selector silently omitted live tests without inputs: $selector"
+  fi
+  grep -Fq 'Live Playwright projects require both LIVE_TARGET and PLAYWRIGHT_BASE_URL.' \
+    <<< "$output" || fail "Playwright selector did not report missing live inputs: $selector"
+}
+
+for selector in chromium-live 'chromium-*' '*-live' '*cross-browser-live'; do
+  require_live_input_failure "$selector"
+done
+
+variadic_output=$(env -u LIVE_TARGET -u PLAYWRIGHT_BASE_URL \
+  npx playwright test --project chromium chromium-live --list --reporter=line 2>&1) &&
+  fail 'variadic Playwright project selection silently omitted live tests without inputs'
+grep -Fq 'Live Playwright projects require both LIVE_TARGET and PLAYWRIGHT_BASE_URL.' \
+  <<< "$variadic_output" || fail 'variadic Playwright project selection bypassed the live-input guard'
+
+variadic_equals_output=$(env -u LIVE_TARGET -u PLAYWRIGHT_BASE_URL \
+  npx playwright test --project=chromium chromium-live --list --reporter=line 2>&1) &&
+  fail 'equals-form variadic Playwright selection silently omitted live tests without inputs'
+grep -Fq 'Live Playwright projects require both LIVE_TARGET and PLAYWRIGHT_BASE_URL.' \
+  <<< "$variadic_equals_output" || fail 'equals-form variadic selection bypassed the live-input guard'
+
+for partial_input in \
+  'LIVE_TARGET=preview' \
+  'PLAYWRIGHT_BASE_URL=https://example.invalid'; do
+  output=$(env -u LIVE_TARGET -u PLAYWRIGHT_BASE_URL $partial_input \
+    npx playwright test --project=chromium-live --list --reporter=line 2>&1) &&
+    fail "partial live input silently passed project discovery: $partial_input"
+  grep -Fq 'Live Playwright projects require both LIVE_TARGET and PLAYWRIGHT_BASE_URL.' \
+    <<< "$output" || fail "partial live input did not report the missing pair: $partial_input"
+done
 
 e2e_block=$(job_block "$ci_workflow" e2e)
 if grep -Eq '^    if:' <<< "$e2e_block"; then

@@ -185,6 +185,44 @@ test.describe('Widget Loading', () => {
       .toBeGreaterThanOrEqual(7);
   });
 
+  test('viewport resize preserves an active feedback button drag', async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 900 });
+    await page.goto('/test/');
+    await clearTriggerPositionStorage(page);
+    await page.reload();
+
+    const host = page.locator('#bugdrop-host');
+    const trigger = host.locator('css=.bd-trigger');
+    const handle = host.locator('css=.bd-trigger-drag-handle');
+    await expect(handle).toBeVisible({ timeout: 5000 });
+
+    await dragTriggerHandle(page, -160);
+    const repo = await getWidgetRepo(page);
+    const storageKey = `bugdrop_trigger_position_${repo}_bottom-right`;
+    const savedTop = Number(await page.evaluate(key => localStorage.getItem(key), storageKey));
+
+    const handleBox = await handle.boundingBox();
+    expect(handleBox).not.toBeNull();
+    const pointerX = handleBox!.x + handleBox!.width / 2;
+    const pointerY = handleBox!.y + handleBox!.height / 2;
+    await page.mouse.move(pointerX, pointerY);
+    await page.mouse.down();
+    await page.mouse.move(pointerX, pointerY + 80, { steps: 8 });
+
+    const activeDragTop = await trigger.evaluate(el => el.getBoundingClientRect().top);
+    expect(Math.abs(activeDragTop - savedTop)).toBeGreaterThan(40);
+
+    await page.evaluate(() => window.dispatchEvent(new Event('resize')));
+    await expect
+      .poll(() => trigger.evaluate(el => el.getBoundingClientRect().top))
+      .toBeCloseTo(activeDragTop, 0);
+
+    await page.mouse.up();
+    await expect
+      .poll(() => page.evaluate(key => Number(localStorage.getItem(key)), storageKey))
+      .toBeCloseTo(activeDragTop, 0);
+  });
+
   test('hidden feedback button keeps saved position across viewport resize', async ({ page }) => {
     await page.setViewportSize({ width: 900, height: 700 });
     await page.goto('/test/');
@@ -234,12 +272,35 @@ test.describe('Widget Loading', () => {
     expect(savedTop).not.toBeNull();
 
     await trigger.hover();
-    await page.setViewportSize({ width: 900, height: 860 });
+    await page.setViewportSize({ width: 900, height: 360 });
+
+    await expect
+      .poll(async () => {
+        return trigger.evaluate(el => {
+          const rect = el.getBoundingClientRect();
+          return rect.top >= 8 && window.innerHeight - rect.bottom >= 8;
+        });
+      })
+      .toBe(true);
+
+    const clampedBox = await trigger.boundingBox();
+    expect(clampedBox).not.toBeNull();
+    expect(clampedBox!.y).toBeGreaterThanOrEqual(8);
+    expect(clampedBox!.y + clampedBox!.height).toBeLessThanOrEqual(352);
+    await expect
+      .poll(() => page.evaluate(key => localStorage.getItem(key), storageKey))
+      .toBe(savedTop);
+
     await page.setViewportSize({ width: 900, height: 900 });
+    await page.mouse.move(10, 10);
 
     await expect
       .poll(() => page.evaluate(key => localStorage.getItem(key), storageKey))
       .toBe(savedTop);
+
+    await expect
+      .poll(() => trigger.evaluate(el => el.getBoundingClientRect().top))
+      .toBeCloseTo(Number(savedTop), 0);
   });
 
   test('missing local test config returns a javascript file', async ({ page }) => {

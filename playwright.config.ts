@@ -2,14 +2,50 @@ import { defineConfig, devices } from '@playwright/test';
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8787';
 const issueCanaryProject = 'chromium-issue-canary';
-const issueCanaryExplicitlySelected = process.argv.some((argument, index, arguments_) => {
-  return (
-    argument === `--project=${issueCanaryProject}` ||
-    (argument === '--project' && arguments_[index + 1] === issueCanaryProject)
-  );
-});
+const liveProjects = [
+  'chromium-live',
+  'chromium-live-radix',
+  'chromium-cross-browser-live',
+  'firefox-cross-browser-live',
+  'webkit-cross-browser-live',
+] as const;
+const explicitlySelectedProjects = new Set(
+  process.argv.flatMap((argument, index, arguments_) => {
+    if (!argument.startsWith('--project=') && argument !== '--project') return [];
+
+    const projectValues = arguments_.slice(index + 1);
+    const nextOptionIndex = projectValues.findIndex(project => project.startsWith('-'));
+    const followingProjects =
+      nextOptionIndex === -1 ? projectValues : projectValues.slice(0, nextOptionIndex);
+    return argument.startsWith('--project=')
+      ? [argument.slice('--project='.length), ...followingProjects]
+      : followingProjects;
+  })
+);
+const issueCanaryExplicitlySelected = explicitlySelectedProjects.has(issueCanaryProject);
+const liveProjectExplicitlySelected = [...explicitlySelectedProjects].some(selector =>
+  liveProjects.some(project => projectSelectorMatches(selector, project))
+);
+const liveInputsAvailable = Boolean(process.env.LIVE_TARGET && process.env.PLAYWRIGHT_BASE_URL);
 const issueCanaryTest = /.*\.issue-canary\.spec\.ts$/;
 const noTests = /$a/;
+
+function projectSelectorMatches(selector: string, project: string): boolean {
+  const pattern = selector
+    .toLocaleLowerCase()
+    .split('*')
+    .map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('.*');
+  return new RegExp(`^${pattern}$`).test(project.toLocaleLowerCase());
+}
+
+if (liveProjectExplicitlySelected && !liveInputsAvailable) {
+  throw new Error('Live Playwright projects require both LIVE_TARGET and PLAYWRIGHT_BASE_URL.');
+}
+
+function liveTestMatch(pattern: RegExp): RegExp {
+  return liveInputsAvailable ? pattern : noTests;
+}
 
 export default defineConfig({
   testDir: './e2e',
@@ -49,7 +85,7 @@ export default defineConfig({
       use: {
         ...devices['Desktop Chrome'],
       },
-      testMatch: /.*\.live\.spec\.ts/,
+      testMatch: liveTestMatch(/.*\.live\.spec\.ts/),
       timeout: 60_000,
     },
     {
@@ -58,7 +94,7 @@ export default defineConfig({
       use: {
         ...devices['Desktop Chrome'],
       },
-      testMatch: /.*\.live-radix\.spec\.ts/,
+      testMatch: liveTestMatch(/.*\.live-radix\.spec\.ts/),
       timeout: 60_000,
     },
     {
@@ -67,7 +103,7 @@ export default defineConfig({
       use: {
         ...devices['Desktop Chrome'],
       },
-      testMatch: /.*\.cross-browser-live\.spec\.ts/,
+      testMatch: liveTestMatch(/.*\.cross-browser-live\.spec\.ts/),
       timeout: 60_000,
     },
     {
@@ -76,7 +112,7 @@ export default defineConfig({
       use: {
         ...devices['Desktop Firefox'],
       },
-      testMatch: /.*\.cross-browser-live\.spec\.ts/,
+      testMatch: liveTestMatch(/.*\.cross-browser-live\.spec\.ts/),
       timeout: 60_000,
     },
     {
@@ -85,7 +121,7 @@ export default defineConfig({
       use: {
         ...devices['Desktop Safari'],
       },
-      testMatch: /.*\.cross-browser-live\.spec\.ts/,
+      testMatch: liveTestMatch(/.*\.cross-browser-live\.spec\.ts/),
       timeout: 60_000,
     },
     {
