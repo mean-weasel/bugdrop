@@ -20,6 +20,7 @@ const approvedReleases = new Map([
   ['actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25', 'v5.1.0'],
   ['actions/cache/save@caa296126883cff596d87d8935842f9db880ef25', 'v5.1.0'],
   ['actions/cache@caa296126883cff596d87d8935842f9db880ef25', 'v5.1.0'],
+  ['actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', 'v7.0.1'],
   ['actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09', 'v5.1.0'],
   ['actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0', 'v5.0.0'],
   ['actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3', 'v8.0.0'],

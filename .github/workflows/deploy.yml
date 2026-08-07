@@ -98,7 +98,7 @@ jobs:
           echo "controller_sha=$CONTROLLER_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Checkout immutable controller
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.guard.outputs.controller_sha }}
           path: controller
@@ -203,14 +203,14 @@ jobs:
       tag: ${{ steps.bundle.outputs.tag }}
     steps:
       - name: Checkout immutable controller
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
           path: controller
           persist-credentials: false
 
       - name: Checkout immutable candidate
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.target_sha }}
           path: candidate
@@ -309,7 +309,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout immutable controller
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
           path: controller
@@ -405,7 +405,7 @@ jobs:
       widget_sha256: ${{ steps.expected.outputs.widget_sha256 }}
     steps:
       - name: Checkout immutable controller
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
           path: controller
@@ -414,7 +414,7 @@ jobs:
           fetch-tags: true
 
       - name: Checkout immutable candidate source
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.target_sha }}
           path: candidate
@@ -573,14 +573,14 @@ jobs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - name: Checkout immutable controller
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
           path: controller
           persist-credentials: false
 
       - name: Checkout immutable candidate source
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.target_sha }}
           path: candidate
@@ -676,7 +676,7 @@ jobs:
       notify: ${{ steps.publish.outputs.notify }}
     steps:
       - name: Checkout immutable controller
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
           path: controller
@@ -763,7 +763,7 @@ jobs:
     steps:
       - name: Checkout immutable controller
         if: ${{ needs.deploy-candidate.result != 'skipped' }}
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
           path: controller
@@ -771,7 +771,7 @@ jobs:
 
       - name: Checkout immutable candidate source
         if: ${{ needs.deploy-candidate.result != 'skipped' }}
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.target_sha }}
           path: candidate
