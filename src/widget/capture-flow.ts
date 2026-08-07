@@ -34,10 +34,7 @@ export interface CaptureFlowResult {
 }
 
 export type EmptyCaptureReason =
-  | 'none'
-  | 'explicit-skip'
-  | 'capture-failure-skip'
-  | 'selection-cancelled';
+  'none' | 'explicit-skip' | 'capture-failure-skip' | 'selection-cancelled';
 
 type ElementMetadata = Pick<CaptureFlowResult, 'elementSelector' | 'fullElementSelector'>;
 type ChosenCaptureResult =

@@ -105,9 +105,7 @@ export interface SubmissionResult {
 }
 
 export type VariantOutcome =
-  | { status: 'submitted'; result: SubmissionResult }
-  | { status: 'closed' }
-  | { status: 'busy' };
+  { status: 'submitted'; result: SubmissionResult } | { status: 'closed' } | { status: 'busy' };
 
 export interface OpenedVariant {
   readonly instanceId: string;

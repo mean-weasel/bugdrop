@@ -62,8 +62,7 @@ type StructuredContext = Context<{
 }>;
 
 type ValidationResult =
-  | { valid: true; payload: StructuredFeedbackPayload }
-  | { valid: false; error: string };
+  { valid: true; payload: StructuredFeedbackPayload } | { valid: false; error: string };
 
 type LabelResolution = {
   labels: string[];

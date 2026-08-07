@@ -80,7 +80,7 @@
     "@commitlint/cli": "^21.2.1",
     "@commitlint/config-conventional": "^20.5.0",
     "@eslint/js": "^9.39.2",
-    "@playwright/test": "^1.49.0",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^22.10.2",
     "@vitest/coverage-v8": "^4.1.10",
     "esbuild": "^0.28.1",
@@ -90,12 +90,12 @@
     "jsdom": "^29.0.1",
     "knip": "^5.76.1",
     "lint-staged": "^17.3.0",
-    "prettier": "^3.8.1",
+    "prettier": "^3.9.6",
     "typescript": "^5.7.2",
-    "typescript-eslint": "^8.50.0",
+    "typescript-eslint": "^8.65.0",
     "vitest": "^4.1.10",
-    "wrangler": "^4.98.0",
-    "yaml": "^2.8.3"
+    "wrangler": "4.98.0",
+    "yaml": "^2.9.0"
   },
   "dependencies": {
     "hono": "^4.13.0",
