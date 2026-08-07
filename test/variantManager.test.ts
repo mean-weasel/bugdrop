@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createVariantManager } from '../src/widget/variants/manager';
 import type { VariantConfig } from '../src/widget/variants/public-types';
 
@@ -25,6 +25,16 @@ const modalConfig: VariantConfig = {
 describe('rendered variant manager', () => {
   beforeEach(() => {
     document.body.replaceChildren();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('Unexpected network request');
+      })
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('keeps registration lazy and mounts one owned isolated child', () => {
@@ -143,5 +153,26 @@ describe('rendered variant manager', () => {
     expect(document.querySelectorAll('[data-bugdrop-owned]')).toHaveLength(1);
     expect(document.body.style.overflow).toBe('hidden');
     second.close();
+  });
+
+  it('cancels through the rendered control and disposes stale form listeners', async () => {
+    const manager = createVariantManager({ repo: 'owner/repo', apiUrl: '/api' });
+    const opened = manager
+      .register(modalConfig)
+      .open({ initialAnswers: { response: 'Never submitted' } });
+    const host = document.querySelector<HTMLElement>('[data-bugdrop-owned]')!;
+    const shadow = host.shadowRoot;
+    if (!shadow) throw new Error('Expected the rendered modal shadow root');
+    const form = shadow.querySelector<HTMLFormElement>('form')!;
+    const cancel = shadow.querySelector<HTMLButtonElement>('.bdv-cancel')!;
+
+    cancel.click();
+    await expect(opened.result).resolves.toEqual({ status: 'closed' });
+    expect(document.querySelector('[data-bugdrop-owned]')).toBeNull();
+
+    cancel.click();
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

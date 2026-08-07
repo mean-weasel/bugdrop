@@ -607,11 +607,13 @@ function reclampVisibleTriggerPosition(trigger: HTMLElement, config: WidgetConfi
   const rect = trigger.getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) return;
 
-  const currentTop = parseFloat(trigger.style.top);
-  if (!Number.isFinite(currentTop)) return;
+  const renderedTop = parseFloat(trigger.style.top);
+  if (!Number.isFinite(renderedTop)) return;
 
-  const clampedTop = setTriggerTop(trigger, currentTop);
-  saveTriggerTop(config, clampedTop);
+  const desiredTop = trigger.classList.contains('bd-trigger--dragging')
+    ? renderedTop
+    : (getStoredTriggerTop(config) ?? renderedTop);
+  setTriggerTop(trigger, desiredTop);
 }
 
 function attachTriggerViewportClamp(trigger: HTMLElement, config: WidgetConfig): void {

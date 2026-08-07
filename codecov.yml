@@ -1,3 +1,9 @@
+parsers:
+  javascript:
+    enable_partials: true
+  lcov:
+    partials_as_hits: false
+
 coverage:
   status:
     project:
@@ -13,6 +19,34 @@ coverage:
         only_pulls: true
         paths:
           - 'src/**'
+
+component_management:
+  default_rules:
+    flag_regexes:
+      - '^unit$'
+    statuses:
+      - type: project
+        target: auto
+        threshold: 1%
+        informational: true
+  individual_components:
+    - component_id: widget
+      name: Widget
+      paths:
+        - 'src/widget/**'
+    - component_id: backend
+      name: Backend
+      paths:
+        - 'src/index.ts'
+        - 'src/defaults.ts'
+        - 'src/types.ts'
+        - 'src/lib/**'
+        - 'src/middleware/**'
+        - 'src/routes/**'
+    - component_id: scripts
+      name: Scripts
+      paths:
+        - 'scripts/**'
 
 comment: false
 

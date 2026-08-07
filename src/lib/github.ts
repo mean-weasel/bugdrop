@@ -154,6 +154,9 @@ async function ensureScreenshotBranch(token: string, owner: string, repo: string
     { headers: headers(token) }
   );
   if (check.ok) return;
+  if (check.status !== 404) {
+    throw new Error(`Failed to check screenshot branch: ${check.status}`);
+  }
 
   // Get default branch SHA
   const repoRes = await fetch(`${GITHUB_API}/repos/${owner}/${repo}`, {
@@ -184,7 +187,23 @@ async function ensureScreenshotBranch(token: string, owner: string, repo: string
   });
   if (!createRes.ok) {
     const error = await createRes.text();
+    if (createRes.status === 422 && isExistingReferenceError(error)) {
+      const recheck = await fetch(
+        `${GITHUB_API}/repos/${owner}/${repo}/git/ref/heads/${SCREENSHOT_BRANCH}`,
+        { headers: headers(token) }
+      );
+      if (recheck.ok) return;
+    }
     throw new Error(`Failed to create screenshot branch: ${createRes.status} - ${error}`);
+  }
+}
+
+function isExistingReferenceError(body: string): boolean {
+  try {
+    const parsed = JSON.parse(body) as { message?: unknown };
+    return parsed.message === 'Reference already exists';
+  } catch {
+    return false;
   }
 }
 
@@ -205,9 +224,9 @@ export async function uploadScreenshotAsAsset(
   // Remove data URL prefix and extract the base64 content
   const content = base64DataUrl.replace(/^data:image\/\w+;base64,/, '');
 
-  // Generate unique filename with timestamp
+  // Retain the timestamp for traceability and add per-upload cryptographic entropy.
   const timestamp = Date.now();
-  const filename = `.bugdrop/screenshots/${timestamp}.png`;
+  const filename = `.bugdrop/screenshots/${timestamp}-${crypto.randomUUID()}.png`;
 
   return uploadBase64Asset(
     token,
@@ -226,7 +245,7 @@ export async function uploadAttachmentAsAsset(
   attachment: FeedbackAttachment
 ): Promise<string> {
   const timestamp = Date.now();
-  const filename = `.bugdrop/uploads/${timestamp}-${sanitizeAttachmentFilename(attachment.name)}`;
+  const filename = `.bugdrop/uploads/${timestamp}-${crypto.randomUUID()}-${sanitizeAttachmentFilename(attachment.name)}`;
   const content = attachment.dataUrl.replace(/^data:[^;]+;base64,/, '');
 
   return uploadBase64Asset(

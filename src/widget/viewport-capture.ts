@@ -7,7 +7,13 @@ type DisplayMediaOptionsWithCurrentTab = DisplayMediaStreamOptions & {
 
 type VideoElementWithFrameCallback = HTMLVideoElement & {
   requestVideoFrameCallback?: (callback: () => void) => number;
+  cancelVideoFrameCallback?: (callbackId: number) => void;
 };
+
+interface CaptureResourceOwner {
+  attachStream: () => void;
+  cleanup: () => void;
+}
 
 declare global {
   interface Window {
@@ -32,22 +38,25 @@ function beginVisibleViewportCapture(): Promise<string> {
     preferCurrentTab: true,
   };
 
-  return withCaptureTimeout(
-    navigator.mediaDevices.getDisplayMedia(displayMediaOptions).then(stream => {
-      return captureVideoFrame(stream);
-    })
-  );
+  const controller = new AbortController();
+  const capturePromise = navigator.mediaDevices
+    .getDisplayMedia(displayMediaOptions)
+    .then(stream => captureVideoFrame(stream, controller.signal));
+
+  return withCaptureTimeout(capturePromise, () => controller.abort());
 }
 
-async function captureVideoFrame(stream: MediaStream): Promise<string> {
-  validateBrowserSurface(stream);
-
+async function captureVideoFrame(stream: MediaStream, signal: AbortSignal): Promise<string> {
   const video = document.createElement('video') as VideoElementWithFrameCallback;
   video.muted = true;
   video.playsInline = true;
+  const resources = createCaptureResourceOwner(stream, video, signal);
 
   try {
-    await waitForVideoFrame(video, stream);
+    validateBrowserSurface(stream);
+    throwIfAborted(signal);
+    await waitForVideoFrame(video, stream, signal, resources);
+    throwIfAborted(signal);
 
     const width = video.videoWidth || window.innerWidth;
     const height = video.videoHeight || window.innerHeight;
@@ -67,10 +76,7 @@ async function captureVideoFrame(stream: MediaStream): Promise<string> {
     ctx.drawImage(video, 0, 0, width, height);
     return canvas.toDataURL('image/png');
   } finally {
-    for (const track of stream.getTracks()) {
-      track.stop();
-    }
-    video.srcObject = null;
+    resources.cleanup();
   }
 }
 
@@ -78,27 +84,65 @@ function validateBrowserSurface(stream: MediaStream): void {
   const [track] = stream.getVideoTracks();
   const displaySurface = track?.getSettings().displaySurface;
   if (displaySurface && displaySurface !== 'browser') {
-    for (const streamTrack of stream.getTracks()) {
-      streamTrack.stop();
-    }
     throw new Error('Please choose the current browser tab for viewport capture');
   }
 }
 
+function createCaptureResourceOwner(
+  stream: MediaStream,
+  video: VideoElementWithFrameCallback,
+  signal: AbortSignal
+): CaptureResourceOwner {
+  let cleaned = false;
+  let streamAttached = false;
+  const cleanups: Array<() => void> = [];
+
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    for (const dispose of cleanups.splice(0)) dispose();
+    for (const track of stream.getTracks()) track.stop();
+    if (streamAttached) video.srcObject = null;
+  };
+  const onAbort = () => cleanup();
+  signal.addEventListener('abort', onAbort, { once: true });
+  cleanups.push(() => signal.removeEventListener('abort', onAbort));
+  if (signal.aborted) cleanup();
+
+  return {
+    attachStream: () => {
+      if (cleaned) return;
+      video.srcObject = stream;
+      streamAttached = true;
+    },
+    cleanup,
+  };
+}
+
 async function waitForVideoFrame(
   video: VideoElementWithFrameCallback,
-  stream: MediaStream
+  stream: MediaStream,
+  signal: AbortSignal,
+  resources: CaptureResourceOwner
 ): Promise<void> {
-  video.srcObject = stream;
-  await video.play().catch(() => {
-    // Some browsers expose the first frame after metadata without requiring play().
-  });
+  resources.attachStream();
+  throwIfAborted(signal);
+  let playPromise: Promise<void>;
+  try {
+    playPromise = video.play();
+  } catch {
+    playPromise = Promise.resolve();
+  }
+  await raceWithAbort(
+    playPromise.then(
+      () => undefined,
+      () => undefined
+    ),
+    signal
+  );
 
-  if (video.requestVideoFrameCallback) {
-    await Promise.race([
-      new Promise<void>(resolve => video.requestVideoFrameCallback?.(() => resolve())),
-      delay(250),
-    ]);
+  if (typeof video.requestVideoFrameCallback === 'function') {
+    await waitForVideoFrameCallback(video, signal);
     if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
       return;
     }
@@ -108,30 +152,77 @@ async function waitForVideoFrame(
     return;
   }
 
-  await Promise.race([
-    new Promise<void>((resolve, reject) => {
-      const onReady = () => {
-        cleanup();
-        resolve();
-      };
-      const onError = () => {
-        cleanup();
-        reject(new Error('Failed to load screen capture stream'));
-      };
-      const cleanup = () => {
-        video.removeEventListener('loadeddata', onReady);
-        video.removeEventListener('canplay', onReady);
-        video.removeEventListener('error', onError);
-      };
-
-      video.addEventListener('loadeddata', onReady);
-      video.addEventListener('canplay', onReady);
-      video.addEventListener('error', onError);
-    }),
-    delay(250),
-  ]);
+  await waitForVideoReadyEvent(video, signal);
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(createAbortError());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener('abort', onAbort);
+      reject(createAbortError());
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      value => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      error => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      }
+    );
+  });
+}
+
+function waitForVideoFrameCallback(
+  video: VideoElementWithFrameCallback,
+  signal: AbortSignal
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let callbackId: number | undefined;
+    const timer = setTimeout(() => settle(resolve), 250);
+    const onAbort = () => settle(() => reject(createAbortError()));
+    const settle = (complete: () => void) => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      if (callbackId !== undefined) video.cancelVideoFrameCallback?.(callbackId);
+      callbackId = undefined;
+      complete();
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    callbackId = video.requestVideoFrameCallback?.(() => settle(resolve));
+    if (signal.aborted) onAbort();
+  });
+}
+
+function waitForVideoReadyEvent(video: HTMLVideoElement, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => settle(resolve), 250);
+    const onReady = () => settle(resolve);
+    const onError = () => settle(() => reject(new Error('Failed to load screen capture stream')));
+    const onAbort = () => settle(() => reject(createAbortError()));
+    const settle = (complete: () => void) => {
+      clearTimeout(timer);
+      video.removeEventListener('loadeddata', onReady);
+      video.removeEventListener('canplay', onReady);
+      video.removeEventListener('error', onError);
+      signal.removeEventListener('abort', onAbort);
+      complete();
+    };
+    video.addEventListener('loadeddata', onReady);
+    video.addEventListener('canplay', onReady);
+    video.addEventListener('error', onError);
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw createAbortError();
+}
+
+function createAbortError(): DOMException {
+  return new DOMException('Viewport capture aborted', 'AbortError');
 }
