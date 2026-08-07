@@ -68,7 +68,7 @@ grep -Fq 'run: npm test -- --coverage' <<< "$unit_block" ||
   fail 'the required unit job must generate coverage'
 grep -Fq 'path: coverage/lcov.info' <<< "$unit_block" ||
   fail 'the required unit job must preserve the LCOV report'
-grep -Fq 'uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0' <<< "$unit_block" ||
+grep -Fq 'uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1' <<< "$unit_block" ||
   fail 'coverage artifact upload must use the reviewed immutable Node 24 action'
 grep -Fq 'if-no-files-found: error' <<< "$unit_block" ||
   fail 'a missing LCOV report must fail the required unit job'
