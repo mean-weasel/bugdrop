@@ -28,7 +28,7 @@ expect_failure() {
   }
 }
 
-node "$checker" > /dev/null
+node "$checker" "$repo_root/.github/workflows" > /dev/null
 
 missing_top=$(make_fixture missing-top)
 perl -0pi -e 's/\npermissions: \{\}\n/\n/' "$missing_top/benchmark-ci.yml"
