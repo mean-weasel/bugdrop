@@ -11,8 +11,11 @@ const minimumMajor = new Map([
   ['actions/cache/save', 5],
   ['actions/checkout', 5],
   ['actions/download-artifact', 5],
+  ['actions/dependency-review-action', 5],
   ['actions/setup-node', 5],
   ['actions/upload-artifact', 5],
+  ['github/codeql-action/analyze', 4],
+  ['github/codeql-action/init', 4],
 ]);
 
 const approvedReleases = new Map([
@@ -31,7 +34,10 @@ const approvedReleases = new Map([
   ['actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4', 'v5.0.0'],
   ['actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a', 'v7.0.1'],
   ['actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f', 'v7.0.0'],
+  ['actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294', 'v5.0.0'],
   ['codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f', 'v7.0.0'],
+  ['github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3', 'v4.37.6'],
+  ['github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3', 'v4.37.6'],
 ]);
 
 const failures = [];

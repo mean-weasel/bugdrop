@@ -8,6 +8,8 @@ const expectedTopLevel = new Map([
   ['benchmark-ci.yml', {}],
   ['ci.yml', {}],
   ['cloudflare-capability.yml', { contents: 'read' }],
+  ['codeql.yml', {}],
+  ['dependency-review.yml', {}],
   ['deploy.yml', { contents: 'read' }],
   ['discord-release.yml', { contents: 'read' }],
   ['live-tests.yml', {}],
@@ -24,12 +26,15 @@ const denyByDefaultJobs = new Map([
   ['ci.yml:live-preview-tests', {}],
   ['ci.yml:radix-e2e', { contents: 'read' }],
   ['ci.yml:test', { contents: 'read' }],
+  ['codeql.yml:analyze', { contents: 'read', 'security-events': 'write' }],
+  ['dependency-review.yml:dependency-review', { contents: 'read' }],
   ['live-tests.yml:live-tests', { contents: 'read' }],
   ['sync-docs.yml:sync', { contents: 'read' }],
 ]);
 
 const allowedWrites = new Set([
   'ci.yml:coverage:id-token',
+  'codeql.yml:analyze:security-events',
   'deploy.yml:publish-release:contents',
   'production-heartbeat.yml:incident:issues',
 ]);
