@@ -19,6 +19,7 @@ import {
 import { rateLimit, rateLimitByRepo } from '../middleware/rateLimit';
 import { resolveAccentColor } from '../defaults';
 import { verifyBugDropAuthToken } from '../lib/authToken';
+import { escapeMarkdownTableCell, formatMarkdownCodeSpan } from '../lib/markdown';
 import { handleStructuredFeedback, isStructuredFeedbackRequest } from './structured-feedback';
 
 type ApiVariables = {
@@ -889,25 +890,12 @@ function getSelectedElementHighlightColor(payload: FeedbackPayload): string {
 }
 
 function formatMarkdownTableCode(value: string): string {
-  const tableSafeValue = normalizeMarkdownValue(value).replace(/\|/g, '\\|');
-  if (!tableSafeValue.includes('`')) {
-    return `\`${tableSafeValue}\``;
-  }
-
-  const longestBacktickRun = Math.max(...tableSafeValue.match(/`+/g)!.map(match => match.length));
-  const fence = '`'.repeat(longestBacktickRun + 1);
-  return `${fence} ${tableSafeValue} ${fence}`;
+  const tableSafeValue = escapeMarkdownTableCell(normalizeMarkdownValue(value));
+  return formatMarkdownCodeSpan(tableSafeValue);
 }
 
 function formatMarkdownInlineCode(value: string): string {
-  const inlineSafeValue = normalizeMarkdownValue(value);
-  if (!inlineSafeValue.includes('`')) {
-    return `\`${inlineSafeValue}\``;
-  }
-
-  const longestBacktickRun = Math.max(...inlineSafeValue.match(/`+/g)!.map(match => match.length));
-  const fence = '`'.repeat(longestBacktickRun + 1);
-  return `${fence} ${inlineSafeValue} ${fence}`;
+  return formatMarkdownCodeSpan(normalizeMarkdownValue(value));
 }
 
 function formatConsoleLogsSection(entries: ConsoleLogEntry[] | undefined): string | null {
