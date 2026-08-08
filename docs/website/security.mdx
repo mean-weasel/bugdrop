@@ -230,10 +230,23 @@ If installation status is also sensitive, set `AUTH_TOKEN_REQUIRED_FOR_CHECK = "
 
 ## Reporting Security Issues
 
-If you discover a security vulnerability in BugDrop, please report it responsibly:
+If you discover a security vulnerability in BugDrop, report it privately:
 
 - **Do not** create a public GitHub Issue for security vulnerabilities
-- Contact the maintainers directly through GitHub's private vulnerability reporting feature on the [BugDrop repository](https://github.com/mean-weasel/bugdrop)
+- **Preferred:** use [GitHub private vulnerability reporting](https://github.com/mean-weasel/bugdrop/security/advisories/new)
+- **Email fallback:** [neonwatty@gmail.com](mailto:neonwatty@gmail.com) or [jeremy@mean-weasel.com](mailto:jeremy@mean-weasel.com)
+
+Ordinary email is not end-to-end encrypted. Use GitHub private vulnerability reporting for sensitive
+details, credentials, or unpublished exploit material. If GitHub reporting is unavailable, use either
+email fallback rather than disclosing the issue publicly.
+
+BugDrop provides security fixes for the latest stable release and current hosted service. The
+maintainers target acknowledgment within 48 hours and an initial assessment within 7 days, but these
+are best-effort targets rather than guarantees. Reports about dependencies are in scope when the
+dependency is reachable through or materially affects BugDrop.
+
+See the canonical [BugDrop security policy](https://github.com/mean-weasel/bugdrop/security/policy)
+for supported-version, scope, triage, and coordinated-disclosure details.
 
 ## Next Steps
 
