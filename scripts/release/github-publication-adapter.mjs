@@ -9,7 +9,9 @@ const RELEASE_ID = /^[1-9]\d*$/;
 const TOKEN = /^[A-Za-z0-9_.-]{16,4096}$/;
 const RELEASES_PER_PAGE = 100;
 const MAX_RELEASE_PAGES = 100;
-const ASSET_TIMEOUT_MS = 30_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
+class RequestDeadlineError extends Error {}
 
 export class GithubPublicationAdapterError extends Error {
   constructor(code, message, details = {}) {
@@ -58,6 +60,7 @@ export function createGithubPublicationAdapter({
   apiUrl = 'https://api.github.com',
   fetchImpl = fetch,
   repository,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   token,
   uploadsUrl = 'https://uploads.github.com',
 }) {
@@ -66,6 +69,13 @@ export function createGithubPublicationAdapter({
     repository.split('/').some(part => part.startsWith('.') || part.includes('..'))
   ) {
     fail('INVALID_INPUT', 'repository is invalid');
+  }
+  if (
+    !Number.isSafeInteger(requestTimeoutMs) ||
+    requestTimeoutMs < 1 ||
+    requestTimeoutMs > 60_000
+  ) {
+    fail('INVALID_INPUT', 'requestTimeoutMs is invalid');
   }
   if (!TOKEN.test(token ?? '')) fail('TOKEN_REQUIRED', 'token is required');
   const apiOrigin = new URL(apiUrl).origin;
@@ -79,57 +89,79 @@ export function createGithubPublicationAdapter({
     authorization: `Bearer ${token}`,
     'x-github-api-version': API_VERSION,
   });
+  const withRequestDeadline = async operation => {
+    const controller = new AbortController();
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new RequestDeadlineError('GitHub request deadline expired'));
+        controller.abort();
+      }, requestTimeoutMs);
+    });
+    try {
+      return await Promise.race([operation(controller.signal), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const request = async (method, path, options = {}) => {
     const url = endpoint(options.base ?? apiUrl, path);
-    let response;
     try {
-      response = await fetchImpl(url, {
-        method,
-        redirect: 'error',
-        headers: {
-          ...headers('application/vnd.github+json'),
+      return await withRequestDeadline(async signal => {
+        const response = await fetchImpl(url, {
+          method,
+          redirect: 'error',
+          signal,
+          headers: {
+            ...headers('application/vnd.github+json'),
+            ...(options.body === undefined
+              ? {}
+              : { 'content-type': options.contentType ?? 'application/json' }),
+          },
           ...(options.body === undefined
             ? {}
-            : { 'content-type': options.contentType ?? 'application/json' }),
-        },
-        ...(options.body === undefined
-          ? {}
-          : {
-              body:
-                options.contentType === 'application/octet-stream'
-                  ? options.body
-                  : JSON.stringify(options.body),
-            }),
+            : {
+                body:
+                  options.contentType === 'application/octet-stream'
+                    ? options.body
+                    : JSON.stringify(options.body),
+              }),
+        });
+        if (options.missing && response.status === 404) return null;
+        if (!(options.expected ?? [200, 201]).includes(response.status)) {
+          fail('GITHUB_REQUEST_FAILED', 'GitHub request failed', {
+            method,
+            path: url.pathname,
+            status: response.status,
+          });
+        }
+        if (response.status === 204) return null;
+        let value;
+        try {
+          value = await response.json();
+        } catch {
+          fail('INVALID_RESPONSE', `${url.pathname} did not return JSON`);
+        }
+        if (options.array) {
+          if (!Array.isArray(value)) {
+            fail('INVALID_RESPONSE', `${url.pathname} response is invalid`);
+          }
+          return {
+            data: value,
+            hasNext: /<[^>]+>;\s*rel="next"/.test(response.headers.get('link') ?? ''),
+          };
+        }
+        return record(value, url.pathname);
       });
-    } catch {
-      fail('GITHUB_REQUEST_FAILED', 'GitHub request failed', {
-        method,
-        path: url.pathname,
-        status: null,
-      });
-    }
-    if (options.missing && response.status === 404) return null;
-    if (!(options.expected ?? [200, 201]).includes(response.status)) {
-      fail('GITHUB_REQUEST_FAILED', 'GitHub request failed', {
-        method,
-        path: url.pathname,
-        status: response.status,
-      });
-    }
-    if (response.status === 204) return null;
-    try {
-      const value = await response.json();
-      if (options.array) {
-        if (!Array.isArray(value)) fail('INVALID_RESPONSE', `${url.pathname} response is invalid`);
-        return {
-          data: value,
-          hasNext: /<[^>]+>;\s*rel="next"/.test(response.headers.get('link') ?? ''),
-        };
-      }
-      return record(value, url.pathname);
     } catch (error) {
       if (error instanceof GithubPublicationAdapterError) throw error;
-      fail('INVALID_RESPONSE', `${url.pathname} did not return JSON`);
+      fail(
+        error instanceof RequestDeadlineError ? 'GITHUB_REQUEST_TIMEOUT' : 'GITHUB_REQUEST_FAILED',
+        error instanceof RequestDeadlineError
+          ? 'GitHub request timed out'
+          : 'GitHub request failed',
+        { method, path: url.pathname, status: null }
+      );
     }
   };
   const requestBytes = async (assetUrl, expectedSize, assetId) => {
@@ -139,61 +171,69 @@ export function createGithubPublicationAdapter({
       url.pathname !== `/repos/${repository}/releases/assets/${assetId}`
     )
       fail('UNSAFE_ENDPOINT', 'asset API URL is untrusted');
-    let response;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), ASSET_TIMEOUT_MS);
     try {
-      response = await fetchImpl(url, {
-        headers: headers('application/octet-stream'),
-        redirect: 'manual',
-        signal: controller.signal,
-      });
-      if ([301, 302, 303, 307, 308].includes(response.status)) {
-        let location;
-        try {
-          location = new URL(response.headers.get('location'));
-        } catch {
-          fail('UNSAFE_ENDPOINT', 'asset redirect is malformed');
-        }
-        if (
-          location.protocol !== 'https:' ||
-          location.username ||
-          location.password ||
-          !storageOrigins.has(location.origin)
-        )
-          fail('UNSAFE_ENDPOINT', 'asset redirect is untrusted');
-        response = await fetchImpl(location, {
-          headers: { accept: 'application/octet-stream' },
-          redirect: 'error',
-          signal: controller.signal,
+      return await withRequestDeadline(async signal => {
+        let response = await fetchImpl(url, {
+          headers: headers('application/octet-stream'),
+          redirect: 'manual',
+          signal,
         });
-      }
-      if (!response.ok)
-        fail('GITHUB_REQUEST_FAILED', 'GitHub asset request failed', { status: response.status });
-      const declared = response.headers.get('content-length');
-      if (declared !== null && Number(declared) !== expectedSize)
-        fail('INVALID_RESPONSE', 'asset Content-Length differs from GitHub metadata');
-      if (!response.body) fail('INVALID_RESPONSE', 'asset body is unavailable');
-      const chunks = [];
-      let total = 0;
-      const reader = response.body.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        total += value.byteLength;
-        if (total > MAX_WIDGET_BYTES || total > expectedSize) {
-          await reader.cancel();
-          fail('INVALID_RESPONSE', 'asset exceeds its authenticated byte bound');
+        if ([301, 302, 303, 307, 308].includes(response.status)) {
+          let location;
+          try {
+            location = new URL(response.headers.get('location'));
+          } catch {
+            fail('UNSAFE_ENDPOINT', 'asset redirect is malformed');
+          }
+          if (
+            location.protocol !== 'https:' ||
+            location.username ||
+            location.password ||
+            !storageOrigins.has(location.origin)
+          ) {
+            fail('UNSAFE_ENDPOINT', 'asset redirect is untrusted');
+          }
+          response = await fetchImpl(location, {
+            headers: { accept: 'application/octet-stream' },
+            redirect: 'error',
+            signal,
+          });
         }
-        chunks.push(Buffer.from(value));
-      }
-      if (total !== expectedSize) fail('INVALID_RESPONSE', 'asset response is truncated');
-      return Buffer.concat(chunks, total);
+        if (!response.ok) {
+          fail('GITHUB_REQUEST_FAILED', 'GitHub asset request failed', {
+            status: response.status,
+          });
+        }
+        const declared = response.headers.get('content-length');
+        if (declared !== null && Number(declared) !== expectedSize) {
+          fail('INVALID_RESPONSE', 'asset Content-Length differs from GitHub metadata');
+        }
+        if (!response.body) fail('INVALID_RESPONSE', 'asset body is unavailable');
+        const chunks = [];
+        let total = 0;
+        const reader = response.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+          if (total > MAX_WIDGET_BYTES || total > expectedSize) {
+            await reader.cancel();
+            fail('INVALID_RESPONSE', 'asset exceeds its authenticated byte bound');
+          }
+          chunks.push(Buffer.from(value));
+        }
+        if (total !== expectedSize) fail('INVALID_RESPONSE', 'asset response is truncated');
+        return Buffer.concat(chunks, total);
+      });
     } catch (error) {
       if (error instanceof GithubPublicationAdapterError) throw error;
-      fail('GITHUB_REQUEST_FAILED', 'GitHub asset request failed or timed out', { status: null });
-    } finally {
-      clearTimeout(timer);
+      fail(
+        error instanceof RequestDeadlineError ? 'GITHUB_REQUEST_TIMEOUT' : 'GITHUB_REQUEST_FAILED',
+        error instanceof RequestDeadlineError
+          ? 'GitHub asset request timed out'
+          : 'GitHub asset request failed',
+        { status: null }
+      );
     }
   };
   const inspectTag = async tag => {
@@ -254,6 +294,7 @@ export function createGithubPublicationAdapter({
       body: String(release.body ?? ''),
       draft: release.draft === true,
       id: String(release.id),
+      name: String(release.name ?? ''),
       prerelease: release.prerelease === true,
       published: release.draft === false && release.published_at !== null,
       tag,

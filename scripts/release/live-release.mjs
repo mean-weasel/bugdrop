@@ -217,6 +217,20 @@ async function inspectAfterMutation({
   throw lastError;
 }
 
+function requireInspectionOptions(attempts, intervalMs, sleep) {
+  if (
+    !Number.isSafeInteger(attempts) ||
+    attempts < 1 ||
+    attempts > 100 ||
+    !Number.isSafeInteger(intervalMs) ||
+    intervalMs < 0 ||
+    intervalMs > 60000 ||
+    (sleep !== undefined && typeof sleep !== 'function')
+  ) {
+    fail('INVALID_LIVE_RELEASE_INPUT', 'post-mutation inspection retry options are invalid');
+  }
+}
+
 export async function captureBaseline({ client, expected, observe = collectBaselineIdentity }) {
   const current = await inspectAuthoritative(client, expected.origin, observe);
   return {
@@ -249,17 +263,7 @@ export async function deployCandidate({
   sleep,
   verify = value => pollLiveVerification({ expected: value }),
 }) {
-  if (
-    !Number.isSafeInteger(inspectionAttempts) ||
-    inspectionAttempts < 1 ||
-    inspectionAttempts > 100 ||
-    !Number.isSafeInteger(inspectionIntervalMs) ||
-    inspectionIntervalMs < 0 ||
-    inspectionIntervalMs > 60000 ||
-    (sleep !== undefined && typeof sleep !== 'function')
-  ) {
-    fail('INVALID_LIVE_RELEASE_INPUT', 'post-deploy inspection retry options are invalid');
-  }
+  requireInspectionOptions(inspectionAttempts, inspectionIntervalMs, sleep);
   requireAuthorization(authorization, expected);
   if (
     baseline?.status !== 'baseline-captured' ||
@@ -367,15 +371,43 @@ function rollbackProof(baseline, current) {
   });
 }
 
+async function pollRollbackVerification({
+  baseline,
+  client,
+  origin,
+  observe,
+  maxAttempts,
+  intervalMs,
+  sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
+}) {
+  let lastProof = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const current = await inspectAuthoritative(client, origin, observe);
+      lastProof = rollbackProof(baseline, current);
+      if (lastProof.status === 'verified') return lastProof;
+    } catch {
+      lastProof = null;
+      // A later cache-resistant read may converge to the authoritative rollback.
+    }
+    if (attempt < maxAttempts) await sleep(intervalMs);
+  }
+  return lastProof;
+}
+
 export async function finalizeRelease({
   baseline,
   client,
   deployment,
   expected,
   publication,
+  inspectionAttempts = 12,
+  inspectionIntervalMs = 5000,
   observe = collectBaselineIdentity,
+  sleep,
   verify = value => pollLiveVerification({ expected: value }),
 }) {
+  requireInspectionOptions(inspectionAttempts, inspectionIntervalMs, sleep);
   if (deployment?.mutationAttempted !== true) {
     return { protocol: PROTOCOL, status: 'no-mutation', rollbackAttempted: false };
   }
@@ -438,10 +470,16 @@ export async function finalizeRelease({
     baseline.deployment.versionId,
     `restore baseline ${expected.planIdentity.slice(7, 19)}`
   );
-  let restored;
-  try {
-    restored = await inspectAuthoritative(client, expected.origin, observe);
-  } catch {
+  const proof = await pollRollbackVerification({
+    baseline,
+    client,
+    origin: expected.origin,
+    observe,
+    maxAttempts: inspectionAttempts,
+    intervalMs: inspectionIntervalMs,
+    ...(sleep ? { sleep } : {}),
+  });
+  if (!proof) {
     return {
       protocol: PROTOCOL,
       status: 'manual-recovery-required',
@@ -450,7 +488,6 @@ export async function finalizeRelease({
       commandStatus: command.status,
     };
   }
-  const proof = rollbackProof(baseline, restored);
   return proof.status === 'verified'
     ? {
         protocol: PROTOCOL,

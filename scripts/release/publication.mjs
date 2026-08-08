@@ -16,7 +16,8 @@ const RECOVERY = Object.freeze({
   preservePublicationState: true,
   production: 'restore-prior-baseline',
 });
-const CONVERGENCE_INSPECTIONS = 4;
+const CONVERGENCE_INSPECTIONS = 6;
+const CONVERGENCE_INTERVAL_MS = 2000;
 export class PublicationError extends Error {
   constructor(code, message, details = {}) {
     super(`${code}: ${message}`);
@@ -154,6 +155,7 @@ const unknown = reason => ({ status: 'unknown-critical', reason });
 function releaseState(expected, release) {
   if (
     release.targetSha !== expected.targetSha ||
+    release.name !== expected.name ||
     release.prerelease !== false ||
     !same(release.marker, expected.marker) ||
     release.body !== expected.body ||
@@ -260,11 +262,21 @@ function actionKey(action) {
   if (action.kind === 'publish-draft') return `${action.kind}:${action.releaseId}`;
   return action.kind;
 }
+function observedReleaseId(observation) {
+  const releases = observation?.releases;
+  return Array.isArray(releases) && releases.length === 1 ? releases[0]?.id : null;
+}
 function isForwardState(expected, action, state, mutationResult, observation) {
+  const releaseId = observedReleaseId(observation);
   if (state.status === 'exact-published') {
-    const releaseId = observation?.releases?.[0]?.id;
     if (action.kind === 'create-tag') return false;
-    if (action.kind === 'create-draft') return mutationResult?.releaseId === releaseId;
+    if (action.kind === 'create-draft') {
+      return (
+        Boolean(releaseId) &&
+        Boolean(mutationResult?.releaseId) &&
+        mutationResult.releaseId === releaseId
+      );
+    }
     return action.releaseId === releaseId;
   }
   if (state.status !== 'partial-resumable') return false;
@@ -272,13 +284,17 @@ function isForwardState(expected, action, state, mutationResult, observation) {
   if (action.kind === 'create-tag') {
     return (
       next.kind === 'create-draft' &&
-      mutationResult?.objectSha === observation?.tagRef?.objectSha &&
+      Boolean(mutationResult?.objectSha) &&
+      mutationResult.objectSha === observation?.tagRef?.objectSha &&
       observation?.releases?.length === 0
     );
   }
   if (action.kind === 'create-draft') {
     return (
-      mutationResult?.releaseId === next.releaseId &&
+      Boolean(releaseId) &&
+      Boolean(mutationResult?.releaseId) &&
+      mutationResult.releaseId === releaseId &&
+      releaseId === next.releaseId &&
       (next.kind === 'upload-asset' || next.kind === 'publish-draft')
     );
   }
@@ -314,7 +330,24 @@ function stopped(expected, state, details = {}) {
     ...(state.nextAction ? { nextAction: publicAction(state.nextAction) } : {}),
   };
 }
-export async function executePublication({ adapter, bundle }) {
+export async function executePublication({
+  adapter,
+  bundle,
+  convergenceInspections = CONVERGENCE_INSPECTIONS,
+  convergenceIntervalMs = CONVERGENCE_INTERVAL_MS,
+  sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
+}) {
+  if (
+    !Number.isSafeInteger(convergenceInspections) ||
+    convergenceInspections < 1 ||
+    convergenceInspections > 20 ||
+    !Number.isSafeInteger(convergenceIntervalMs) ||
+    convergenceIntervalMs < 0 ||
+    convergenceIntervalMs > 10000 ||
+    typeof sleep !== 'function'
+  ) {
+    fail('INVALID_CONVERGENCE_OPTIONS', 'publication convergence options are invalid');
+  }
   const expected = validatePublicationBundle(bundle);
   const history = [];
   const attemptedActions = new Set();
@@ -368,15 +401,17 @@ export async function executePublication({ adapter, bundle }) {
       mutationError = error instanceof Error ? error.message : String(error);
     }
     let converged = false;
-    for (let inspection = 0; inspection < CONVERGENCE_INSPECTIONS; inspection += 1) {
+    for (let inspection = 0; inspection < convergenceInspections; inspection += 1) {
       ({ observation, state } = await inspect(ownedReleaseId));
       if (state.status === 'conflict') {
         return stopped(expected, state, { history, ...(mutationError ? { mutationError } : {}) });
       }
       if (isForwardState(expected, action, state, mutationResult, observation)) {
+        if (action.kind === 'create-draft') ownedReleaseId = observedReleaseId(observation);
         converged = true;
         break;
       }
+      if (inspection + 1 < convergenceInspections) await sleep(convergenceIntervalMs);
     }
     if (!converged) {
       return stopped(expected, unknown(`mutation-outcome-unobserved:${key}`), {

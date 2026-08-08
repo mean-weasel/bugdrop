@@ -173,6 +173,7 @@ describe('live release production orchestration', () => {
             draft: false,
             id: '123',
             marker: publication.marker,
+            name: publication.name,
             prerelease: false,
             published: true,
             tag: publication.tag,
@@ -313,6 +314,99 @@ describe('live release production orchestration', () => {
       'version-baseline',
       expect.stringContaining('restore baseline')
     );
+  });
+
+  it('polls read-only after rollback until the authoritative baseline is visible', async () => {
+    const cloudflare = client();
+    const baseline = await captureBaseline({
+      client: cloudflare,
+      expected,
+      observe: cloudflare.observe,
+    });
+    const deployment = await deployCandidate({
+      authorization,
+      baseline,
+      client: cloudflare,
+      expected,
+      observe: cloudflare.observe,
+      verify: async () => ({ status: 'verified', targetSha: SHA }),
+    });
+    let postRollbackReads = 0;
+    const observe = vi.fn(async () => {
+      if (cloudflare.rollback.mock.calls.length && postRollbackReads++ === 0) {
+        return {
+          ...state('baseline', null).live,
+          assetIdentity: state('candidate', SHA).live.assetIdentity,
+        };
+      }
+      return cloudflare.observe();
+    });
+    const sleep = vi.fn(async () => {});
+
+    await expect(
+      finalizeRelease({
+        baseline,
+        client: cloudflare,
+        deployment,
+        expected,
+        publication: { status: 'unknown-critical' },
+        inspectionAttempts: 2,
+        inspectionIntervalMs: 1,
+        observe,
+        sleep,
+        verify: async () => ({ status: 'verified', targetSha: SHA }),
+      })
+    ).resolves.toMatchObject({ status: 'rollback-verified', rollbackAttempted: true });
+    expect(cloudflare.rollback).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledOnce();
+  });
+
+  it('reports terminal rollback inspection unavailability instead of a stale mismatch', async () => {
+    const cloudflare = client();
+    const baseline = await captureBaseline({
+      client: cloudflare,
+      expected,
+      observe: cloudflare.observe,
+    });
+    const deployment = await deployCandidate({
+      authorization,
+      baseline,
+      client: cloudflare,
+      expected,
+      observe: cloudflare.observe,
+      verify: async () => ({ status: 'verified', targetSha: SHA }),
+    });
+    let postRollbackReads = 0;
+    const observe = vi.fn(async () => {
+      if (!cloudflare.rollback.mock.calls.length) return cloudflare.observe();
+      postRollbackReads += 1;
+      if (postRollbackReads === 1) {
+        return {
+          ...state('baseline', null).live,
+          assetIdentity: state('candidate', SHA).live.assetIdentity,
+        };
+      }
+      throw new Error('authoritative inspection unavailable');
+    });
+
+    await expect(
+      finalizeRelease({
+        baseline,
+        client: cloudflare,
+        deployment,
+        expected,
+        publication: { status: 'unknown-critical' },
+        inspectionAttempts: 2,
+        inspectionIntervalMs: 0,
+        observe,
+        sleep: async () => {},
+        verify: async () => ({ status: 'verified', targetSha: SHA }),
+      })
+    ).resolves.toMatchObject({
+      status: 'manual-recovery-required',
+      reason: 'rollback-inspection-unavailable',
+      rollbackAttempted: true,
+    });
   });
 
   it('never rolls back an unexpected active state', async () => {
