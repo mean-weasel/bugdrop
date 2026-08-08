@@ -15,15 +15,18 @@ function response(value: unknown, status = 200, headers?: HeadersInit) {
   return new Response(value === null ? null : JSON.stringify(value), { status, headers });
 }
 
-function adapter(fetchImpl: typeof fetch) {
+function adapter(fetchImpl: typeof fetch, requestTimeoutMs = 30_000) {
   return createGithubPublicationAdapter({
     apiUrl: API,
     uploadsUrl: UPLOADS,
     fetchImpl,
     repository: 'mean-weasel/bugdrop',
+    requestTimeoutMs,
     token: TOKEN,
   });
 }
+
+type PublicationAdapter = ReturnType<typeof createGithubPublicationAdapter>;
 
 describe('GitHub publication inspection', () => {
   it('hydrates one annotated tag, marker, and exact asset bytes', async () => {
@@ -42,6 +45,7 @@ describe('GitHub publication inspection', () => {
           {
             id: 123,
             tag_name: 'v1.2.3',
+            name: 'BugDrop 1.2.3',
             body: `notes\n\n${bodyMarker}`,
             draft: false,
             prerelease: false,
@@ -86,6 +90,7 @@ describe('GitHub publication inspection', () => {
           draft: false,
           id: '123',
           marker,
+          name: 'BugDrop 1.2.3',
           prerelease: false,
           published: true,
           tag: 'v1.2.3',
@@ -418,6 +423,64 @@ describe('GitHub publication inspection', () => {
 });
 
 describe('GitHub publication mutations', () => {
+  it('aborts a never-resolving inspection within its explicit request deadline', async () => {
+    let requestSignal: AbortSignal | null = null;
+    const fetchImpl = vi.fn((_input: URL | RequestInfo, init?: RequestInit) => {
+      requestSignal = init?.signal ?? null;
+      return new Promise<Response>(() => {});
+    });
+
+    await expect(adapter(fetchImpl as typeof fetch, 5).inspect('v1.2.3')).rejects.toMatchObject({
+      code: 'GITHUB_REQUEST_TIMEOUT',
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
+  it.each([
+    [
+      'create-tag',
+      (client: PublicationAdapter) =>
+        client.createAnnotatedTag({
+          tag: 'v1.2.3',
+          targetSha: SHA,
+          annotation: 'exact annotation',
+        }),
+    ],
+    [
+      'create-draft',
+      (client: PublicationAdapter) =>
+        client.createDraft({
+          tag: 'v1.2.3',
+          targetSha: SHA,
+          name: 'BugDrop 1.2.3',
+          body: 'notes',
+        }),
+    ],
+    [
+      'upload-asset',
+      (client: PublicationAdapter) =>
+        client.uploadAsset({
+          releaseId: '123',
+          name: 'widget.js',
+          bytes: Buffer.from('asset'),
+        }),
+    ],
+    ['publish-draft', (client: PublicationAdapter) => client.publishDraft({ releaseId: '123' })],
+  ] as const)('aborts a never-resolving %s request without retrying it', async (_name, mutate) => {
+    let requestSignal: AbortSignal | null = null;
+    const fetchImpl = vi.fn((_input: URL | RequestInfo, init?: RequestInit) => {
+      requestSignal = init?.signal ?? null;
+      return new Promise<Response>(() => {});
+    });
+
+    await expect(mutate(adapter(fetchImpl as typeof fetch, 5))).rejects.toMatchObject({
+      code: 'GITHUB_REQUEST_TIMEOUT',
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
   it('creates an annotated tag object and exact ref', async () => {
     const calls: Array<{ body: unknown; method: string; path: string }> = [];
     const fetchImpl = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
@@ -541,6 +604,15 @@ describe('GitHub publication mutations', () => {
         }),
     ],
     ['bad tag', () => adapter(fetch).inspect('main')],
+    [
+      'bad request timeout',
+      () =>
+        createGithubPublicationAdapter({
+          repository: 'owner/repo',
+          requestTimeoutMs: 0,
+          token: TOKEN,
+        }),
+    ],
     ['bad release id', () => adapter(fetch).publishDraft({ releaseId: '../1' })],
     [
       'bad asset name',

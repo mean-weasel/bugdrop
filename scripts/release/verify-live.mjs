@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
 import { canonicalHash } from './canonical-json.mjs';
@@ -209,12 +209,19 @@ export function verifyLiveSnapshot(input, snapshot) {
   };
 }
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
-async function fetchOk(url, fetchImpl, timeoutMs, overallSignal) {
+async function fetchOk(url, fetchImpl, timeoutMs, overallSignal, cacheToken) {
   const requestSignal = AbortSignal.timeout(timeoutMs);
   const signal = overallSignal ? AbortSignal.any([requestSignal, overallSignal]) : requestSignal;
   let response;
   try {
-    response = await fetchImpl(url, { redirect: 'error', signal });
+    const requestUrl = new URL(url);
+    requestUrl.searchParams.set('__bugdrop_observation', cacheToken);
+    response = await fetchImpl(requestUrl, {
+      cache: 'no-store',
+      headers: { 'cache-control': 'no-cache', pragma: 'no-cache' },
+      redirect: 'error',
+      signal,
+    });
   } catch (error) {
     if (requestSignal.aborted && !overallSignal?.aborted) {
       fail('LIVE_FETCH_TIMEOUT', `${url} exceeded ${timeoutMs}ms`);
@@ -264,6 +271,7 @@ async function collectSnapshot(
   signal
 ) {
   const budget = { used: 0 };
+  const cacheToken = randomUUID();
   const deadline = totalTimeoutMs === null ? null : Date.now() + totalTimeoutMs;
   const requestTimeout = () => {
     if (deadline === null) return timeoutMs;
@@ -275,7 +283,7 @@ async function collectSnapshot(
   };
   const healthUrl = `${origin}/api/health`;
   const healthBytes = await readBoundedBytes(
-    await fetchOk(healthUrl, fetchImpl, requestTimeout(), signal),
+    await fetchOk(healthUrl, fetchImpl, requestTimeout(), signal, cacheToken),
     healthUrl,
     MAX_HEALTH_BYTES,
     budget
@@ -293,7 +301,7 @@ async function collectSnapshot(
   for (let index = 0; index < queue.length; index += 1) {
     const filename = queue[index];
     const url = `${origin}/${filename}`;
-    const response = await fetchOk(url, fetchImpl, requestTimeout(), signal);
+    const response = await fetchOk(url, fetchImpl, requestTimeout(), signal, cacheToken);
     const payload = await readBoundedBytes(
       response,
       url,

@@ -668,6 +668,7 @@ jobs:
     name: Publish exact authenticated GitHub Release
     needs: [guard-and-plan, verify-candidate, approval-baseline, deploy-candidate, live-e2e]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: production
     permissions:
       contents: write
@@ -856,9 +857,29 @@ jobs:
           echo "status=$status" >> "$GITHUB_OUTPUT"
           jq -r '"### Finalization — \(.status)\n\nRollback attempted: `\(.rollbackAttempted)`"' finalization.json >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Require verified stable or restored production
+      - name: Preserve finalization evidence
+        if: ${{ always() }}
+        shell: bash
         run: |
-          status='${{ steps.finalize.outputs.status }}'
+          if ! jq -e 'type == "object" and (.status | type == "string")' finalization.json >/dev/null 2>&1; then
+            jq -n --arg planIdentity '${{ needs.verify-candidate.outputs.plan_identity }}' \
+              '{protocol: "bugdrop.live-release/v1", status: "manual-recovery-required", reason: "finalizer-did-not-produce-valid-evidence", rollbackAttempted: false, planIdentity: $planIdentity}' \
+              > finalization.json
+          fi
+
+      - name: Upload authoritative finalization outcome
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-finalization-${{ needs.verify-candidate.outputs.plan_key }}-${{ github.run_attempt }}
+          path: finalization.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Require verified stable or restored production
+        if: ${{ always() }}
+        run: |
+          status=$(jq -er '.status' finalization.json)
           test "$status" = 'published-stable' || \
             test "$status" = 'baseline-restored' || \
             test "$status" = 'rollback-verified' || \

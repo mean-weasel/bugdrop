@@ -20,8 +20,18 @@ import {
 } from '../../scripts/release/publication.mjs';
 import {
   clonePublicationState,
-  FakeGitHubPublicationAdapter,
+  FakeGitHubPublicationAdapter as BaseFakeGitHubPublicationAdapter,
 } from '../fixtures/release/publication/fake-github';
+
+class FakeGitHubPublicationAdapter extends BaseFakeGitHubPublicationAdapter {
+  override async createDraft(input: Record<string, unknown>) {
+    try {
+      return await super.createDraft(input);
+    } finally {
+      Object.assign(this.state.releases?.[0] ?? {}, { name: input.name });
+    }
+  }
+}
 
 const SHA = { target: 'a'.repeat(40), controller: 'b'.repeat(40), main: 'c'.repeat(40) };
 const conflictCases = JSON.parse(
@@ -195,7 +205,9 @@ describe('complete publication and exact retry', () => {
   it('turns an exact rerun into an authenticated no-op', async () => {
     const { adapter, bundle } = await publishedAdapter();
     const before = [...adapter.applied];
-    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({
       status: 'already-published',
       planIdentity: bundle.finalPlan.planIdentity,
     });
@@ -220,13 +232,16 @@ describe('complete publication and exact retry', () => {
   );
 
   it.each(['create-tag', 'create-draft'] as const)(
-    'fails closed after an applied %s response is lost without claiming fresh ownership',
+    'fails closed after an applied %s response is lost without claiming ownership',
     async point => {
       const bundle = publicationBundle();
       const adapter = new FakeGitHubPublicationAdapter({ loseAfter: [point] });
-      await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+
+      await expect(
+        executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+      ).resolves.toMatchObject({
         status: 'unknown-critical',
-        reason: expect.stringContaining('mutation-outcome-unobserved'),
+        reason: expect.stringContaining(`mutation-outcome-unobserved:${point}`),
       });
       expect(adapter.log.filter(item => item.startsWith(point))).toHaveLength(1);
       if (point === 'create-tag') expect(adapter.log).not.toContain('create-draft');
@@ -236,26 +251,7 @@ describe('complete publication and exact retry', () => {
     }
   );
 
-  it('fails closed when a lost tag response is followed by the correct tag becoming visible', async () => {
-    const bundle = publicationBundle();
-    const adapter = delayMutationVisibility(
-      new FakeGitHubPublicationAdapter({ loseAfter: ['create-tag'] }),
-      'create-tag',
-      2
-    );
-
-    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
-      status: 'unknown-critical',
-      reason: expect.stringContaining('mutation-outcome-unobserved:create-tag'),
-    });
-    expect(adapter.log.filter(item => item === 'create-tag')).toHaveLength(1);
-    expect(adapter.applied.filter(item => item === 'create-tag')).toHaveLength(1);
-    expect(adapter.log.filter(item => item === 'create-draft')).toHaveLength(0);
-    expect(adapter.log.filter(item => item.startsWith('upload-asset'))).toHaveLength(0);
-    expect(adapter.log.filter(item => item === 'publish-draft')).toHaveLength(0);
-  });
-
-  it('fails closed when an unapplied lost tag is followed by a matching tag observation', async () => {
+  it('never adopts a foreign exact tag after the create-tag request failed before application', async () => {
     const bundle = publicationBundle();
     const expected = validatePublicationBundle(bundle);
     const adapter = new FakeGitHubPublicationAdapter({ loseBefore: ['create-tag'] });
@@ -264,7 +260,6 @@ describe('complete publication and exact retry', () => {
     adapter.inspect = async () => {
       inspections += 1;
       if (inspections === 1) return inspect();
-      adapter.log.push('inspect');
       return {
         complete: true,
         tagRef: { objectSha: '7'.repeat(40) },
@@ -279,14 +274,105 @@ describe('complete publication and exact retry', () => {
       };
     };
 
-    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({
       status: 'unknown-critical',
       reason: expect.stringContaining('mutation-outcome-unobserved:create-tag'),
     });
     expect(adapter.log.filter(item => item === 'create-tag')).toHaveLength(1);
     expect(adapter.applied.filter(item => item === 'create-tag')).toHaveLength(0);
     expect(adapter.log.filter(item => item === 'create-draft')).toHaveLength(0);
-    expect(adapter.log.filter(item => item.startsWith('upload-asset'))).toHaveLength(0);
+  });
+
+  it('rejects a wrong-name Release and never adopts it after create-draft ownership is lost', async () => {
+    const bundle = publicationBundle();
+    const adapter = new FakeGitHubPublicationAdapter({ loseBefore: ['create-draft'] });
+    const createDraft = adapter.createDraft.bind(adapter);
+    adapter.createDraft = async input => {
+      try {
+        return await createDraft(input);
+      } catch (error) {
+        adapter.state.releases = [
+          {
+            ...(new FakeGitHubPublicationAdapter().state.releases?.[0] ?? {}),
+            id: '999',
+            tag: input.tag as string,
+            targetSha: input.targetSha as string,
+            draft: true,
+            published: false,
+            prerelease: false,
+            marker: input.marker as Record<string, unknown>,
+            body: input.body as string,
+            bodyMarker: input.bodyMarker as string,
+            assets: [],
+            name: 'Not the planned Release',
+          } as never,
+        ];
+        throw error;
+      }
+    };
+
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({ status: 'conflict', reason: 'release-identity-mismatch' });
+    expect(adapter.log.filter(item => item === 'create-draft')).toHaveLength(1);
+    expect(adapter.applied.filter(item => item === 'create-draft')).toHaveLength(0);
+    expect(adapter.log.some(item => item.startsWith('upload-asset'))).toBe(false);
+  });
+
+  it('never adopts a concurrent exact-published Release without a create-draft result ID', async () => {
+    const bundle = publicationBundle();
+    const foreign = new FakeGitHubPublicationAdapter();
+    await expect(
+      executePublication({ adapter: foreign, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({ status: 'published' });
+    const adapter = new FakeGitHubPublicationAdapter({ loseBefore: ['create-draft'] });
+    const createDraft = adapter.createDraft.bind(adapter);
+    adapter.createDraft = async input => {
+      try {
+        return await createDraft(input);
+      } catch (error) {
+        adapter.state.releases = clonePublicationState(foreign.state.releases);
+        throw error;
+      }
+    };
+
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({
+      status: 'unknown-critical',
+      reason: expect.stringContaining('mutation-outcome-unobserved:create-draft'),
+    });
+    expect(adapter.log.filter(item => item === 'create-draft')).toHaveLength(1);
+    expect(adapter.applied.filter(item => item === 'create-draft')).toHaveLength(0);
+    expect(adapter.log.some(item => item.startsWith('upload-asset'))).toBe(false);
+    expect(adapter.log.filter(item => item === 'publish-draft')).toHaveLength(0);
+  });
+
+  it('accepts exact-published convergence only with the returned create-draft Release ID', async () => {
+    const bundle = publicationBundle();
+    const adapter = queueMutationInspections(
+      new FakeGitHubPublicationAdapter(),
+      'create-draft',
+      (_before, after) => {
+        const published = clonePublicationState(after);
+        published.releases![0].assets = Object.entries(bundle.assets).map(([name, bytes]) => ({
+          name,
+          bytes: Buffer.from(bytes),
+        }));
+        published.releases![0].draft = false;
+        published.releases![0].published = true;
+        return [published];
+      }
+    );
+
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({ status: 'published' });
+    expect(adapter.log.filter(item => item === 'create-draft')).toHaveLength(1);
+    expect(adapter.applied.filter(item => item === 'create-draft')).toHaveLength(1);
+    expect(adapter.log.some(item => item.startsWith('upload-asset'))).toBe(false);
     expect(adapter.log.filter(item => item === 'publish-draft')).toHaveLength(0);
   });
 
@@ -302,7 +388,9 @@ describe('complete publication and exact retry', () => {
       }
     );
 
-    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({
       status: 'conflict',
       reason: 'tag-identity-mismatch',
     });
@@ -318,7 +406,9 @@ describe('complete publication and exact retry', () => {
     async point => {
       const bundle = publicationBundle();
       const adapter = delayMutationVisibility(new FakeGitHubPublicationAdapter(), point, 2);
-      await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      await expect(
+        executePublication({ adapter, bundle, sleep: async () => {} })
+      ).resolves.toMatchObject({
         status: 'published',
       });
       expect(adapter.applied.filter(item => item.startsWith(point))).toHaveLength(
@@ -339,7 +429,9 @@ describe('complete publication and exact retry', () => {
         point,
         2
       );
-      await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      await expect(
+        executePublication({ adapter, bundle, sleep: async () => {} })
+      ).resolves.toMatchObject({
         status: 'published',
       });
       expect(adapter.applied.filter(item => item.startsWith(point))).toHaveLength(
@@ -357,7 +449,9 @@ describe('complete publication and exact retry', () => {
         point,
         Number.POSITIVE_INFINITY
       );
-      await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      await expect(
+        executePublication({ adapter, bundle, sleep: async () => {} })
+      ).resolves.toMatchObject({
         status: 'unknown-critical',
         reason: expect.stringContaining('mutation-outcome-unobserved'),
         recovery: { automaticGitHubCleanup: false },
@@ -380,11 +474,13 @@ describe('complete publication and exact retry', () => {
       (_before, after) => {
         const mismatch = clonePublicationState(after);
         mismatch.releases![0].id = '456';
-        return Array.from({ length: 4 }, () => clonePublicationState(mismatch));
+        return Array.from({ length: 6 }, () => clonePublicationState(mismatch));
       }
     );
 
-    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({
       status: 'unknown-critical',
       reason: expect.stringContaining('mutation-outcome-unobserved:create-draft'),
     });
@@ -408,7 +504,9 @@ describe('complete publication and exact retry', () => {
       }
     );
 
-    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({
       status: 'conflict',
       reason: 'duplicate-release',
     });
@@ -474,11 +572,13 @@ describe('complete publication and exact retry', () => {
       (_before, after) => {
         const tagOnly = clonePublicationState(after);
         tagOnly.releases = [];
-        return Array.from({ length: 4 }, () => clonePublicationState(tagOnly));
+        return Array.from({ length: 6 }, () => clonePublicationState(tagOnly));
       }
     );
 
-    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({
       status: 'unknown-critical',
       reason: expect.stringContaining('mutation-outcome-unobserved:publish-draft'),
     });
@@ -505,11 +605,13 @@ describe('complete publication and exact retry', () => {
         regressive.releases![0].assets = regressive.releases![0].assets.filter(
           asset => asset.name !== earlier
         );
-        return Array.from({ length: 4 }, () => clonePublicationState(regressive));
+        return Array.from({ length: 6 }, () => clonePublicationState(regressive));
       }
     );
 
-    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({
       status: 'unknown-critical',
       reason: expect.stringContaining(`mutation-outcome-unobserved:upload-asset:123:${current}`),
     });
@@ -524,10 +626,12 @@ describe('complete publication and exact retry', () => {
     const adapter = queueMutationInspections(
       new FakeGitHubPublicationAdapter(),
       'create-draft',
-      before => Array.from({ length: 4 }, () => clonePublicationState(before))
+      before => Array.from({ length: 6 }, () => clonePublicationState(before))
     );
 
-    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({
       status: 'unknown-critical',
       reason: expect.stringContaining('mutation-outcome-unobserved:create-draft'),
     });
@@ -543,7 +647,9 @@ describe('complete publication and exact retry', () => {
     async point => {
       const bundle = publicationBundle();
       const adapter = new FakeGitHubPublicationAdapter({ loseBefore: [point] });
-      await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+      await expect(
+        executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+      ).resolves.toMatchObject({
         status: 'unknown-critical',
         reason: expect.stringContaining('mutation-outcome-unobserved'),
         recovery: { production: 'restore-prior-baseline', automaticGitHubCleanup: false },
@@ -568,7 +674,9 @@ describe('complete publication and exact retry', () => {
       ]
     );
 
-    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({
       status: 'published',
     });
     expect(adapter.applied.filter(item => item === 'create-draft')).toHaveLength(1);
@@ -579,15 +687,15 @@ describe('complete publication and exact retry', () => {
     const adapter = queueMutationInspections(
       new FakeGitHubPublicationAdapter(),
       'create-draft',
-      before => [
-        new Error('transient inspection failure'),
-        clonePublicationState(before),
-        new Error('transient inspection failure'),
-        clonePublicationState(before),
-      ]
+      before =>
+        Array.from({ length: 6 }, (_, index) =>
+          index % 2 ? clonePublicationState(before) : new Error('transient inspection failure')
+        )
     );
 
-    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({
       status: 'unknown-critical',
       reason: expect.stringContaining('mutation-outcome-unobserved'),
     });
@@ -688,7 +796,9 @@ describe('conflicts, unknown state, and bundle authentication', () => {
   it('fails closed when state becomes unreadable after a successful mutation', async () => {
     const bundle = publicationBundle();
     const adapter = new FakeGitHubPublicationAdapter({ failInspectAfterApplied: true });
-    await expect(executePublication({ adapter, bundle })).resolves.toMatchObject({
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({
       status: 'unknown-critical',
       recovery: { automaticGitHubCleanup: false },
     });

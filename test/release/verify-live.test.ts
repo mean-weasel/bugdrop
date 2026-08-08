@@ -123,6 +123,32 @@ describe('explicit live verification', () => {
 });
 
 describe('polling and scheduled observation', () => {
+  it('uses cache-resistant requests and a fresh observation token for each snapshot', async () => {
+    const requests: { url: URL; init?: RequestInit }[] = [];
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      requests.push({ url, init });
+      if (url.pathname === '/api/health') {
+        return Response.json({ status: 'ok', environment: 'production', buildSha: SHA });
+      }
+      if (url.pathname === '/widget.js') return new Response('widget');
+      if (url.pathname === '/versions.json') return Response.json({ current: '1.56.0' });
+      throw new Error(`unexpected request ${url.pathname}`);
+    });
+
+    await collectRecoveryIdentity(expected().origin, fetchImpl as typeof fetch);
+    await collectRecoveryIdentity(expected().origin, fetchImpl as typeof fetch);
+
+    const tokens = requests.map(item => item.url.searchParams.get('__bugdrop_observation'));
+    expect(new Set(tokens.slice(0, 3)).size).toBe(1);
+    expect(new Set(tokens.slice(3, 6)).size).toBe(1);
+    expect(tokens[0]).not.toBe(tokens[3]);
+    for (const { init } of requests) {
+      expect(init).toMatchObject({ cache: 'no-store' });
+      expect(init?.headers).toMatchObject({ 'cache-control': 'no-cache', pragma: 'no-cache' });
+    }
+  });
+
   it('retries a mismatch and succeeds only on the exact snapshot', async () => {
     const wrong = snapshot();
     wrong.health.buildSha = '0'.repeat(40);

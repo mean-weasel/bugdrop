@@ -335,6 +335,7 @@ publish_block=$(job_block publish-release)
 for literal in \
   'needs: [guard-and-plan, verify-candidate, approval-baseline, deploy-candidate, live-e2e]' \
   'environment: production' \
+  'timeout-minutes: 15' \
   'contents: write' \
   'node controller/scripts/release/live-release.mjs publish' \
   'BUGDROP_GITHUB_TOKEN: ${{ github.token }}'; do
@@ -370,10 +371,20 @@ for literal in \
   '--arg candidateAssets "$GITHUB_WORKSPACE/candidate/.release-static-package"' \
   '--arg bundlePath "$GITHUB_WORKSPACE/release-state/state2-bundle.json"' \
   'node controller/scripts/release/live-release.mjs finalize' \
+  'Preserve finalization evidence' \
+  'Upload authoritative finalization outcome' \
+  'name: release-finalization-${{ needs.verify-candidate.outputs.plan_key }}-${{ github.run_attempt }}' \
+  'path: finalization.json' \
+  'if-no-files-found: error' \
   'Require verified stable or restored production' \
   'test "$status" = '\''no-mutation'\'''; do
   grep -Fq -- "$literal" <<< "$final_block" || fail "finalizer lacks: $literal"
 done
+
+upload_line=$(grep -n 'name: Upload authoritative finalization outcome' <<< "$final_block" | cut -d: -f1)
+assert_line=$(grep -n 'name: Require verified stable or restored production' <<< "$final_block" | cut -d: -f1)
+[[ -n "$upload_line" && -n "$assert_line" && "$upload_line" -lt "$assert_line" ]] ||
+  fail 'finalization evidence must upload before the terminal assertion'
 
 [[ $(grep -Fc "if: \${{ needs.deploy-candidate.result != 'skipped' }}" <<< "$final_block") -eq 7 ]] ||
   fail 'skipped deployment must bypass all recovery setup and artifact downloads'
