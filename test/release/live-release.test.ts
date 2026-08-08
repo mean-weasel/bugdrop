@@ -188,6 +188,31 @@ describe('live release production orchestration', () => {
     });
   });
 
+  it('does not treat an exact annotated tag without its Release as published', async () => {
+    const bundle = workflowBundle();
+    const publication = validatePublicationBundle(bundle);
+    const adapter = {
+      inspect: vi.fn(async () => ({
+        complete: true,
+        tagRef: { objectSha: 'c'.repeat(40) },
+        tagObject: {
+          annotation: publication.tagAnnotation,
+          kind: 'annotated',
+          objectSha: 'c'.repeat(40),
+          targetSha: publication.targetSha,
+          targetType: 'commit',
+        },
+        releases: [],
+      })),
+    };
+
+    await expect(inspectPublication({ bundle, adapter })).resolves.toMatchObject({
+      status: 'partial-resumable',
+      nextAction: { kind: 'create-draft', tag: publication.tag },
+      planIdentity: bundle.finalPlan.planIdentity,
+    });
+  });
+
   it('reconciles a lost deploy response only after source and asset live proof', async () => {
     const cloudflare = client();
     const baseline = await captureBaseline({

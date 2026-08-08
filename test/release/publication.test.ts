@@ -24,6 +24,56 @@ import {
 } from '../fixtures/release/publication/fake-github';
 
 class FakeGitHubPublicationAdapter extends BaseFakeGitHubPublicationAdapter {
+  override async createAnnotatedTag(input: Record<string, unknown>) {
+    try {
+      const result = await super.createAnnotatedTag(input);
+      return {
+        ...result,
+        phaseEvidence: [
+          {
+            method: 'POST',
+            path: '/repos/mean-weasel/bugdrop/git/tags',
+            phase: 'create-annotated-tag-object',
+            status: 201,
+          },
+          {
+            method: 'POST',
+            path: '/repos/mean-weasel/bugdrop/git/refs',
+            phase: 'create-annotated-tag-ref',
+            status: 201,
+          },
+        ],
+      };
+    } catch (error) {
+      if (error instanceof Error && this.state.tagRef && this.state.tagObject) {
+        Object.assign(error, {
+          details: {
+            method: 'POST',
+            objectSha: this.state.tagRef.objectSha,
+            path: '/repos/mean-weasel/bugdrop/git/refs',
+            phase: 'create-annotated-tag-ref',
+            status: null,
+            phaseEvidence: [
+              {
+                method: 'POST',
+                path: '/repos/mean-weasel/bugdrop/git/tags',
+                phase: 'create-annotated-tag-object',
+                status: 201,
+              },
+              {
+                method: 'POST',
+                path: '/repos/mean-weasel/bugdrop/git/refs',
+                phase: 'create-annotated-tag-ref',
+                status: null,
+              },
+            ],
+          },
+        });
+      }
+      throw error;
+    }
+  }
+
   override async createDraft(input: Record<string, unknown>) {
     try {
       return await super.createDraft(input);
@@ -43,6 +93,44 @@ const conflictCases = JSON.parse(
 
 function sha256(bytes: Buffer) {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+function tagPhaseError({
+  objectSha,
+  phase,
+  status = null,
+}: {
+  objectSha?: string;
+  phase: 'create-annotated-tag-object' | 'create-annotated-tag-ref';
+  status?: number | null;
+}) {
+  const error = new Error(`lost ${phase} response`);
+  const objectEvidence = {
+    method: 'POST',
+    path: '/repos/mean-weasel/bugdrop/git/tags',
+    phase: 'create-annotated-tag-object',
+    status: phase === 'create-annotated-tag-object' ? status : 201,
+  };
+  const currentEvidence =
+    phase === 'create-annotated-tag-object'
+      ? objectEvidence
+      : {
+          method: 'POST',
+          path: '/repos/mean-weasel/bugdrop/git/refs',
+          phase,
+          status,
+        };
+  Object.assign(error, {
+    details: {
+      ...currentEvidence,
+      ...(objectSha ? { objectSha } : {}),
+      phaseEvidence:
+        phase === 'create-annotated-tag-object'
+          ? [objectEvidence]
+          : [objectEvidence, currentEvidence],
+    },
+  });
+  return error;
 }
 
 function publicationBundle(verificationResult: 'passed' | 'failed' = 'passed') {
@@ -231,25 +319,48 @@ describe('complete publication and exact retry', () => {
     }
   );
 
-  it.each(['create-tag', 'create-draft'] as const)(
-    'fails closed after an applied %s response is lost without claiming ownership',
-    async point => {
-      const bundle = publicationBundle();
-      const adapter = new FakeGitHubPublicationAdapter({ loseAfter: [point] });
+  it('reconciles an applied create-tag after its tag-ref response is lost', async () => {
+    const bundle = publicationBundle();
+    const adapter = new FakeGitHubPublicationAdapter({ loseAfter: ['create-tag'] });
 
-      await expect(
-        executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
-      ).resolves.toMatchObject({
-        status: 'unknown-critical',
-        reason: expect.stringContaining(`mutation-outcome-unobserved:${point}`),
-      });
-      expect(adapter.log.filter(item => item.startsWith(point))).toHaveLength(1);
-      if (point === 'create-tag') expect(adapter.log).not.toContain('create-draft');
-      if (point === 'create-draft') {
-        expect(adapter.log.some(item => item.startsWith('upload-asset'))).toBe(false);
-      }
-    }
-  );
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({
+      status: 'published',
+      history: expect.arrayContaining([
+        expect.objectContaining({
+          action: expect.objectContaining({ kind: 'create-tag' }),
+          objectSha: '7'.repeat(40),
+          result: 'confirmed-after-lost-response',
+          phaseEvidence: expect.arrayContaining([
+            expect.objectContaining({
+              method: 'POST',
+              path: '/repos/mean-weasel/bugdrop/git/refs',
+              phase: 'create-annotated-tag-ref',
+              status: null,
+            }),
+          ]),
+        }),
+      ]),
+    });
+    expect(adapter.log.filter(item => item === 'create-tag')).toHaveLength(1);
+    expect(adapter.applied.filter(item => item === 'create-tag')).toHaveLength(1);
+    expect(adapter.log.filter(item => item === 'create-draft')).toHaveLength(1);
+  });
+
+  it('fails closed after an applied create-draft response is lost without claiming ownership', async () => {
+    const bundle = publicationBundle();
+    const adapter = new FakeGitHubPublicationAdapter({ loseAfter: ['create-draft'] });
+
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({
+      status: 'unknown-critical',
+      reason: expect.stringContaining('mutation-outcome-unobserved:create-draft'),
+    });
+    expect(adapter.log.filter(item => item.startsWith('create-draft'))).toHaveLength(1);
+    expect(adapter.log.some(item => item.startsWith('upload-asset'))).toBe(false);
+  });
 
   it('never adopts a foreign exact tag after the create-tag request failed before application', async () => {
     const bundle = publicationBundle();
@@ -283,6 +394,281 @@ describe('complete publication and exact retry', () => {
     expect(adapter.log.filter(item => item === 'create-tag')).toHaveLength(1);
     expect(adapter.applied.filter(item => item === 'create-tag')).toHaveLength(0);
     expect(adapter.log.filter(item => item === 'create-draft')).toHaveLength(0);
+  });
+
+  it('fails closed on a lost tag-object response even if an exact-looking foreign ref appears', async () => {
+    const bundle = publicationBundle();
+    const expected = validatePublicationBundle(bundle);
+    const adapter = new FakeGitHubPublicationAdapter();
+    adapter.createAnnotatedTag = async () => {
+      adapter.log.push('create-tag');
+      throw tagPhaseError({ phase: 'create-annotated-tag-object' });
+    };
+    const inspect = adapter.inspect.bind(adapter);
+    let inspections = 0;
+    adapter.inspect = async () => {
+      inspections += 1;
+      if (inspections === 1) return inspect();
+      return {
+        complete: true,
+        tagRef: { objectSha: '7'.repeat(40) },
+        tagObject: {
+          kind: 'annotated',
+          objectSha: '7'.repeat(40),
+          targetType: 'commit',
+          targetSha: bundle.finalPlan.targetSha,
+          annotation: expected.tagAnnotation,
+        },
+        releases: [],
+      };
+    };
+
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({
+      status: 'unknown-critical',
+      reason: expect.stringContaining('mutation-outcome-unobserved:create-tag'),
+      history: [
+        expect.objectContaining({
+          result: 'phase-failed',
+          phaseEvidence: [
+            expect.objectContaining({
+              method: 'POST',
+              path: '/repos/mean-weasel/bugdrop/git/tags',
+              phase: 'create-annotated-tag-object',
+              status: null,
+            }),
+          ],
+        }),
+      ],
+    });
+    expect(adapter.log.filter(item => item === 'create-tag')).toHaveLength(1);
+    expect(adapter.log).not.toContain('create-draft');
+  });
+
+  it('reconciles a malformed-201 tag-ref response only when the delayed ref has the preserved object SHA', async () => {
+    const bundle = publicationBundle();
+    const expected = validatePublicationBundle(bundle);
+    const adapter = new FakeGitHubPublicationAdapter();
+    const objectSha = '7'.repeat(40);
+    const absent = clonePublicationState(adapter.state);
+    const exact = {
+      complete: true,
+      tagRef: { objectSha },
+      tagObject: {
+        kind: 'annotated',
+        objectSha,
+        targetType: 'commit',
+        targetSha: bundle.finalPlan.targetSha,
+        annotation: expected.tagAnnotation,
+      },
+      releases: [],
+    };
+    adapter.createAnnotatedTag = async () => {
+      adapter.log.push('create-tag');
+      throw tagPhaseError({ objectSha, phase: 'create-annotated-tag-ref', status: 201 });
+    };
+    const inspect = adapter.inspect.bind(adapter);
+    let inspections = 0;
+    adapter.inspect = async () => {
+      inspections += 1;
+      if (inspections === 1) return inspect();
+      if (inspections < 4) {
+        adapter.log.push('inspect');
+        return clonePublicationState(absent);
+      }
+      if (!adapter.state.tagRef) adapter.state = clonePublicationState(exact);
+      return inspect();
+    };
+
+    await expect(
+      executePublication({
+        adapter,
+        bundle,
+        convergenceIntervalMs: 0,
+        sleep: async () => {},
+      })
+    ).resolves.toMatchObject({
+      status: 'published',
+      history: expect.arrayContaining([
+        expect.objectContaining({
+          objectSha,
+          result: 'confirmed-after-lost-response',
+          phaseEvidence: expect.arrayContaining([
+            expect.objectContaining({
+              method: 'POST',
+              path: '/repos/mean-weasel/bugdrop/git/refs',
+              phase: 'create-annotated-tag-ref',
+              status: 201,
+            }),
+          ]),
+        }),
+      ]),
+    });
+    expect(adapter.log.filter(item => item === 'create-tag')).toHaveLength(1);
+    expect(adapter.log.filter(item => item === 'create-draft')).toHaveLength(1);
+  });
+
+  it('leaves a malformed-201 tag-ref response unknown-critical when the ref remains absent', async () => {
+    const bundle = publicationBundle();
+    const adapter = new FakeGitHubPublicationAdapter();
+    const objectSha = '7'.repeat(40);
+    adapter.createAnnotatedTag = async () => {
+      adapter.log.push('create-tag');
+      throw tagPhaseError({ objectSha, phase: 'create-annotated-tag-ref', status: 201 });
+    };
+
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({
+      status: 'unknown-critical',
+      reason: expect.stringContaining('mutation-outcome-unobserved:create-tag'),
+      history: [
+        expect.objectContaining({
+          objectSha,
+          result: 'phase-failed',
+          phaseEvidence: expect.arrayContaining([
+            expect.objectContaining({ phase: 'create-annotated-tag-ref', status: 201 }),
+          ]),
+        }),
+      ],
+    });
+    expect(adapter.log.filter(item => item === 'create-tag')).toHaveLength(1);
+    expect(adapter.log).not.toContain('create-draft');
+  });
+
+  it('does not reconcile a definitively rejected tag-ref request', async () => {
+    const bundle = publicationBundle();
+    const expected = validatePublicationBundle(bundle);
+    const adapter = new FakeGitHubPublicationAdapter();
+    const objectSha = '7'.repeat(40);
+    adapter.createAnnotatedTag = async () => {
+      adapter.log.push('create-tag');
+      throw tagPhaseError({ objectSha, phase: 'create-annotated-tag-ref', status: 422 });
+    };
+    const inspect = adapter.inspect.bind(adapter);
+    let inspections = 0;
+    adapter.inspect = async () => {
+      inspections += 1;
+      if (inspections === 1) return inspect();
+      adapter.log.push('inspect');
+      return {
+        complete: true,
+        tagRef: { objectSha },
+        tagObject: {
+          kind: 'annotated',
+          objectSha,
+          targetType: 'commit',
+          targetSha: bundle.finalPlan.targetSha,
+          annotation: expected.tagAnnotation,
+        },
+        releases: [],
+      };
+    };
+
+    const result = await executePublication({ adapter, bundle, convergenceIntervalMs: 0 });
+    expect(result).toMatchObject({
+      status: 'unknown-critical',
+      reason: expect.stringContaining('mutation-outcome-unobserved:create-tag'),
+      history: [
+        expect.objectContaining({
+          result: 'phase-failed',
+          phaseEvidence: expect.arrayContaining([
+            expect.objectContaining({ phase: 'create-annotated-tag-ref', status: 422 }),
+          ]),
+        }),
+      ],
+    });
+    expect(result.history[0]).not.toHaveProperty('objectSha');
+    expect(adapter.log.filter(item => item === 'create-tag')).toHaveLength(1);
+    expect(adapter.log).not.toContain('create-draft');
+  });
+
+  it('does not adopt a delayed foreign ref after preserving a different tag-object SHA', async () => {
+    const bundle = publicationBundle();
+    const expected = validatePublicationBundle(bundle);
+    const adapter = new FakeGitHubPublicationAdapter();
+    const preservedObjectSha = '7'.repeat(40);
+    const foreignObjectSha = '8'.repeat(40);
+    adapter.createAnnotatedTag = async () => {
+      adapter.log.push('create-tag');
+      throw tagPhaseError({
+        objectSha: preservedObjectSha,
+        phase: 'create-annotated-tag-ref',
+        status: 201,
+      });
+    };
+    const inspect = adapter.inspect.bind(adapter);
+    let inspections = 0;
+    adapter.inspect = async () => {
+      inspections += 1;
+      if (inspections === 1) return inspect();
+      adapter.log.push('inspect');
+      return {
+        complete: true,
+        tagRef: { objectSha: foreignObjectSha },
+        tagObject: {
+          kind: 'annotated',
+          objectSha: foreignObjectSha,
+          targetType: 'commit',
+          targetSha: bundle.finalPlan.targetSha,
+          annotation: expected.tagAnnotation,
+        },
+        releases: [],
+      };
+    };
+
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({
+      status: 'unknown-critical',
+      reason: expect.stringContaining('mutation-outcome-unobserved:create-tag'),
+    });
+    expect(adapter.log.filter(item => item === 'create-tag')).toHaveLength(1);
+    expect(adapter.log).not.toContain('create-draft');
+  });
+
+  it('does not trust preserved tag identity when phase evidence names a foreign repository path', async () => {
+    const bundle = publicationBundle();
+    const expected = validatePublicationBundle(bundle);
+    const adapter = new FakeGitHubPublicationAdapter();
+    const objectSha = '7'.repeat(40);
+    adapter.createAnnotatedTag = async () => {
+      adapter.log.push('create-tag');
+      const error = tagPhaseError({ objectSha, phase: 'create-annotated-tag-ref' }) as Error & {
+        details: { phaseEvidence: Array<{ path: string }> };
+      };
+      error.details.phaseEvidence[0].path = '/repos/mean-weasel/foreign/git/tags';
+      throw error;
+    };
+    const inspect = adapter.inspect.bind(adapter);
+    let inspections = 0;
+    adapter.inspect = async () => {
+      inspections += 1;
+      if (inspections === 1) return inspect();
+      adapter.log.push('inspect');
+      return {
+        complete: true,
+        tagRef: { objectSha },
+        tagObject: {
+          kind: 'annotated',
+          objectSha,
+          targetType: 'commit',
+          targetSha: bundle.finalPlan.targetSha,
+          annotation: expected.tagAnnotation,
+        },
+        releases: [],
+      };
+    };
+
+    await expect(
+      executePublication({ adapter, bundle, convergenceIntervalMs: 0 })
+    ).resolves.toMatchObject({
+      status: 'unknown-critical',
+      reason: expect.stringContaining('mutation-outcome-unobserved:create-tag'),
+    });
+    expect(adapter.log.filter(item => item === 'create-tag')).toHaveLength(1);
+    expect(adapter.log).not.toContain('create-draft');
   });
 
   it('rejects a wrong-name Release and never adopts it after create-draft ownership is lost', async () => {

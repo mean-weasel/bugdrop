@@ -106,6 +106,14 @@ export function createGithubPublicationAdapter({
   };
   const request = async (method, path, options = {}) => {
     const url = endpoint(options.base ?? apiUrl, path);
+    const evidence = status => ({
+      method,
+      path: url.pathname,
+      phase: options.phase,
+      status,
+    });
+    const observed = (data, status) =>
+      options.phase ? { data, evidence: evidence(status) } : data;
     try {
       return await withRequestDeadline(async signal => {
         const response = await fetchImpl(url, {
@@ -130,28 +138,33 @@ export function createGithubPublicationAdapter({
         if (options.missing && response.status === 404) return null;
         if (!(options.expected ?? [200, 201]).includes(response.status)) {
           fail('GITHUB_REQUEST_FAILED', 'GitHub request failed', {
-            method,
-            path: url.pathname,
-            status: response.status,
+            ...evidence(response.status),
           });
         }
-        if (response.status === 204) return null;
-        let value;
+        if (response.status === 204) return observed(null, response.status);
         try {
-          value = await response.json();
-        } catch {
-          fail('INVALID_RESPONSE', `${url.pathname} did not return JSON`);
-        }
-        if (options.array) {
-          if (!Array.isArray(value)) {
-            fail('INVALID_RESPONSE', `${url.pathname} response is invalid`);
+          let value;
+          try {
+            value = await response.json();
+          } catch {
+            fail('INVALID_RESPONSE', `${url.pathname} did not return JSON`);
           }
-          return {
-            data: value,
-            hasNext: /<[^>]+>;\s*rel="next"/.test(response.headers.get('link') ?? ''),
-          };
+          if (options.array) {
+            if (!Array.isArray(value)) {
+              fail('INVALID_RESPONSE', `${url.pathname} response is invalid`);
+            }
+            return {
+              data: value,
+              hasNext: /<[^>]+>;\s*rel="next"/.test(response.headers.get('link') ?? ''),
+            };
+          }
+          return observed(record(value, url.pathname), response.status);
+        } catch (error) {
+          if (error instanceof GithubPublicationAdapterError && options.phase) {
+            error.details = { ...error.details, ...evidence(response.status) };
+          }
+          throw error;
         }
-        return record(value, url.pathname);
       });
     } catch (error) {
       if (error instanceof GithubPublicationAdapterError) throw error;
@@ -160,7 +173,7 @@ export function createGithubPublicationAdapter({
         error instanceof RequestDeadlineError
           ? 'GitHub request timed out'
           : 'GitHub request failed',
-        { method, path: url.pathname, status: null }
+        { ...evidence(null) }
       );
     }
   };
@@ -368,12 +381,56 @@ export function createGithubPublicationAdapter({
       const targetSha = match(action.targetSha, SHA, 'targetSha');
       const created = await request('POST', `/repos/${repository}/git/tags`, {
         body: { tag, message: String(action.annotation ?? ''), object: targetSha, type: 'commit' },
+        phase: 'create-annotated-tag-object',
       });
-      const objectSha = match(created.sha, SHA, 'tag object SHA');
-      await request('POST', `/repos/${repository}/git/refs`, {
-        body: { ref: `refs/tags/${tag}`, sha: objectSha },
-      });
-      return { objectSha };
+      let objectSha;
+      try {
+        if (!SHA.test(created.data.sha ?? '')) {
+          fail('INVALID_RESPONSE', 'created tag object identity is invalid', created.evidence);
+        }
+        objectSha = created.data.sha;
+      } catch (error) {
+        if (error instanceof GithubPublicationAdapterError) {
+          error.details = {
+            ...error.details,
+            phaseEvidence: [created.evidence],
+            validationPhase: 'validate-annotated-tag-object-response',
+          };
+        }
+        throw error;
+      }
+      let createdRef;
+      try {
+        createdRef = await request('POST', `/repos/${repository}/git/refs`, {
+          body: { ref: `refs/tags/${tag}`, sha: objectSha },
+          phase: 'create-annotated-tag-ref',
+        });
+        if (
+          createdRef.data.ref !== `refs/tags/${tag}` ||
+          createdRef.data.object?.type !== 'tag' ||
+          createdRef.data.object?.sha !== objectSha
+        ) {
+          fail('INVALID_RESPONSE', 'created tag ref identity is invalid', createdRef.evidence);
+        }
+      } catch (error) {
+        if (error instanceof GithubPublicationAdapterError) {
+          error.details = {
+            ...error.details,
+            objectSha,
+            phaseEvidence: [
+              created.evidence,
+              {
+                method: error.details.method,
+                path: error.details.path,
+                phase: error.details.phase,
+                status: error.details.status,
+              },
+            ],
+          };
+        }
+        throw error;
+      }
+      return { objectSha, phaseEvidence: [created.evidence, createdRef.evidence] };
     },
     async createDraft(action) {
       const created = await request('POST', `/repos/${repository}/releases`, {

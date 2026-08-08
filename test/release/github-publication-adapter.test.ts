@@ -492,7 +492,13 @@ describe('GitHub publication mutations', () => {
       });
       return url.pathname.endsWith('/git/tags')
         ? response({ sha: TAG_OBJECT_SHA }, 201)
-        : response({ ref: 'refs/tags/v1.2.3' }, 201);
+        : response(
+            {
+              ref: 'refs/tags/v1.2.3',
+              object: { type: 'tag', sha: TAG_OBJECT_SHA },
+            },
+            201
+          );
     });
     await expect(
       adapter(fetchImpl).createAnnotatedTag({
@@ -500,7 +506,23 @@ describe('GitHub publication mutations', () => {
         targetSha: SHA,
         annotation: 'exact annotation',
       })
-    ).resolves.toEqual({ objectSha: TAG_OBJECT_SHA });
+    ).resolves.toEqual({
+      objectSha: TAG_OBJECT_SHA,
+      phaseEvidence: [
+        {
+          method: 'POST',
+          path: '/repos/mean-weasel/bugdrop/git/tags',
+          phase: 'create-annotated-tag-object',
+          status: 201,
+        },
+        {
+          method: 'POST',
+          path: '/repos/mean-weasel/bugdrop/git/refs',
+          phase: 'create-annotated-tag-ref',
+          status: 201,
+        },
+      ],
+    });
     expect(calls).toEqual([
       {
         method: 'POST',
@@ -513,6 +535,187 @@ describe('GitHub publication mutations', () => {
         body: { ref: 'refs/tags/v1.2.3', sha: TAG_OBJECT_SHA },
       },
     ]);
+  });
+
+  it('preserves the exact tag-object SHA and both phase observations when tag-ref creation fails', async () => {
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      return url.pathname.endsWith('/git/tags')
+        ? response({ sha: TAG_OBJECT_SHA }, 201)
+        : response({ message: 'ref response lost' }, 503);
+    });
+
+    await expect(
+      adapter(fetchImpl).createAnnotatedTag({
+        tag: 'v1.2.3',
+        targetSha: SHA,
+        annotation: 'exact annotation',
+      })
+    ).rejects.toMatchObject({
+      code: 'GITHUB_REQUEST_FAILED',
+      details: {
+        method: 'POST',
+        objectSha: TAG_OBJECT_SHA,
+        path: '/repos/mean-weasel/bugdrop/git/refs',
+        phase: 'create-annotated-tag-ref',
+        status: 503,
+        phaseEvidence: [
+          {
+            method: 'POST',
+            path: '/repos/mean-weasel/bugdrop/git/tags',
+            phase: 'create-annotated-tag-object',
+            status: 201,
+          },
+          {
+            method: 'POST',
+            path: '/repos/mean-weasel/bugdrop/git/refs',
+            phase: 'create-annotated-tag-ref',
+            status: 503,
+          },
+        ],
+      },
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves exact phase evidence and object SHA when a successful tag-ref response is truncated', async () => {
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      return url.pathname.endsWith('/git/tags')
+        ? response({ sha: TAG_OBJECT_SHA }, 201)
+        : new Response('{"truncated"', { status: 201 });
+    });
+
+    await expect(
+      adapter(fetchImpl).createAnnotatedTag({
+        tag: 'v1.2.3',
+        targetSha: SHA,
+        annotation: 'exact annotation',
+      })
+    ).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      details: {
+        method: 'POST',
+        objectSha: TAG_OBJECT_SHA,
+        path: '/repos/mean-weasel/bugdrop/git/refs',
+        phase: 'create-annotated-tag-ref',
+        status: 201,
+        phaseEvidence: [
+          {
+            method: 'POST',
+            path: '/repos/mean-weasel/bugdrop/git/tags',
+            phase: 'create-annotated-tag-object',
+            status: 201,
+          },
+          {
+            method: 'POST',
+            path: '/repos/mean-weasel/bugdrop/git/refs',
+            phase: 'create-annotated-tag-ref',
+            status: 201,
+          },
+        ],
+      },
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains phase evidence for a malformed successful tag-object response shape', async () => {
+    const fetchImpl = vi.fn(async () => response([], 201));
+
+    await expect(
+      adapter(fetchImpl).createAnnotatedTag({
+        tag: 'v1.2.3',
+        targetSha: SHA,
+        annotation: 'exact annotation',
+      })
+    ).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      details: {
+        method: 'POST',
+        path: '/repos/mean-weasel/bugdrop/git/tags',
+        phase: 'create-annotated-tag-object',
+        status: 201,
+      },
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it('retains request and validation phases when the tag-object SHA shape is invalid', async () => {
+    const fetchImpl = vi.fn(async () => response({ sha: 'not-a-sha' }, 201));
+
+    await expect(
+      adapter(fetchImpl).createAnnotatedTag({
+        tag: 'v1.2.3',
+        targetSha: SHA,
+        annotation: 'exact annotation',
+      })
+    ).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      details: {
+        method: 'POST',
+        path: '/repos/mean-weasel/bugdrop/git/tags',
+        phase: 'create-annotated-tag-object',
+        status: 201,
+        validationPhase: 'validate-annotated-tag-object-response',
+      },
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it('preserves exact ref-phase evidence and object SHA for a mismatched successful ref body', async () => {
+    const fetchImpl = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      return url.pathname.endsWith('/git/tags')
+        ? response({ sha: TAG_OBJECT_SHA }, 201)
+        : response(
+            {
+              ref: 'refs/tags/v9.9.9',
+              object: { type: 'tag', sha: '9'.repeat(40) },
+            },
+            201
+          );
+    });
+
+    await expect(
+      adapter(fetchImpl).createAnnotatedTag({
+        tag: 'v1.2.3',
+        targetSha: SHA,
+        annotation: 'exact annotation',
+      })
+    ).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      details: {
+        method: 'POST',
+        objectSha: TAG_OBJECT_SHA,
+        path: '/repos/mean-weasel/bugdrop/git/refs',
+        phase: 'create-annotated-tag-ref',
+        status: 201,
+      },
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('identifies a lost tag-object response without inventing a tag-object SHA', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('response lost');
+    });
+
+    await expect(
+      adapter(fetchImpl).createAnnotatedTag({
+        tag: 'v1.2.3',
+        targetSha: SHA,
+        annotation: 'exact annotation',
+      })
+    ).rejects.toMatchObject({
+      code: 'GITHUB_REQUEST_FAILED',
+      details: {
+        method: 'POST',
+        path: '/repos/mean-weasel/bugdrop/git/tags',
+        phase: 'create-annotated-tag-object',
+        status: null,
+      },
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
   it('creates a draft, uploads exact bytes, then publishes', async () => {
