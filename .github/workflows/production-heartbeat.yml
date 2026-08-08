@@ -351,3 +351,15 @@ jobs:
             echo "Production heartbeat failed: heartbeat_job=$HEARTBEAT_JOB heartbeat_ok=$HEARTBEAT_OK summarize=$SUMMARIZE_OUTCOME artifact_prepare=$ARTIFACT_PREPARE_OUTCOME artifact=$ARTIFACT_OUTCOME incident=$INCIDENT_JOB" >&2
             exit 1
           fi
+
+      - name: Check in successful production heartbeat
+        continue-on-error: true
+        env:
+          MONITOR_HEARTBEAT_SECRET: ${{ secrets.MONITOR_HEARTBEAT_SECRET }}
+        run: |
+          curl --fail --silent --show-error --max-time 10 \
+            --retry 2 --retry-all-errors \
+            --request POST \
+            --header "Authorization: Bearer $MONITOR_HEARTBEAT_SECRET" \
+            --header "X-BugDrop-Heartbeat-Id: ${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}" \
+            https://bugdrop.dev/api/monitor/heartbeat

@@ -80,7 +80,8 @@ for step in \
   'Summarize heartbeat stages' \
   'Upload heartbeat diagnostics' \
   'Reconcile one stable incident Issue' \
-  'Fail closed on every required outcome'; do
+  'Fail closed on every required outcome' \
+  'Check in successful production heartbeat'; do
   require "name: $step"
 done
 require 'if: always() && steps.identity.outcome'
@@ -134,6 +135,22 @@ require '[ "$SUMMARIZE_OUTCOME" != success ]'
 require '[ "$ARTIFACT_PREPARE_OUTCOME" = success ]'
 require '[ "$ARTIFACT_PREPARE_OUTCOME" != success ]'
 
+checkin_block=$(awk '
+  /name: Check in successful production heartbeat/ { capture = 1 }
+  capture { print }
+' "$workflow")
+for required in \
+  'continue-on-error: true' \
+  'MONITOR_HEARTBEAT_SECRET: ${{ secrets.MONITOR_HEARTBEAT_SECRET }}' \
+  'curl --fail --silent --show-error --max-time 10' \
+  '--retry 2 --retry-all-errors' \
+  '--request POST' \
+  '--header "Authorization: Bearer $MONITOR_HEARTBEAT_SECRET"' \
+  '--header "X-BugDrop-Heartbeat-Id: ${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}"' \
+  'https://bugdrop.dev/api/monitor/heartbeat'; do
+  grep -Fq -- "$required" <<< "$checkin_block" || fail "check-in step missing: $required"
+done
+
 summary_move_line=$(grep -n 'mv "$diagnostics_tmp" "$diagnostics_path"' "$workflow" | cut -d: -f1)
 summary_output_line=$(grep -n 'echo "heartbeat_ok=$heartbeat_ok" >> "$GITHUB_OUTPUT"' "$workflow" | cut -d: -f1)
 (( summary_move_line < summary_output_line )) ||
@@ -144,5 +161,10 @@ sweep_line=$(grep -n 'name: Final production-prefix sweep' "$workflow" | cut -d:
 controlled_line=$(grep -n 'name: Controlled post-cleanup failure' "$workflow" | cut -d: -f1)
 (( cleanup_line < sweep_line && sweep_line < controlled_line )) ||
   fail 'controlled failure must occur only after both cleanup passes'
+
+conclusion_line=$(grep -n 'name: Fail closed on every required outcome' "$workflow" | cut -d: -f1)
+checkin_line=$(grep -n 'name: Check in successful production heartbeat' "$workflow" | cut -d: -f1)
+(( conclusion_line < checkin_line )) ||
+  fail 'dead-man check-in must run only after the authoritative fail-closed conclusion'
 
 echo 'Production heartbeat workflow contract checks passed'
