@@ -1,4 +1,4 @@
-.PHONY: dev build build-widget build-all deploy test test-release test-release-workflow test-static-assets release-plan-help test-watch test-e2e test-e2e-ui test-e2e-shard test-radix-e2e test-live-radix test-live-cross-browser lint lint-fix format format-check typecheck knip audit check-actions-node24 check-ci-scope check-ci-workflow check-production-heartbeat-workflow check-release-workflow check ci clean install install-playwright help
+.PHONY: dev build build-widget build-all deploy test test-release test-release-workflow test-static-assets release-plan-help test-watch test-e2e test-e2e-ui test-e2e-shard test-radix-e2e test-live-radix test-live-cross-browser lint lint-fix format format-check typecheck knip audit check-actions-node24 check-workflow-permissions check-ci-scope check-ci-workflow check-production-heartbeat-workflow check-release-workflow check ci clean install install-playwright help
 
 # Development
 dev:
@@ -99,6 +99,10 @@ check-actions-node24:
 	npm run check:actions-node24
 	bash test/github-actions-pinning.test.sh
 
+check-workflow-permissions:
+	npm run check:workflow-permissions
+	bash test/workflow-permissions.test.sh
+
 check-ci-scope:
 	bash test/ci-scope.test.sh
 
@@ -112,7 +116,7 @@ check-release-workflow:
 	bash test/release-workflow-contract.test.sh
 
 # Combined Commands
-check: test-release lint format-check typecheck knip audit check-actions-node24 check-ci-scope check-ci-workflow check-production-heartbeat-workflow check-release-workflow
+check: test-release lint format-check typecheck knip audit check-actions-node24 check-workflow-permissions check-ci-scope check-ci-workflow check-production-heartbeat-workflow check-release-workflow
 	@echo "✓ All checks passed"
 
 ci: check test build-all test-e2e

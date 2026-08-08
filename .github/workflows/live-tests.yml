@@ -77,6 +77,8 @@ on:
   schedule:
     - cron: '0 6 * * *'
 
+permissions: {}
+
 concurrency:
   group: ${{ github.event_name == 'schedule' && 'bugdrop-shared-preview' || format('bugdrop-live-{0}-{1}', github.workflow, github.run_id) }}
   cancel-in-progress: false
@@ -87,6 +89,8 @@ jobs:
     name: Live E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
     env:
       LIVE_TARGET: ${{ github.event_name == 'schedule' && 'preview' || inputs.target || 'preview' }}
       PLAYWRIGHT_BASE_URL: ${{ inputs.target == 'production' && 'https://bugdrop-widget-test.vercel.app' || 'https://bugdrop-widget-test-git-preview-jermwatts-projects.vercel.app' }}
