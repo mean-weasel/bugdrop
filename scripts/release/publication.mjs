@@ -18,6 +18,8 @@ const RECOVERY = Object.freeze({
 });
 const CONVERGENCE_INSPECTIONS = 6;
 const CONVERGENCE_INTERVAL_MS = 2000;
+const TAG_OBJECT_PHASE = 'create-annotated-tag-object';
+const TAG_REF_PHASE = 'create-annotated-tag-ref';
 export class PublicationError extends Error {
   constructor(code, message, details = {}) {
     super(`${code}: ${message}`);
@@ -141,6 +143,7 @@ export function validatePublicationBundle(input) {
     name: `BugDrop ${finalPlan.tag.slice(1)}`,
     planIdentity: finalPlan.planIdentity,
     protocol: finalPlan.protocol,
+    repository: finalPlan.repository,
     requiredAssets: required,
     ...(finalPlan.staticPackageIdentity
       ? { staticPackageIdentity: finalPlan.staticPackageIdentity }
@@ -313,6 +316,36 @@ function publicAction(action) {
   const { bytes: _bytes, body: _body, marker: _marker, ...safe } = action;
   return safe;
 }
+function publicPhaseEvidence(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      item =>
+        item?.constructor === Object &&
+        item.method === 'POST' &&
+        typeof item.path === 'string' &&
+        typeof item.phase === 'string' &&
+        (item.status === null || Number.isSafeInteger(item.status))
+    )
+    .map(({ method, path, phase, status }) => ({ method, path, phase, status }));
+}
+function preservedTagObjectResult(expected, action, error) {
+  if (action.kind !== 'create-tag' || error?.details?.phase !== TAG_REF_PHASE) return null;
+  const objectSha = error.details.objectSha;
+  const evidence = publicPhaseEvidence(error.details.phaseEvidence);
+  const [objectPhase, refPhase] = evidence;
+  const basePath = `/repos/${expected.repository}/git`;
+  const exactEvidence =
+    evidence.length === 2 &&
+    objectPhase?.phase === TAG_OBJECT_PHASE &&
+    objectPhase.path === `${basePath}/tags` &&
+    objectPhase.status === 201 &&
+    refPhase?.phase === TAG_REF_PHASE &&
+    refPhase.path === `${basePath}/refs`;
+  return SHA_PATTERN.test(objectSha ?? '') && exactEvidence
+    ? { objectSha, phaseEvidence: evidence }
+    : null;
+}
 async function mutate(adapter, action) {
   if (action.kind === 'create-tag') return adapter.createAnnotatedTag(action);
   if (action.kind === 'create-draft') return adapter.createDraft(action);
@@ -388,17 +421,32 @@ export async function executePublication({
     attemptedActions.add(key);
     let mutationError;
     let mutationResult;
+    let phaseEvidence = [];
     try {
       mutationResult = await mutate(adapter, action);
+      phaseEvidence = publicPhaseEvidence(mutationResult?.phaseEvidence);
       mutated = true;
       history.push({
         action: publicAction(action),
         result: 'applied',
+        ...(phaseEvidence.length ? { phaseEvidence } : {}),
+        ...(mutationResult?.objectSha ? { objectSha: mutationResult.objectSha } : {}),
         ...(mutationResult?.releaseId ? { releaseId: mutationResult.releaseId } : {}),
       });
       if (action.kind === 'create-draft') ownedReleaseId = mutationResult?.releaseId ?? null;
     } catch (error) {
       mutationError = error instanceof Error ? error.message : String(error);
+      phaseEvidence = publicPhaseEvidence(
+        error?.details?.phaseEvidence ?? (error?.details ? [error.details] : [])
+      );
+      const preserved = preservedTagObjectResult(expected, action, error);
+      if (preserved) mutationResult = preserved;
+      history.push({
+        action: publicAction(action),
+        result: 'phase-failed',
+        ...(preserved?.objectSha ? { objectSha: preserved.objectSha } : {}),
+        ...(phaseEvidence.length ? { phaseEvidence } : {}),
+      });
     }
     let converged = false;
     for (let inspection = 0; inspection < convergenceInspections; inspection += 1) {
@@ -421,7 +469,12 @@ export async function executePublication({
     }
     if (mutationError) {
       mutated = true;
-      history.push({ action: publicAction(action), result: 'confirmed-after-lost-response' });
+      history.push({
+        action: publicAction(action),
+        result: 'confirmed-after-lost-response',
+        ...(mutationResult?.objectSha ? { objectSha: mutationResult.objectSha } : {}),
+        ...(phaseEvidence.length ? { phaseEvidence } : {}),
+      });
     }
     if (state.status === 'exact-published') {
       return {
