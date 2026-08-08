@@ -5,6 +5,7 @@ import {
   test,
   waitForPreviewWidgetResponse,
 } from './live-preview-widget';
+import { isExpectedLiveConsoleError } from './live-console-errors';
 
 /**
  * Live E2E tests for BugDrop widget on a real cross-origin deployment.
@@ -336,13 +337,7 @@ test.describe('Widget Loading (Live)', () => {
     await expect(button).toBeVisible({ timeout: 10_000 });
 
     // No unexpected console errors (filter out CORS font errors and known benign messages)
-    const unexpectedErrors = errors.filter(
-      e =>
-        !e.includes('Missing data-repo') &&
-        !e.includes('fonts.gstatic.com') &&
-        !e.includes('CORS') &&
-        !e.includes('net::ERR_FAILED')
-    );
+    const unexpectedErrors = errors.filter(error => !isExpectedLiveConsoleError(error));
     expect(unexpectedErrors).toHaveLength(0);
   });
 

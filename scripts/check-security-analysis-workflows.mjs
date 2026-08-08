@@ -65,6 +65,7 @@ checkEqual(
 checkEqual('codeql.yml: init configuration', codeqlInit?.with, {
   languages: 'javascript-typescript',
   'build-mode': 'none',
+  'config-file': './.github/codeql/codeql-config.yml',
 });
 checkEqual(
   'codeql.yml: analyze action',
@@ -73,6 +74,11 @@ checkEqual(
 );
 checkEqual('codeql.yml: analyze configuration', codeqlAnalyze?.with, {
   category: '/language:javascript-typescript',
+});
+
+const codeqlConfig = await readWorkflow('../codeql/codeql-config.yml');
+checkEqual('codeql-config.yml: configuration', codeqlConfig, {
+  'paths-ignore': ['test/fixtures/legacy-compat/**'],
 });
 
 const dependencyReview = await readWorkflow('dependency-review.yml');

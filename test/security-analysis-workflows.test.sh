@@ -10,10 +10,11 @@ trap 'rm -rf "$fixture_root"' EXIT
 make_fixture() {
   local name=$1
   local directory="$fixture_root/$name"
-  mkdir -p "$directory"
-  cp "$repo_root/.github/workflows/codeql.yml" "$directory/"
-  cp "$repo_root/.github/workflows/dependency-review.yml" "$directory/"
-  printf '%s\n' "$directory"
+  mkdir -p "$directory/workflows" "$directory/codeql"
+  cp "$repo_root/.github/workflows/codeql.yml" "$directory/workflows/"
+  cp "$repo_root/.github/workflows/dependency-review.yml" "$directory/workflows/"
+  cp "$repo_root/.github/codeql/codeql-config.yml" "$directory/codeql/"
+  printf '%s\n' "$directory/workflows"
 }
 
 expect_failure() {
@@ -42,6 +43,16 @@ expect_failure "$wrong_language" 'codeql.yml: init configuration'
 missing_upload=$(make_fixture missing-upload)
 perl -0pi -e "s/      security-events: write\n//" "$missing_upload/codeql.yml"
 expect_failure "$missing_upload" 'codeql.yml: analyze permissions'
+
+missing_codeql_config=$(make_fixture missing-codeql-config)
+perl -0pi -e "s/          config-file: \.\/\.github\/codeql\/codeql-config\.yml\n//" \
+  "$missing_codeql_config/codeql.yml"
+expect_failure "$missing_codeql_config" 'codeql.yml: init configuration'
+
+broad_codeql_exclusion=$(make_fixture broad-codeql-exclusion)
+perl -0pi -e 's#test/fixtures/legacy-compat/\*\*#test/fixtures/**#' \
+  "$fixture_root/broad-codeql-exclusion/codeql/codeql-config.yml"
+expect_failure "$broad_codeql_exclusion" 'codeql-config.yml: configuration'
 
 disabled_codeql_job=$(make_fixture disabled-codeql-job)
 perl -0pi -e 's/(  analyze:\n)/$1    if: false\n/' "$disabled_codeql_job/codeql.yml"
