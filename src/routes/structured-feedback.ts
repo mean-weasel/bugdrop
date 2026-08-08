@@ -1,6 +1,7 @@
 /* eslint-disable max-lines -- Keep the isolated structured contract out of the legacy route. */
 import type { Context } from 'hono';
 import { GitHubLabelError, createIssue, getInstallationToken, isRepoPublic } from '../lib/github';
+import { formatMarkdownCodeSpan } from '../lib/markdown';
 import type {
   Env,
   FeedbackMetadata,
@@ -577,7 +578,7 @@ function formatFencedBlock(value: string): string {
 }
 
 function formatInlineCode(value: string): string {
-  return `\`${value.replace(/`/g, '\\`')}\``;
+  return formatMarkdownCodeSpan(value);
 }
 
 function formatLabelList(labels: string[]): string {
