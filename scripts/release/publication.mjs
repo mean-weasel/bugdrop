@@ -341,7 +341,8 @@ function preservedTagObjectResult(expected, action, error) {
     objectPhase.path === `${basePath}/tags` &&
     objectPhase.status === 201 &&
     refPhase?.phase === TAG_REF_PHASE &&
-    refPhase.path === `${basePath}/refs`;
+    refPhase.path === `${basePath}/refs` &&
+    (refPhase.status === null || refPhase.status === 201);
   return SHA_PATTERN.test(objectSha ?? '') && exactEvidence
     ? { objectSha, phaseEvidence: evidence }
     : null;

@@ -537,6 +537,53 @@ describe('complete publication and exact retry', () => {
     expect(adapter.log).not.toContain('create-draft');
   });
 
+  it('does not reconcile a definitively rejected tag-ref request', async () => {
+    const bundle = publicationBundle();
+    const expected = validatePublicationBundle(bundle);
+    const adapter = new FakeGitHubPublicationAdapter();
+    const objectSha = '7'.repeat(40);
+    adapter.createAnnotatedTag = async () => {
+      adapter.log.push('create-tag');
+      throw tagPhaseError({ objectSha, phase: 'create-annotated-tag-ref', status: 422 });
+    };
+    const inspect = adapter.inspect.bind(adapter);
+    let inspections = 0;
+    adapter.inspect = async () => {
+      inspections += 1;
+      if (inspections === 1) return inspect();
+      adapter.log.push('inspect');
+      return {
+        complete: true,
+        tagRef: { objectSha },
+        tagObject: {
+          kind: 'annotated',
+          objectSha,
+          targetType: 'commit',
+          targetSha: bundle.finalPlan.targetSha,
+          annotation: expected.tagAnnotation,
+        },
+        releases: [],
+      };
+    };
+
+    const result = await executePublication({ adapter, bundle, convergenceIntervalMs: 0 });
+    expect(result).toMatchObject({
+      status: 'unknown-critical',
+      reason: expect.stringContaining('mutation-outcome-unobserved:create-tag'),
+      history: [
+        expect.objectContaining({
+          result: 'phase-failed',
+          phaseEvidence: expect.arrayContaining([
+            expect.objectContaining({ phase: 'create-annotated-tag-ref', status: 422 }),
+          ]),
+        }),
+      ],
+    });
+    expect(result.history[0]).not.toHaveProperty('objectSha');
+    expect(adapter.log.filter(item => item === 'create-tag')).toHaveLength(1);
+    expect(adapter.log).not.toContain('create-draft');
+  });
+
   it('does not adopt a delayed foreign ref after preserving a different tag-object SHA', async () => {
     const bundle = publicationBundle();
     const expected = validatePublicationBundle(bundle);
