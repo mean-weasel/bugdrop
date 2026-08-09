@@ -257,6 +257,12 @@ function validatePublicationMarker(marker, ref) {
   if (![RELEASE_PROTOCOL, RELEASE_PROTOCOL_V2].includes(marker.protocol)) {
     fail('PUBLISHED_RELEASE_CONFLICT', 'publication marker protocol is unsupported');
   }
+  if (
+    marker.protocol === RELEASE_PROTOCOL &&
+    compareReleaseTags(ref, { tag: MARKERLESS_HISTORY_MAX_TAG }) > 0
+  ) {
+    fail('PUBLISHED_RELEASE_CONFLICT', 'v1 publication marker is beyond its historical boundary');
+  }
   let expected;
   try {
     expected = buildPublicationMarker(marker);

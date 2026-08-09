@@ -22,6 +22,7 @@ import { resolveStaticArtifactRetry } from '../../scripts/release/static-assets.
 import { hashStaticTree } from '../../scripts/release/static-tree.mjs';
 import { createState2BundleFromStaticPackage } from '../../scripts/release/workflow.mjs';
 import { buildExpectedLive } from '../../scripts/release/live-release.mjs';
+import { disabledV2WorkflowBundle } from '../fixtures/release/workflow/bundle';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const CANDIDATE = join(ROOT, 'test/fixtures/release/static-assets/older-candidate');
@@ -148,15 +149,13 @@ async function vertical({ postBoundaryLegacy = false } = {}) {
   const legacySha = '7'.repeat(40);
   const tagObjectSha = '8'.repeat(40);
   const legacyTagObjectSha = '9'.repeat(40);
-  const postBoundaryMarker = {
-    schema: 'bugdrop.publication-marker/v1',
-    protocol: 'release-plan/v1',
-    planIdentity: `sha256:${'7'.repeat(64)}`,
-    requestIdentity: `sha256:${'8'.repeat(64)}`,
-    contentIdentity: `sha256:${'9'.repeat(64)}`,
+  const postBoundaryBundle = disabledV2WorkflowBundle({
+    previousTag: 'v1.55.0',
+    nextTag: 'v1.55.1',
     targetSha: legacySha,
-    tag: 'v1.55.1',
-  };
+    timestamp: '2026-08-01T12:00:00Z',
+  });
+  const postBoundaryMarker = buildPublicationMarker(postBoundaryBundle.finalPlan);
   const assetEntries = Object.entries(bundleN.assets).map(([name, bytes], index) => ({
     id: 1000 + index,
     name,
@@ -164,9 +163,22 @@ async function vertical({ postBoundaryLegacy = false } = {}) {
     browser_download_url: `https://github.com/${REPOSITORY}/releases/download/v1.55.0/${name}`,
     size: bytes.length,
   }));
-  const bytesById = Object.fromEntries(
-    assetEntries.map(asset => [String(asset.id), bundleN.assets[asset.name]])
+  const postBoundaryAssetEntries = Object.entries(postBoundaryBundle.assets).map(
+    ([name, bytes], index) => ({
+      id: 2000 + index,
+      name,
+      url: `https://api.github.test/repos/${REPOSITORY}/releases/assets/${2000 + index}`,
+      browser_download_url: `https://github.com/${REPOSITORY}/releases/download/v1.55.1/${name}`,
+      size: bytes.length,
+    })
   );
+  const bytesById = Object.fromEntries([
+    ...assetEntries.map(asset => [String(asset.id), bundleN.assets[asset.name]]),
+    ...postBoundaryAssetEntries.map(asset => [
+      String(asset.id),
+      postBoundaryBundle.assets[asset.name],
+    ]),
+  ]);
   const request = async (path: string) => {
     if (path === `/repos/${REPOSITORY}/releases?per_page=100&page=1`)
       return {
@@ -191,7 +203,7 @@ async function vertical({ postBoundaryLegacy = false } = {}) {
                   published_at: '2026-08-01T12:00:00Z',
                   html_url: 'https://github.test/releases/56',
                   body: `<!-- bugdrop-publication ${Buffer.from(canonicalize(postBoundaryMarker)).toString('base64url')} -->`,
-                  assets: [],
+                  assets: postBoundaryAssetEntries,
                 },
               ]
             : []),

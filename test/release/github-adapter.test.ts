@@ -921,6 +921,36 @@ describe('GitHub release-state observation', () => {
     }
   );
 
+  it.each([
+    [
+      'completed-plan',
+      (bundle: ReturnType<typeof disabledV2WorkflowBundle>) => bundle.finalPlan.targetSha,
+    ],
+    ['N+1', () => '9'.repeat(40)],
+  ])(
+    'rejects post-cutoff v1 markers before classification on the %s path',
+    async (_path, candidateShaFor) => {
+      const bundle = disabledV2WorkflowBundle();
+      const requestBytes = vi.fn(async () =>
+        expect.unreachable('post-cutoff v1 marker must reject before downloads')
+      );
+
+      await expect(
+        planFromPublishedBundles({
+          bundles: [bundle],
+          candidateSha: candidateShaFor(bundle),
+          markerTransform: marker => ({
+            ...(marker as Record<string, unknown>),
+            schema: 'bugdrop.publication-marker/v1',
+            protocol: 'release-plan/v1',
+          }),
+          requestBytes,
+        })
+      ).rejects.toMatchObject({ code: 'PUBLISHED_RELEASE_CONFLICT' });
+      expect(requestBytes).not.toHaveBeenCalled();
+    }
+  );
+
   it('accepts legitimate immutable historical and attested markers but rejects disagreement', async () => {
     const historical = disabledV2WorkflowBundle();
     const attested = withAttestation(historical);
@@ -928,17 +958,6 @@ describe('GitHub release-state observation', () => {
 
     await expect(
       planFromPublishedBundles({ bundles: [historical], immutableTagMarkers: true })
-    ).resolves.toMatchObject({ request: { previousTag: historical.finalPlan.tag } });
-    await expect(
-      planFromPublishedBundles({
-        bundles: [historical],
-        immutableTagMarkers: true,
-        markerTransform: marker => ({
-          ...(marker as Record<string, unknown>),
-          schema: 'bugdrop.publication-marker/v1',
-          protocol: 'release-plan/v1',
-        }),
-      })
     ).resolves.toMatchObject({ request: { previousTag: historical.finalPlan.tag } });
     await expect(
       planFromPublishedBundles({
@@ -1001,7 +1020,7 @@ describe('GitHub release-state observation', () => {
   });
 
   it('returns an authenticated completed no-op before local Git planning', async () => {
-    const bundle = workflowBundle();
+    const bundle = disabledV2WorkflowBundle();
     const marker = buildPublicationMarker(bundle.finalPlan);
     const encodedMarker = Buffer.from(canonicalize(marker)).toString('base64url');
     const tagObjectSha = '9'.repeat(40);
@@ -1061,7 +1080,7 @@ describe('GitHub release-state observation', () => {
       createRequestPlanFromGithub({
         transport,
         gitObserver,
-        context: workflowContext(false),
+        context: { ...workflowContext(false), retentionBootstrap: false },
       })
     ).resolves.toEqual({
       status: 'completed',
@@ -1073,6 +1092,7 @@ describe('GitHub release-state observation', () => {
 
     const recoveryContext = {
       ...workflowContext(false),
+      retentionBootstrap: false,
       controllerReachableFromCurrent: true,
       identityMainReachableFromCurrent: true,
       identityMainSha: bundle.requestPlan.source.remoteMainSha,
