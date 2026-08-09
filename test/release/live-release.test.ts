@@ -14,7 +14,7 @@ import {
 } from '../../scripts/release/live-release.mjs';
 import { validatePublicationBundle } from '../../scripts/release/publication.mjs';
 import { attestationPolicy, attestationSubjects } from '../../scripts/release/attestation.mjs';
-import { workflowBundle } from '../fixtures/release/workflow/bundle';
+import { disabledV2WorkflowBundle, workflowBundle } from '../fixtures/release/workflow/bundle';
 
 const SHA = 'a'.repeat(40);
 const PLAN = `sha256:${'b'.repeat(64)}`;
@@ -26,8 +26,7 @@ const expected = {
 const authorization = { status: 'mutation-authorized', planIdentity: PLAN };
 const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
-function attestedBundle() {
-  const bundle = workflowBundle();
+function attestedBundle(bundle = workflowBundle()) {
   const attestationBytes = Buffer.from('{"signed":"portable"}\n');
   const attestation = {
     protocol: 'bugdrop.release-attestation/v1',
@@ -238,8 +237,100 @@ describe('live release production orchestration', () => {
     });
   });
 
+  it('preserves exact six-asset recovery through v1.55.2', async () => {
+    const bundle = disabledV2WorkflowBundle({
+      previousTag: 'v1.55.1',
+      nextTag: 'v1.55.2',
+    });
+    const publication = validatePublicationBundle(bundle);
+    const adapter = {
+      inspect: vi.fn(async () => ({
+        complete: true,
+        tagRef: { objectSha: 'c'.repeat(40) },
+        tagObject: {
+          annotation: publication.tagAnnotation,
+          kind: 'annotated',
+          objectSha: 'c'.repeat(40),
+          targetSha: publication.targetSha,
+          targetType: 'commit',
+        },
+        releases: [
+          {
+            assets: Object.entries(bundle.assets).map(([name, bytes]) => ({ name, bytes })),
+            body: publication.body,
+            bodyMarker: publication.bodyMarker,
+            draft: false,
+            id: '123',
+            marker: publication.marker,
+            name: publication.name,
+            prerelease: false,
+            published: true,
+            tag: publication.tag,
+            targetSha: publication.targetSha,
+          },
+        ],
+      })),
+    };
+
+    await expect(inspectPublication({ bundle, adapter })).resolves.toMatchObject({
+      status: 'already-published',
+      planIdentity: bundle.finalPlan.planIdentity,
+    });
+  });
+
+  it('rejects post-boundary six-asset workflow input without attestationPath and rolls back', async () => {
+    const bundle = disabledV2WorkflowBundle({
+      previousTag: 'v1.55.2',
+      nextTag: 'v1.55.3',
+    });
+    const adapter = { inspect: vi.fn(() => expect.unreachable('must reject before inspection')) };
+    const publication = await inspectPublication({ bundle, adapter });
+    expect(publication).toMatchObject({
+      status: 'conflict',
+      reason: 'post-boundary-attestation-required',
+      planIdentity: bundle.finalPlan.planIdentity,
+    });
+    expect(adapter.inspect).not.toHaveBeenCalled();
+
+    const postExpected = {
+      origin: expected.origin,
+      planIdentity: bundle.finalPlan.planIdentity,
+      targetSha: bundle.finalPlan.targetSha,
+    };
+    const cloudflare = client();
+    const baseline = await captureBaseline({
+      client: cloudflare,
+      expected: postExpected,
+      observe: cloudflare.observe,
+    });
+    const deployment = await deployCandidate({
+      authorization: { status: 'mutation-authorized', planIdentity: postExpected.planIdentity },
+      baseline,
+      client: cloudflare,
+      expected: postExpected,
+      observe: cloudflare.observe,
+      verify: async () => ({ status: 'verified', targetSha: postExpected.targetSha }),
+    });
+    await expect(
+      finalizeRelease({
+        baseline,
+        client: cloudflare,
+        deployment,
+        expected: postExpected,
+        publication,
+        observe: cloudflare.observe,
+        verify: async () => ({ status: 'verified', targetSha: postExpected.targetSha }),
+      })
+    ).resolves.toMatchObject({ status: 'rollback-verified' });
+  });
+
   it('requires the exact seventh evidence asset during authoritative finalization inspection', async () => {
-    const { bundle, attestation, attestationBytes, verifyAttestation } = attestedBundle();
+    const { bundle, attestation, attestationBytes, verifyAttestation } = attestedBundle(
+      disabledV2WorkflowBundle({
+        previousTag: 'v1.55.2',
+        nextTag: 'v1.55.3',
+      })
+    );
     const releaseBundle = {
       ...bundle,
       attestation,
@@ -282,7 +373,39 @@ describe('live release production orchestration', () => {
       verifyAttestation,
     };
 
-    await expect(inspectPublication(input)).resolves.toMatchObject({ status: 'already-published' });
+    const inspected = await inspectPublication(input);
+    expect(inspected).toMatchObject({ status: 'already-published' });
+
+    const postExpected = {
+      origin: expected.origin,
+      planIdentity: bundle.finalPlan.planIdentity,
+      targetSha: bundle.finalPlan.targetSha,
+    };
+    const stableClient = client();
+    const stableBaseline = await captureBaseline({
+      client: stableClient,
+      expected: postExpected,
+      observe: stableClient.observe,
+    });
+    const stableDeployment = await deployCandidate({
+      authorization: { status: 'mutation-authorized', planIdentity: postExpected.planIdentity },
+      baseline: stableBaseline,
+      client: stableClient,
+      expected: postExpected,
+      observe: stableClient.observe,
+      verify: async () => ({ status: 'verified', targetSha: postExpected.targetSha }),
+    });
+    await expect(
+      finalizeRelease({
+        baseline: stableBaseline,
+        client: stableClient,
+        deployment: stableDeployment,
+        expected: postExpected,
+        publication: inspected,
+        observe: stableClient.observe,
+        verify: async () => ({ status: 'verified', targetSha: postExpected.targetSha }),
+      })
+    ).resolves.toMatchObject({ status: 'published-stable' });
     observation.releases[0].assets = observation.releases[0].assets.filter(
       asset => asset.name !== 'attestation.intoto.jsonl'
     );

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { reconcileDeployment, verifyRollback } from './cloudflare-adapter.mjs';
 import { createProductionCloudflareClient } from './cloudflare-client.mjs';
 import { createGithubPublicationAdapter } from './github-publication-adapter.mjs';
+import { requiresReleaseAttestation } from './github-adapter.mjs';
 import {
   classifyPublicationState,
   executePublication,
@@ -393,6 +394,14 @@ export async function inspectPublication({
     allowLegacy: !Buffer.isBuffer(attestationBytes),
     requireAttestation: Buffer.isBuffer(attestationBytes),
   });
+  if (!Buffer.isBuffer(attestationBytes) && requiresReleaseAttestation(expected.tag)) {
+    return {
+      protocol: PROTOCOL,
+      status: 'conflict',
+      reason: 'post-boundary-attestation-required',
+      planIdentity: expected.planIdentity,
+    };
+  }
   let observation;
   try {
     observation = await adapter.inspect(expected.tag);

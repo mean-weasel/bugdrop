@@ -31,6 +31,7 @@ const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const TAG_PATTERN = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 const IDENTITY_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const MARKERLESS_HISTORY_MAX_TAG = 'v1.55.0';
+const UNATTESTED_V2_HISTORY_MAX_TAG = 'v1.55.2';
 const ASSET_TIMEOUT_MS = 30_000;
 const sha256Bytes = bytes => createHash('sha256').update(bytes).digest('hex');
 
@@ -68,6 +69,10 @@ function compareReleaseTags(left, right) {
     if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1;
   }
   return 0;
+}
+
+export function requiresReleaseAttestation(tag) {
+  return compareReleaseTags({ tag }, { tag: UNATTESTED_V2_HISTORY_MAX_TAG }) > 0;
 }
 
 function activeAliasTargets(artifacts) {
@@ -263,13 +268,24 @@ function validatePublicationMarker(marker, ref) {
   ) {
     fail('PUBLISHED_RELEASE_CONFLICT', 'v1 publication marker is beyond its historical boundary');
   }
+  const requiresEvidence = Object.hasOwn(marker, 'requiredEvidence');
+  if (
+    marker.protocol === RELEASE_PROTOCOL_V2 &&
+    requiresReleaseAttestation(ref.tag) &&
+    !requiresEvidence
+  ) {
+    fail(
+      'PUBLISHED_RELEASE_CONFLICT',
+      'post-boundary v2 publication marker must require attestation evidence'
+    );
+  }
   let expected;
   try {
     expected = buildPublicationMarker(marker);
   } catch {
     fail('PUBLISHED_RELEASE_CONFLICT', 'publication marker fields are invalid');
   }
-  if (Object.hasOwn(marker, 'requiredEvidence')) {
+  if (requiresEvidence) {
     if (marker.protocol !== RELEASE_PROTOCOL_V2) {
       fail('PUBLISHED_RELEASE_CONFLICT', 'only v2 publication markers may require evidence');
     }

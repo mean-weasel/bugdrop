@@ -194,6 +194,15 @@ async function planFromPublishedBundles({
   const records = bundles.map((bundle, index) =>
     publishedBundleRecord(bundle, index + 1, immutableTagMarkers, tagMarkerMode, markerTransform)
   );
+  const bundledAttestation = bundles
+    .map(
+      bundle =>
+        (bundle as ReturnType<typeof disabledV2WorkflowBundle> & { attestation?: unknown })
+          .attestation
+    )
+    .find(Boolean);
+  const effectiveVerifyAttestation =
+    verifyAttestation ?? (bundledAttestation ? async () => bundledAttestation : undefined);
   records.forEach((record, index) => {
     record.release = releaseTransform(record.release, index) as typeof record.release;
   });
@@ -300,7 +309,7 @@ async function planFromPublishedBundles({
         targetStrictlyLater: true,
       },
     }),
-    ...(verifyAttestation ? { verifyAttestation } : {}),
+    ...(effectiveVerifyAttestation ? { verifyAttestation: effectiveVerifyAttestation } : {}),
   });
 }
 
@@ -353,7 +362,7 @@ function activeHistoryBundles({
     manifestTransform: continuationManifestTransform,
     staticManifestHashOverride: continuationStaticManifestHash,
   });
-  return [bootstrap, continuation];
+  return [bootstrap, withAttestation(continuation)];
 }
 
 function rebindPublishedBundle(bundle: ReturnType<typeof disabledV2WorkflowBundle>) {
@@ -384,11 +393,27 @@ function rebindPublishedBundle(bundle: ReturnType<typeof disabledV2WorkflowBundl
     'final-release-plan.json': Buffer.from(`${canonicalize(bundle.finalPlan)}\n`),
   });
   const checksums = Object.entries(bundle.assets)
-    .filter(([name]) => name !== 'checksums.sha256')
+    .filter(([name]) => !['checksums.sha256', 'attestation.intoto.jsonl'].includes(name))
     .sort(([left], [right]) => compareUtf8(left, right))
     .map(([name, bytes]) => `${createHash('sha256').update(bytes).digest('hex')}  ${name}`)
     .join('\n');
   bundle.assets['checksums.sha256'] = Buffer.from(`${checksums}\n`);
+  const attested = bundle as ReturnType<typeof disabledV2WorkflowBundle> & {
+    attestation?: Record<string, unknown>;
+  };
+  if (attested.attestation) {
+    const coreAssets = { ...bundle.assets };
+    delete coreAssets['attestation.intoto.jsonl'];
+    attested.attestation = {
+      ...attested.attestation,
+      subjects: attestationSubjects({
+        requestPlan: bundle.requestPlan,
+        releaseContent: bundle.releaseContent,
+        finalPlan: bundle.finalPlan,
+        assets: coreAssets,
+      }),
+    };
+  }
   return bundle;
 }
 
@@ -951,6 +976,153 @@ describe('GitHub release-state observation', () => {
     }
   );
 
+  it.each([
+    [
+      'completed-plan',
+      (bundle: ReturnType<typeof disabledV2WorkflowBundle>) => bundle.finalPlan.targetSha,
+    ],
+    ['N+1', () => '4'.repeat(40)],
+  ])(
+    'rejects post-attestation-boundary six-asset v2 on the %s path before downloads',
+    async (_path, candidateShaFor) => {
+      const bundle = disabledV2WorkflowBundle({
+        previousTag: 'v1.55.2',
+        nextTag: 'v1.55.3',
+        targetSha: '3'.repeat(40),
+      });
+      const requestBytes = vi.fn(async () =>
+        expect.unreachable('unattested post-boundary release must reject before downloads')
+      );
+
+      await expect(
+        planFromPublishedBundles({
+          bundles: [bundle],
+          candidateSha: candidateShaFor(bundle),
+          requestBytes,
+        })
+      ).rejects.toMatchObject({ code: 'PUBLISHED_RELEASE_CONFLICT' });
+      expect(requestBytes).not.toHaveBeenCalled();
+    }
+  );
+
+  it('rejects an attested N followed by an unattested N+1 before lineage classification', async () => {
+    const attestedN = withAttestation(
+      disabledV2WorkflowBundle({
+        previousTag: 'v1.55.2',
+        nextTag: 'v1.55.3',
+        targetSha: '3'.repeat(40),
+      })
+    );
+    const unattestedN1 = disabledV2WorkflowBundle({
+      previousTag: 'v1.55.3',
+      nextTag: 'v1.55.4',
+      targetSha: '4'.repeat(40),
+    });
+    const requestBytes = vi.fn(async () =>
+      expect.unreachable('invalid lineage must reject before downloads')
+    );
+    const verifyAttestation = vi.fn(async () => attestedN.attestation);
+
+    await expect(
+      planFromPublishedBundles({
+        bundles: [attestedN, unattestedN1],
+        candidateSha: '5'.repeat(40),
+        requestBytes,
+        verifyAttestation,
+      })
+    ).rejects.toMatchObject({ code: 'PUBLISHED_RELEASE_CONFLICT' });
+    expect(requestBytes).not.toHaveBeenCalled();
+    expect(verifyAttestation).not.toHaveBeenCalled();
+  });
+
+  it('rejects post-boundary unattested v2 before retention traversal', async () => {
+    const historical = disabledV2WorkflowBundle({
+      previousTag: 'v1.55.1',
+      nextTag: 'v1.55.2',
+      targetSha: '2'.repeat(40),
+    });
+    const postBoundary = disabledV2WorkflowBundle({
+      previousTag: 'v1.55.2',
+      nextTag: 'v1.55.3',
+      targetSha: '3'.repeat(40),
+    });
+    const requestBytes = vi.fn(async () =>
+      expect.unreachable('invalid retention history must reject before downloads')
+    );
+
+    await expect(
+      planFromPublishedBundles({
+        bundles: [historical, postBoundary],
+        candidateSha: '4'.repeat(40),
+        retentionBootstrap: true,
+        requestBytes,
+      })
+    ).rejects.toMatchObject({ code: 'PUBLISHED_RELEASE_CONFLICT' });
+    expect(requestBytes).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'completed-plan',
+      (bundle: ReturnType<typeof disabledV2WorkflowBundle>) => bundle.finalPlan.targetSha,
+    ],
+    ['N+1', () => '4'.repeat(40)],
+  ])(
+    'requires the declared seventh asset on the post-boundary %s path',
+    async (_path, candidateShaFor) => {
+      const attested = withAttestation(
+        disabledV2WorkflowBundle({
+          previousTag: 'v1.55.2',
+          nextTag: 'v1.55.3',
+          targetSha: '3'.repeat(40),
+        })
+      );
+      const verifyAttestation = vi.fn(async () => attested.attestation);
+
+      await expect(
+        planFromPublishedBundles({
+          bundles: [attested],
+          candidateSha: candidateShaFor(attested),
+          releaseTransform: release => ({
+            ...release,
+            assets: (release.assets as Array<{ name: string }>).filter(
+              asset => asset.name !== 'attestation.intoto.jsonl'
+            ),
+          }),
+          verifyAttestation,
+        })
+      ).rejects.toBeInstanceOf(GithubAdapterError);
+      expect(verifyAttestation).not.toHaveBeenCalled();
+    }
+  );
+
+  it('accepts valid post-boundary seven-asset completed and N+1 behavior', async () => {
+    const attested = withAttestation(
+      disabledV2WorkflowBundle({
+        previousTag: 'v1.55.2',
+        nextTag: 'v1.55.3',
+        targetSha: '3'.repeat(40),
+      })
+    );
+    const verifyAttestation = vi.fn(async () => attested.attestation);
+
+    await expect(
+      planFromPublishedBundles({
+        bundles: [attested],
+        candidateSha: attested.finalPlan.targetSha,
+        verifyAttestation,
+      })
+    ).resolves.toMatchObject({ status: 'completed', tag: 'v1.55.3' });
+    await expect(
+      planFromPublishedBundles({
+        bundles: [attested],
+        candidateSha: '4'.repeat(40),
+        verifyAttestation,
+      })
+    ).resolves.toMatchObject({ request: { previousTag: 'v1.55.3' } });
+    expect(verifyAttestation).toHaveBeenCalledTimes(2);
+  });
+
   it('accepts legitimate immutable historical and attested markers but rejects disagreement', async () => {
     const historical = disabledV2WorkflowBundle();
     const attested = withAttestation(historical);
@@ -959,6 +1131,17 @@ describe('GitHub release-state observation', () => {
     await expect(
       planFromPublishedBundles({ bundles: [historical], immutableTagMarkers: true })
     ).resolves.toMatchObject({ request: { previousTag: historical.finalPlan.tag } });
+    const latestPreAttestation = disabledV2WorkflowBundle({
+      previousTag: 'v1.55.1',
+      nextTag: 'v1.55.2',
+      targetSha: '2'.repeat(40),
+    });
+    await expect(
+      planFromPublishedBundles({
+        bundles: [latestPreAttestation],
+        candidateSha: '3'.repeat(40),
+      })
+    ).resolves.toMatchObject({ request: { previousTag: 'v1.55.2' } });
     await expect(
       planFromPublishedBundles({
         bundles: [historical],
