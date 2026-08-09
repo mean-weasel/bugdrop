@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { canonicalHash, canonicalize } from '../../scripts/release/canonical-json.mjs';
 import {
   buildFinalPlan,
+  buildPublicationMarker,
   buildReleaseContent,
   buildReleaseInventory,
   buildRequestPlan,
@@ -187,7 +188,24 @@ function publicationBundle(verificationResult: 'passed' | 'failed' = 'passed') {
     .map(([name, bytes]) => `${sha256(bytes)}  ${name}`)
     .join('\n');
   assets['checksums.sha256'] = Buffer.from(`${checksums}\n`);
-  return { requestPlan, releaseContent, finalPlan, assets };
+  const attestationBytes = Buffer.from('{"portable":"evidence"}\n');
+  assets['attestation.intoto.jsonl'] = attestationBytes;
+  const subjects = finalPlan.requiredAssets
+    .map(name => ({ name, digest: { sha256: sha256(assets[name]) } }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const attestation = {
+    protocol: 'bugdrop.release-attestation/v1',
+    status: 'verified',
+    asset: 'attestation.intoto.jsonl',
+    bundleSha256: sha256(attestationBytes),
+    policy: {
+      repository: 'mean-weasel/bugdrop',
+      signerDigest: SHA.controller,
+      sourceDigest: SHA.controller,
+    },
+    subjects,
+  };
+  return { requestPlan, releaseContent, finalPlan, assets, attestation };
 }
 
 async function publishedAdapter() {
@@ -278,7 +296,9 @@ describe('complete publication and exact retry', () => {
     expect(adapter.applied).toEqual([
       'create-tag',
       'create-draft',
-      ...bundle.finalPlan.requiredAssets.map(name => `upload-asset:${name}`),
+      ...Object.keys(bundle.assets)
+        .sort()
+        .map(name => `upload-asset:${name}`),
       'publish-draft',
     ]);
     expect(adapter.log.filter(item => item.startsWith('inspect')).length).toBe(
@@ -311,10 +331,10 @@ describe('complete publication and exact retry', () => {
         status: 'published',
       });
       expect(adapter.applied.filter(item => item.startsWith(point))).toHaveLength(
-        point === 'upload-asset' ? bundle.finalPlan.requiredAssets.length : 1
+        point === 'upload-asset' ? Object.keys(bundle.assets).length : 1
       );
       expect(adapter.log.filter(item => item.startsWith(point))).toHaveLength(
-        point === 'upload-asset' ? bundle.finalPlan.requiredAssets.length : 1
+        point === 'upload-asset' ? Object.keys(bundle.assets).length : 1
       );
     }
   );
@@ -798,10 +818,10 @@ describe('complete publication and exact retry', () => {
         status: 'published',
       });
       expect(adapter.applied.filter(item => item.startsWith(point))).toHaveLength(
-        point === 'upload-asset' ? bundle.finalPlan.requiredAssets.length : 1
+        point === 'upload-asset' ? Object.keys(bundle.assets).length : 1
       );
       expect(adapter.log.filter(item => item.startsWith(point))).toHaveLength(
-        point === 'upload-asset' ? bundle.finalPlan.requiredAssets.length : 1
+        point === 'upload-asset' ? Object.keys(bundle.assets).length : 1
       );
     }
   );
@@ -821,7 +841,7 @@ describe('complete publication and exact retry', () => {
         status: 'published',
       });
       expect(adapter.applied.filter(item => item.startsWith(point))).toHaveLength(
-        point === 'upload-asset' ? bundle.finalPlan.requiredAssets.length : 1
+        point === 'upload-asset' ? Object.keys(bundle.assets).length : 1
       );
     }
   );
@@ -929,7 +949,7 @@ describe('complete publication and exact retry', () => {
       new FakeGitHubPublicationAdapter(),
       'upload-asset',
       (_before, after) => {
-        if (after.releases![0].assets.length !== bundle.finalPlan.requiredAssets.length) return [];
+        if (after.releases![0].assets.length !== Object.keys(bundle.assets).length) return [];
         const duplicate = clonePublicationState(after.releases![0]);
         duplicate.id = '456';
         after.releases!.push(duplicate);
@@ -942,10 +962,10 @@ describe('complete publication and exact retry', () => {
       reason: 'duplicate-release',
     });
     expect(adapter.log.filter(item => item.startsWith('upload-asset'))).toHaveLength(
-      bundle.finalPlan.requiredAssets.length
+      Object.keys(bundle.assets).length
     );
     expect(adapter.applied.filter(item => item.startsWith('upload-asset'))).toHaveLength(
-      bundle.finalPlan.requiredAssets.length
+      Object.keys(bundle.assets).length
     );
     expect(adapter.log.filter(item => item === 'publish-draft')).toHaveLength(0);
   });
@@ -972,7 +992,7 @@ describe('complete publication and exact retry', () => {
     expect(adapter.applied.filter(item => item === 'publish-draft')).toHaveLength(1);
     expect(adapter.log.filter(item => item === 'create-draft')).toHaveLength(1);
     expect(adapter.log.filter(item => item.startsWith('upload-asset'))).toHaveLength(
-      bundle.finalPlan.requiredAssets.length
+      Object.keys(bundle.assets).length
     );
   });
 
@@ -1239,6 +1259,97 @@ describe('conflicts, unknown state, and bundle authentication', () => {
     await expect(executePublication({ adapter, bundle })).rejects.toThrow(/requiredAssets/);
     expect(adapter.log).toEqual([]);
     expect(adapter.applied).toEqual([]);
+  });
+
+  it('rejects a missing provenance bundle and an unexpected eighth Release asset', async () => {
+    const missing = publicationBundle();
+    delete missing.assets['attestation.intoto.jsonl'];
+    const unexpected = publicationBundle();
+    unexpected.assets['unexpected.bin'] = Buffer.from('x');
+    const adapter = new FakeGitHubPublicationAdapter();
+
+    await expect(executePublication({ adapter, bundle: missing })).rejects.toThrow(
+      /asset names do not exactly match the release boundary/
+    );
+    await expect(executePublication({ adapter, bundle: unexpected })).rejects.toThrow(
+      /asset names do not exactly match the release boundary/
+    );
+    expect(adapter.applied).toEqual([]);
+  });
+
+  it('binds only the required evidence filename into new markers and preserves history', () => {
+    const attested = publicationBundle();
+    const expected = validatePublicationBundle(attested, { requireAttestation: true });
+    const { attestation: _attestation, ...historical } = publicationBundle();
+    delete historical.assets['attestation.intoto.jsonl'];
+    const legacy = validatePublicationBundle(historical, { allowLegacy: true });
+
+    expect(expected.marker).toEqual({
+      ...buildPublicationMarker(attested.finalPlan),
+      requiredEvidence: ['attestation.intoto.jsonl'],
+    });
+    expect(legacy.marker).toEqual(buildPublicationMarker(attested.finalPlan));
+    expect(expected.marker).not.toEqual(legacy.marker);
+    expect(canonicalize(expected.marker)).not.toContain(
+      expected.expectedHashes['attestation.intoto.jsonl']
+    );
+  });
+
+  it('rejects deletion, replacement, and addition against an attested marker', () => {
+    const bundle = publicationBundle();
+    const expected = validatePublicationBundle(bundle, { requireAttestation: true });
+    const release = {
+      assets: Object.entries(bundle.assets).map(([name, bytes]) => ({ name, bytes })),
+      body: expected.body,
+      bodyMarker: expected.bodyMarker,
+      draft: false,
+      id: '123',
+      marker: expected.marker,
+      name: expected.name,
+      prerelease: false,
+      published: true,
+      tag: expected.tag,
+      targetSha: expected.targetSha,
+    };
+    const observation = {
+      complete: true,
+      tagRef: { objectSha: '7'.repeat(40) },
+      tagObject: {
+        kind: 'annotated',
+        objectSha: '7'.repeat(40),
+        targetType: 'commit',
+        targetSha: expected.targetSha,
+        annotation: expected.tagAnnotation,
+      },
+      releases: [release],
+    };
+
+    const classify = (assets: Array<{ name: string; bytes: Buffer }>) =>
+      classifyPublicationState(expected, {
+        ...observation,
+        releases: [{ ...release, assets }],
+      });
+    expect(
+      classify(release.assets.filter(asset => asset.name !== 'attestation.intoto.jsonl'))
+    ).toMatchObject({ status: 'conflict', reason: 'published-assets-incomplete' });
+    expect(
+      classify(
+        release.assets.map(asset =>
+          asset.name === 'attestation.intoto.jsonl'
+            ? { ...asset, bytes: Buffer.from('bad') }
+            : asset
+        )
+      )
+    ).toMatchObject({
+      status: 'conflict',
+      reason: 'asset-content-mismatch:attestation.intoto.jsonl',
+    });
+    expect(
+      classify([...release.assets, { name: 'extra.bin', bytes: Buffer.from('x') }])
+    ).toMatchObject({
+      status: 'conflict',
+      reason: 'unexpected-asset',
+    });
   });
 
   it('classifies a tag-only state as the same-version draft continuation', () => {

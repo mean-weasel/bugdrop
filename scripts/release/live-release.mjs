@@ -20,6 +20,7 @@ import {
   pollLiveVerification,
 } from './verify-live.mjs';
 import { assertStaticTree } from './static-tree.mjs';
+import { ATTESTATION_ASSET, attestationPolicy, verifyPortableAttestation } from './attestation.mjs';
 
 const PROTOCOL = 'bugdrop.live-release/v1';
 const SHA = /^[0-9a-f]{40}$/;
@@ -325,18 +326,73 @@ export async function deployCandidate({
   };
 }
 
-export async function publishCandidate({ authorization, bundle: rawBundle, adapter }) {
+async function authenticatedPublicationBundle({
+  rawBundle,
+  attestationBytes,
+  controllerSha,
+  repository,
+  verifyAttestation = verifyPortableAttestation,
+}) {
   const bundle = hydratedBundle(rawBundle);
-  const expected = validatePublicationBundle(bundle);
+  if (!Buffer.isBuffer(attestationBytes)) {
+    fail('INVALID_ATTESTATION', 'portable attestation bytes are required');
+  }
+  const attestation = await verifyAttestation({
+    bundle,
+    attestationBytes,
+    policy: attestationPolicy({ repository, controllerSha }),
+  });
+  return {
+    ...bundle,
+    attestation,
+    assets: { ...bundle.assets, [ATTESTATION_ASSET]: attestationBytes },
+  };
+}
+
+export async function publishCandidate({
+  authorization,
+  bundle: rawBundle,
+  adapter,
+  attestationBytes,
+  controllerSha,
+  repository,
+  verifyAttestation,
+}) {
+  const bundle = await authenticatedPublicationBundle({
+    rawBundle,
+    attestationBytes,
+    controllerSha,
+    repository,
+    ...(verifyAttestation ? { verifyAttestation } : {}),
+  });
+  const expected = validatePublicationBundle(bundle, { requireAttestation: true });
   requireAuthorization(authorization, {
     planIdentity: expected.planIdentity,
   });
   return { protocol: PROTOCOL, ...(await executePublication({ adapter, bundle })) };
 }
 
-export async function inspectPublication({ bundle: rawBundle, adapter }) {
-  const bundle = hydratedBundle(rawBundle);
-  const expected = validatePublicationBundle(bundle);
+export async function inspectPublication({
+  bundle: rawBundle,
+  adapter,
+  attestationBytes,
+  controllerSha,
+  repository,
+  verifyAttestation,
+}) {
+  const bundle = Buffer.isBuffer(attestationBytes)
+    ? await authenticatedPublicationBundle({
+        rawBundle,
+        attestationBytes,
+        controllerSha,
+        repository,
+        ...(verifyAttestation ? { verifyAttestation } : {}),
+      })
+    : hydratedBundle(rawBundle);
+  const expected = validatePublicationBundle(bundle, {
+    allowLegacy: !Buffer.isBuffer(attestationBytes),
+    requireAttestation: Buffer.isBuffer(attestationBytes),
+  });
   let observation;
   try {
     observation = await adapter.inspect(expected.tag);
@@ -556,6 +612,9 @@ async function runCli() {
     output = await publishCandidate({
       authorization: await jsonFile(input.authorizationPath),
       bundle,
+      attestationBytes: await readFile(resolve(input.attestationPath)),
+      controllerSha: input.controllerSha,
+      repository: input.repository,
       adapter: createGithubPublicationAdapter({
         repository: input.repository,
         token: process.env.BUGDROP_GITHUB_TOKEN,
@@ -564,6 +623,11 @@ async function runCli() {
   } else if (mode === 'inspect-publication') {
     output = await inspectPublication({
       bundle: await jsonFile(input.bundlePath),
+      ...(input.attestationPath
+        ? { attestationBytes: await readFile(resolve(input.attestationPath)) }
+        : {}),
+      controllerSha: input.controllerSha,
+      repository: input.repository,
       adapter: createGithubPublicationAdapter({
         repository: input.repository,
         token: process.env.BUGDROP_GITHUB_TOKEN,
@@ -573,6 +637,11 @@ async function runCli() {
     const bundle = await jsonFile(input.bundlePath);
     const publication = await inspectPublication({
       bundle,
+      ...(input.attestationPath
+        ? { attestationBytes: await readFile(resolve(input.attestationPath)) }
+        : {}),
+      controllerSha: input.controllerSha,
+      repository: input.repository,
       adapter: createGithubPublicationAdapter({
         repository: input.repository,
         token: process.env.BUGDROP_GITHUB_TOKEN,

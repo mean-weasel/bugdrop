@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { canonicalize, compareUtf8 } from './canonical-json.mjs';
 import { observeGitRange } from './git-observer.mjs';
 import {
+  buildPublicationMarker,
   buildReleaseInventory,
   buildRequestPlan,
   calculateNextTag,
@@ -20,6 +21,7 @@ import {
 import { validatePublicationBundle } from './publication.mjs';
 import { deriveRetentionRequest, writeRetentionInput } from './retention.mjs';
 import { MAX_RETAINED_BYTES, MAX_SNAPSHOT_BYTES, MAX_WIDGET_BYTES } from './limits.mjs';
+import { ATTESTATION_ASSET, attestationPolicy, verifyPortableAttestation } from './attestation.mjs';
 
 const API_VERSION = '2022-11-28';
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
@@ -384,7 +386,7 @@ function validateActiveManifest({
   }
 }
 
-export function authenticatePublishedAssets({ release, assets }) {
+export function authenticatePublishedAssets({ release, assets, attestation }) {
   if (release?.published !== true || release.draft !== false || release.prerelease !== false) {
     fail('PUBLISHED_RELEASE_INVALID', 'completed-plan assets must belong to a stable publication');
   }
@@ -393,7 +395,10 @@ export function authenticatePublishedAssets({ release, assets }) {
   const finalPlan = canonicalAsset(assets, 'final-release-plan.json');
   let expected;
   try {
-    expected = validatePublicationBundle({ requestPlan, releaseContent, finalPlan, assets });
+    expected = validatePublicationBundle(
+      { requestPlan, releaseContent, finalPlan, assets, ...(attestation ? { attestation } : {}) },
+      { allowLegacy: !attestation, requireAttestation: Boolean(attestation) }
+    );
   } catch (error) {
     fail('PUBLISHED_ASSET_INVALID', 'published assets do not authenticate', {
       cause: error instanceof Error ? error.message : String(error),
@@ -412,14 +417,17 @@ export function authenticatePublishedAssets({ release, assets }) {
     requestPlan,
     releaseContent,
     finalPlan,
-    marker: expected.marker,
+    // The planning protocol authenticates its historical marker shape separately. The durable
+    // Release marker (checked above) may additionally require provenance evidence without changing
+    // deterministic State 2 identities.
+    marker: buildPublicationMarker(finalPlan),
     assetVerification: {
       complete: true,
       checksumsMatch: true,
       unexpectedConflicts: false,
       planIdentity: expected.planIdentity,
       contentIdentity: expected.marker.contentIdentity,
-      verifiedAssetNames: expected.requiredAssets,
+      verifiedAssetNames: expected.contentAssets,
     },
     publishedAssets: assets,
   };
@@ -429,6 +437,7 @@ export async function loadPublishedReleaseAssets({
   transport,
   release,
   repository = release?.repository,
+  verifyAttestation = verifyPortableAttestation,
 }) {
   if (!Array.isArray(release?.assets) || release.assets.length === 0) {
     fail('PUBLISHED_ASSET_MISSING', 'published Release has no inspectable assets');
@@ -463,7 +472,38 @@ export async function loadPublishedReleaseAssets({
     });
     budget.used += assets[asset.name].length;
   }
-  return authenticatePublishedAssets({ release, assets });
+  if (!Object.hasOwn(assets, ATTESTATION_ASSET)) {
+    return authenticatePublishedAssets({ release, assets });
+  }
+  const coreAssets = { ...assets };
+  const attestationBytes = coreAssets[ATTESTATION_ASSET];
+  delete coreAssets[ATTESTATION_ASSET];
+  const coreFinalPlan = canonicalAsset(coreAssets, 'final-release-plan.json');
+  const core = authenticatePublishedAssets({
+    release: { ...release, marker: buildPublicationMarker(coreFinalPlan) },
+    assets: coreAssets,
+  });
+  let attestation;
+  try {
+    attestation = await verifyAttestation({
+      bundle: {
+        requestPlan: core.requestPlan,
+        releaseContent: core.releaseContent,
+        finalPlan: core.finalPlan,
+        assets: coreAssets,
+      },
+      attestationBytes,
+      policy: attestationPolicy({
+        repository,
+        controllerSha: core.requestPlan.source.controllerSha,
+      }),
+    });
+  } catch (error) {
+    fail('PUBLISHED_ASSET_INVALID', 'published attestation does not authenticate', {
+      cause: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return authenticatePublishedAssets({ release, assets, attestation });
 }
 
 function tagName(ref) {
@@ -618,6 +658,7 @@ export async function createRequestPlanFromGithub({
   transport,
   context,
   gitObserver = observeGitRange,
+  verifyAttestation,
 }) {
   const dispatch = normalizeDispatch({
     ...context?.dispatch,
@@ -666,6 +707,7 @@ export async function createRequestPlanFromGithub({
     const hydrated = await loadPublishedReleaseAssets({
       transport,
       release: exactPublished[0],
+      ...(verifyAttestation ? { verifyAttestation } : {}),
     });
     const completed = findCompletedPlan({
       dispatch,
@@ -740,6 +782,7 @@ export async function createRequestPlanFromGithub({
       transport,
       release,
       repository: dispatch.repository,
+      ...(verifyAttestation ? { verifyAttestation } : {}),
     });
     if (hydrated.requestPlan.protocol !== 'release-plan/v2') {
       fail('PUBLISHED_ASSET_INVALID', `${release.tag} v2 marker does not authenticate v2 assets`);

@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 
 import { canonicalHash, canonicalize, compareUtf8 } from '../../scripts/release/canonical-json.mjs';
+import { attestationPolicy, attestationSubjects } from '../../scripts/release/attestation.mjs';
+import { validatePublicationBundle } from '../../scripts/release/publication.mjs';
 import {
   authenticatePublishedAssets,
   createGithubTransport,
@@ -78,7 +80,12 @@ function observationEntries() {
 }
 
 function publishedBundleRecord(bundle: ReturnType<typeof disabledV2WorkflowBundle>, index: number) {
-  const marker = buildPublicationMarker(bundle.finalPlan);
+  const attested = bundle as ReturnType<typeof disabledV2WorkflowBundle> & {
+    attestation?: Record<string, unknown>;
+  };
+  const marker = attested.attestation
+    ? validatePublicationBundle(attested, { requireAttestation: true }).marker
+    : buildPublicationMarker(bundle.finalPlan);
   const authorityIndex = Number.parseInt(bundle.finalPlan.targetSha[0], 16) || index;
   return {
     release: {
@@ -112,6 +119,8 @@ async function planFromPublishedBundles({
   legacy = [],
   reverseAssets = false,
   downloadDelay = 0,
+  releaseTransform = (release: Record<string, unknown>) => release,
+  verifyAttestation,
 }: {
   bundles: ReturnType<typeof disabledV2WorkflowBundle>[];
   candidateSha?: string;
@@ -119,8 +128,13 @@ async function planFromPublishedBundles({
   legacy?: Array<{ tag: string; targetSha: string }>;
   reverseAssets?: boolean;
   downloadDelay?: number;
+  releaseTransform?: (release: Record<string, unknown>, index: number) => Record<string, unknown>;
+  verifyAttestation?: (input: unknown) => Promise<unknown>;
 }) {
   const records = bundles.map((bundle, index) => publishedBundleRecord(bundle, index + 1));
+  records.forEach((record, index) => {
+    record.release = releaseTransform(record.release, index) as typeof record.release;
+  });
   if (reverseAssets) records.forEach(record => record.release.assets.reverse());
   const assetBytes = new Map<string, Buffer>();
   for (const record of records) {
@@ -217,6 +231,7 @@ async function planFromPublishedBundles({
         targetStrictlyLater: true,
       },
     }),
+    ...(verifyAttestation ? { verifyAttestation } : {}),
   });
 }
 
@@ -536,6 +551,133 @@ describe('GitHub release-state observation', () => {
       assetVerification: { complete: true, checksumsMatch: true },
     });
     expect(requestBytes).toHaveBeenCalledTimes(bundle.finalPlan.requiredAssets.length);
+  });
+
+  it('cryptographically authenticates the seventh evidence asset for completed-plan reuse', async () => {
+    const bundle = workflowBundle();
+    const evidence = Buffer.from('{"signed":"portable"}\n');
+    const assets = { ...bundle.assets, 'attestation.intoto.jsonl': evidence };
+    const names = Object.keys(assets);
+    const attestation = {
+      protocol: 'bugdrop.release-attestation/v1',
+      status: 'verified',
+      asset: 'attestation.intoto.jsonl',
+      bundleSha256: createHash('sha256').update(evidence).digest('hex'),
+      policy: attestationPolicy({
+        repository: REPOSITORY,
+        controllerSha: bundle.requestPlan.source.controllerSha,
+      }),
+      subjects: attestationSubjects(bundle),
+    };
+    const marker = validatePublicationBundle(
+      { ...bundle, assets, attestation },
+      { requireAttestation: true }
+    ).marker;
+    const release = {
+      tag: bundle.finalPlan.tag,
+      targetSha: bundle.finalPlan.targetSha,
+      resolvedTagSha: bundle.finalPlan.targetSha,
+      published: true,
+      draft: false,
+      prerelease: false,
+      marker,
+      repository: REPOSITORY,
+      assets: names.map((name, index) => ({
+        id: String(index + 1),
+        name,
+        apiUrl: `https://api.github.test/repos/${REPOSITORY}/releases/assets/${index + 1}`,
+        size: assets[name].length,
+      })),
+    };
+    const verifyAttestation = vi.fn(async () => attestation);
+    const requestBytes = vi.fn(async (_url: string, options: { assetId: string }) => {
+      if (options.assetId === '99') return Buffer.from('x');
+      return assets[names[Number(options.assetId) - 1]];
+    });
+
+    const hydrated = await loadPublishedReleaseAssets({
+      transport: { requestBytes },
+      release,
+      verifyAttestation,
+    });
+    expect(hydrated).toMatchObject({
+      assetVerification: {
+        complete: true,
+        verifiedAssetNames: expect.arrayContaining(bundle.finalPlan.requiredAssets),
+      },
+    });
+    expect(
+      findCompletedPlan({
+        dispatch: normalizeDispatch(workflowContext(false).dispatch),
+        releases: [hydrated],
+        containsTarget: () => false,
+      })
+    ).toMatchObject({ kind: 'completed', planIdentity: bundle.finalPlan.planIdentity });
+    expect(verifyAttestation).toHaveBeenCalledOnce();
+
+    await expect(
+      loadPublishedReleaseAssets({
+        transport: { requestBytes },
+        release: {
+          ...release,
+          assets: release.assets.filter(asset => asset.name !== 'attestation.intoto.jsonl'),
+        },
+        verifyAttestation,
+      })
+    ).rejects.toBeInstanceOf(GithubAdapterError);
+
+    await expect(
+      loadPublishedReleaseAssets({
+        transport: { requestBytes },
+        release: { ...release, marker: buildPublicationMarker(bundle.finalPlan) },
+        verifyAttestation,
+      })
+    ).rejects.toBeInstanceOf(GithubAdapterError);
+
+    release.assets.push({
+      id: '99',
+      name: 'unexpected.bin',
+      apiUrl: `https://api.github.test/repos/${REPOSITORY}/releases/assets/99`,
+      size: 1,
+    });
+    await expect(
+      loadPublishedReleaseAssets({ transport: { requestBytes }, release, verifyAttestation })
+    ).rejects.toBeInstanceOf(GithubAdapterError);
+  });
+
+  it('requires marked provenance while loading the N+1 publication frontier', async () => {
+    const bundle = disabledV2WorkflowBundle();
+    const evidence = Buffer.from('{"signed":"portable"}\n');
+    const assets = { ...bundle.assets, 'attestation.intoto.jsonl': evidence };
+    const attestation = {
+      protocol: 'bugdrop.release-attestation/v1',
+      status: 'verified',
+      asset: 'attestation.intoto.jsonl',
+      bundleSha256: createHash('sha256').update(evidence).digest('hex'),
+      policy: attestationPolicy({
+        repository: REPOSITORY,
+        controllerSha: bundle.requestPlan.source.controllerSha,
+      }),
+      subjects: attestationSubjects(bundle),
+    };
+    const attested = { ...bundle, assets, attestation };
+    const verifyAttestation = vi.fn(async () => attestation);
+
+    await expect(
+      planFromPublishedBundles({ bundles: [attested], verifyAttestation })
+    ).resolves.toMatchObject({ request: { previousTag: bundle.finalPlan.tag } });
+    await expect(
+      planFromPublishedBundles({
+        bundles: [attested],
+        verifyAttestation,
+        releaseTransform: release => ({
+          ...release,
+          assets: (release.assets as Array<{ name: string }>).filter(
+            asset => asset.name !== 'attestation.intoto.jsonl'
+          ),
+        }),
+      })
+    ).rejects.toBeInstanceOf(GithubAdapterError);
   });
 
   it('authenticates retention mode before charging an exact asset to cumulative history', async () => {

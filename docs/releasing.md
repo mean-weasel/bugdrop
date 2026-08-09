@@ -158,6 +158,7 @@ available 14-day workflow artifacts:
 - `request-plan-<request-key>` and `release-plan-<plan-key>`
 - `release-baseline-<plan-key>`
 - `release-deployment-<plan-key>`
+- `release-attestation-<plan-key>` (30-day portable bundle and verification receipt)
 - `release-publication-<plan-key>`
 - finalization status and GitHub job summary
 
@@ -165,6 +166,71 @@ For a completed live release, also record the GitHub Release URL and asset check
 version/build identity, production live-test result, `versions.json` digest, exact widget digest, and
 notification outcome. For recovery, retain raw artifacts and record every observation separately from
 every command attempted.
+
+## Release provenance
+
+A live release publishes seven assets. Six immutable content assets are provenance subjects: the
+exact-version widget, `versions.json`, `request-plan.json`, `release-content.json`,
+`final-release-plan.json`, and `checksums.sha256`. `attestation.intoto.jsonl` is the seventh,
+evidence-only asset. It is intentionally outside the checksum and subject sets so the signed bundle
+never refers to itself. Mutable Cloudflare aliases, retained historical files, rebuilt output, and
+Actions artifact ZIPs are never attested.
+
+After protected approval and successful production tests, the isolated `attest-release` job
+materializes those six files directly from the exact State 2 artifact, creates one GitHub-hosted SLSA
+provenance statement, verifies the portable bundle, and uploads it under an exact artifact ID. The
+job has only `contents: read`, `id-token: write`, and `attestations: write`. The later publication job
+has `contents: write` but no OIDC or attestation authority, downloads that exact artifact ID, repeats
+verification, and publishes the same bytes. Dry runs and authenticated completed-plan no-ops cannot
+reach the attestation job.
+
+To verify a downloaded release, first run `sha256sum -c checksums.sha256`. Read the immutable
+controller SHA from `request-plan.json` at `.source.controllerSha`. While still online, acquire the
+current trusted roots and preserve their checksum with the downloaded Release evidence:
+
+```bash
+gh attestation trusted-root > trusted_root.jsonl
+sha256sum trusted_root.jsonl > trusted_root.jsonl.sha256
+```
+
+Obtain the trusted root through a separately trusted online channel when the Release download itself
+is under investigation. After preserving it, verify each of the six subjects online:
+
+```bash
+gh attestation verify <subject> \
+  --repo mean-weasel/bugdrop \
+  --signer-workflow mean-weasel/bugdrop/.github/workflows/deploy.yml \
+  --signer-digest <controller-sha> \
+  --source-digest <controller-sha> \
+  --source-ref refs/heads/main \
+  --cert-oidc-issuer https://token.actions.githubusercontent.com \
+  --deny-self-hosted-runners
+
+```
+
+For genuinely offline verification, disconnect the verifier from the network, check the preserved
+trusted-root checksum, and verify the portable bundle without an API lookup:
+
+```bash
+sha256sum -c trusted_root.jsonl.sha256
+gh attestation verify <subject> \
+  --bundle attestation.intoto.jsonl \
+  --custom-trusted-root trusted_root.jsonl \
+  --repo mean-weasel/bugdrop \
+  --signer-workflow mean-weasel/bugdrop/.github/workflows/deploy.yml \
+  --signer-digest <controller-sha> \
+  --source-digest <controller-sha> \
+  --source-ref refs/heads/main \
+  --cert-oidc-issuer https://token.actions.githubusercontent.com \
+  --deny-self-hosted-runners
+```
+
+Verification must return one unambiguous SLSA statement whose subject set is exactly those six
+files. A missing bundle, missing or extra subject, identity-policy mismatch, unexpected eighth
+Release asset, or one-byte change stops publication. If attestation fails after deployment,
+publication remains skipped and finalization reinspects GitHub before restoring the captured
+production baseline. Never delete, replace, or hand-repair a partial Release; preserve its evidence
+and use the reviewed reset-and-replay procedure.
 
 ## Retention
 

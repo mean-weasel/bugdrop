@@ -11,13 +11,14 @@ write_workflow() {
   local reference=$1
   local version=$2
   local uses_key=${3:-uses}
+  local action=${4:-actions/checkout}
   printf '%s\n' \
     'name: fixture' \
     'jobs:' \
     '  check:' \
     '    runs-on: ubuntu-latest' \
     '    steps:' \
-    "      - ${uses_key}: actions/checkout@${reference} # ${version}" \
+    "      - ${uses_key}: ${action}@${reference} # ${version}" \
     > "$fixture_root/fixture.yml"
 }
 
@@ -35,6 +36,21 @@ expect_failure() {
 
 write_workflow fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 v5.1.0
 node "$checker" "$fixture_root" > /dev/null
+
+write_workflow a1948c3f048ba23858d222213b7c278aabede763 v4.1.1 uses actions/attest
+node "$checker" "$fixture_root" > /dev/null
+
+write_workflow b1948c3f048ba23858d222213b7c278aabede763 v4.1.1 uses actions/attest
+expect_failure 'is not approved as v4.1.1'
+
+write_workflow a1948c3f048ba23858d222213b7c278aabede763 v4.1.0 uses actions/attest
+expect_failure 'is not approved as v4.1.0'
+
+write_workflow a1948c3f048ba23858d222213b7c278aabede763 v3.9.9 uses actions/attest
+expect_failure 'below the Node 24-ready v4 floor'
+
+write_workflow v4 v4.1.1 uses actions/attest
+expect_failure 'not pinned to a full commit SHA'
 
 write_workflow v5 v5.1.0
 expect_failure 'not pinned to a full commit SHA'

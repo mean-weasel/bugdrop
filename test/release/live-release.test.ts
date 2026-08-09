@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +13,7 @@ import {
   inspectPublication,
 } from '../../scripts/release/live-release.mjs';
 import { validatePublicationBundle } from '../../scripts/release/publication.mjs';
+import { attestationPolicy, attestationSubjects } from '../../scripts/release/attestation.mjs';
 import { workflowBundle } from '../fixtures/release/workflow/bundle';
 
 const SHA = 'a'.repeat(40);
@@ -22,6 +24,29 @@ const expected = {
   targetSha: SHA,
 };
 const authorization = { status: 'mutation-authorized', planIdentity: PLAN };
+const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+
+function attestedBundle() {
+  const bundle = workflowBundle();
+  const attestationBytes = Buffer.from('{"signed":"portable"}\n');
+  const attestation = {
+    protocol: 'bugdrop.release-attestation/v1',
+    status: 'verified',
+    asset: 'attestation.intoto.jsonl',
+    bundleSha256: digest(attestationBytes),
+    policy: attestationPolicy({
+      repository: 'mean-weasel/bugdrop',
+      controllerSha: bundle.requestPlan.source.controllerSha,
+    }),
+    subjects: attestationSubjects(bundle),
+  };
+  return {
+    bundle,
+    attestation,
+    attestationBytes,
+    verifyAttestation: vi.fn(async () => attestation),
+  };
+}
 
 function state(name: string, buildSha: string | null) {
   return {
@@ -211,6 +236,87 @@ describe('live release production orchestration', () => {
       nextAction: { kind: 'create-draft', tag: publication.tag },
       planIdentity: bundle.finalPlan.planIdentity,
     });
+  });
+
+  it('requires the exact seventh evidence asset during authoritative finalization inspection', async () => {
+    const { bundle, attestation, attestationBytes, verifyAttestation } = attestedBundle();
+    const releaseBundle = {
+      ...bundle,
+      attestation,
+      assets: { ...bundle.assets, 'attestation.intoto.jsonl': attestationBytes },
+    };
+    const publication = validatePublicationBundle(releaseBundle, { requireAttestation: true });
+    const observation = {
+      complete: true,
+      tagRef: { objectSha: 'c'.repeat(40) },
+      tagObject: {
+        annotation: publication.tagAnnotation,
+        kind: 'annotated',
+        objectSha: 'c'.repeat(40),
+        targetSha: publication.targetSha,
+        targetType: 'commit',
+      },
+      releases: [
+        {
+          assets: Object.entries(releaseBundle.assets).map(([name, bytes]) => ({ name, bytes })),
+          body: publication.body,
+          bodyMarker: publication.bodyMarker,
+          draft: false,
+          id: '123',
+          marker: publication.marker,
+          name: publication.name,
+          prerelease: false,
+          published: true,
+          tag: publication.tag,
+          targetSha: publication.targetSha,
+        },
+      ],
+    };
+    const adapter = { inspect: vi.fn(async () => observation) };
+    const input = {
+      bundle,
+      adapter,
+      attestationBytes,
+      controllerSha: bundle.requestPlan.source.controllerSha,
+      repository: 'mean-weasel/bugdrop',
+      verifyAttestation,
+    };
+
+    await expect(inspectPublication(input)).resolves.toMatchObject({ status: 'already-published' });
+    observation.releases[0].assets = observation.releases[0].assets.filter(
+      asset => asset.name !== 'attestation.intoto.jsonl'
+    );
+    const missing = await inspectPublication(input);
+    expect(missing).toMatchObject({
+      status: 'conflict',
+      reason: 'published-assets-incomplete',
+    });
+
+    const cloudflare = client();
+    const baseline = await captureBaseline({
+      client: cloudflare,
+      expected,
+      observe: cloudflare.observe,
+    });
+    const deployment = await deployCandidate({
+      authorization,
+      baseline,
+      client: cloudflare,
+      expected,
+      observe: cloudflare.observe,
+      verify: async () => ({ status: 'verified', targetSha: SHA }),
+    });
+    await expect(
+      finalizeRelease({
+        baseline,
+        client: cloudflare,
+        deployment,
+        expected,
+        publication: missing,
+        observe: cloudflare.observe,
+        verify: async () => ({ status: 'verified', targetSha: SHA }),
+      })
+    ).resolves.toMatchObject({ status: 'rollback-verified' });
   });
 
   it('reconciles a lost deploy response only after source and asset live proof', async () => {
