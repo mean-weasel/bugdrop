@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { reconcileDeployment, verifyRollback } from './cloudflare-adapter.mjs';
 import { createProductionCloudflareClient } from './cloudflare-client.mjs';
 import { createGithubPublicationAdapter } from './github-publication-adapter.mjs';
+import { requiresReleaseAttestation } from './github-adapter.mjs';
 import {
   classifyPublicationState,
   executePublication,
@@ -20,6 +21,7 @@ import {
   pollLiveVerification,
 } from './verify-live.mjs';
 import { assertStaticTree } from './static-tree.mjs';
+import { ATTESTATION_ASSET, attestationPolicy, verifyPortableAttestation } from './attestation.mjs';
 
 const PROTOCOL = 'bugdrop.live-release/v1';
 const SHA = /^[0-9a-f]{40}$/;
@@ -325,18 +327,95 @@ export async function deployCandidate({
   };
 }
 
-export async function publishCandidate({ authorization, bundle: rawBundle, adapter }) {
+async function authenticatedPublicationBundle({
+  rawBundle,
+  attestationBytes,
+  controllerSha,
+  repository,
+  verifyAttestation = verifyPortableAttestation,
+}) {
   const bundle = hydratedBundle(rawBundle);
-  const expected = validatePublicationBundle(bundle);
+  if (!Buffer.isBuffer(attestationBytes)) {
+    fail('INVALID_ATTESTATION', 'portable attestation bytes are required');
+  }
+  const attestation = await verifyAttestation({
+    bundle,
+    attestationBytes,
+    policy: attestationPolicy({ repository, controllerSha }),
+  });
+  return {
+    ...bundle,
+    attestation,
+    assets: { ...bundle.assets, [ATTESTATION_ASSET]: attestationBytes },
+  };
+}
+
+export async function publishCandidate({
+  authorization,
+  bundle: rawBundle,
+  adapter,
+  attestationBytes,
+  controllerSha,
+  repository,
+  verifyAttestation,
+}) {
+  const bundle = await authenticatedPublicationBundle({
+    rawBundle,
+    attestationBytes,
+    controllerSha,
+    repository,
+    ...(verifyAttestation ? { verifyAttestation } : {}),
+  });
+  const expected = validatePublicationBundle(bundle, { requireAttestation: true });
   requireAuthorization(authorization, {
     planIdentity: expected.planIdentity,
   });
   return { protocol: PROTOCOL, ...(await executePublication({ adapter, bundle })) };
 }
 
-export async function inspectPublication({ bundle: rawBundle, adapter }) {
-  const bundle = hydratedBundle(rawBundle);
-  const expected = validatePublicationBundle(bundle);
+export async function inspectPublication({
+  bundle: rawBundle,
+  adapter,
+  attestationBytes,
+  controllerSha,
+  repository,
+  verifyAttestation,
+}) {
+  const hasAttestation = Buffer.isBuffer(attestationBytes);
+  let bundle;
+  if (hasAttestation) {
+    try {
+      bundle = await authenticatedPublicationBundle({
+        rawBundle,
+        attestationBytes,
+        controllerSha,
+        repository,
+        ...(verifyAttestation ? { verifyAttestation } : {}),
+      });
+    } catch {
+      const untrusted = validatePublicationBundle(hydratedBundle(rawBundle), { allowLegacy: true });
+      return {
+        protocol: PROTOCOL,
+        status: 'conflict',
+        reason: 'attestation-verification-failed',
+        planIdentity: untrusted.planIdentity,
+      };
+    }
+  } else {
+    bundle = hydratedBundle(rawBundle);
+  }
+  const expected = validatePublicationBundle(bundle, {
+    allowLegacy: !hasAttestation,
+    requireAttestation: hasAttestation,
+  });
+  if (!hasAttestation && requiresReleaseAttestation(expected.tag)) {
+    return {
+      protocol: PROTOCOL,
+      status: 'conflict',
+      reason: 'post-boundary-attestation-required',
+      planIdentity: expected.planIdentity,
+    };
+  }
   let observation;
   try {
     observation = await adapter.inspect(expected.tag);
@@ -505,6 +584,45 @@ export async function finalizeRelease({
       };
 }
 
+export async function finalizeInspectedRelease({
+  bundle,
+  adapter,
+  attestationBytes,
+  controllerSha,
+  repository,
+  verifyAttestation,
+  baseline,
+  client,
+  deployment,
+  expected,
+  inspectionAttempts,
+  inspectionIntervalMs,
+  observe,
+  sleep,
+  verify,
+}) {
+  const publication = await inspectPublication({
+    bundle,
+    adapter,
+    ...(Buffer.isBuffer(attestationBytes) ? { attestationBytes } : {}),
+    controllerSha,
+    repository,
+    ...(verifyAttestation ? { verifyAttestation } : {}),
+  });
+  return finalizeRelease({
+    baseline,
+    client,
+    deployment,
+    expected,
+    publication,
+    ...(inspectionAttempts !== undefined ? { inspectionAttempts } : {}),
+    ...(inspectionIntervalMs !== undefined ? { inspectionIntervalMs } : {}),
+    ...(observe ? { observe } : {}),
+    ...(sleep ? { sleep } : {}),
+    ...(verify ? { verify } : {}),
+  });
+}
+
 async function jsonFile(path) {
   return JSON.parse(await readFile(resolve(path), 'utf8'));
 }
@@ -556,6 +674,9 @@ async function runCli() {
     output = await publishCandidate({
       authorization: await jsonFile(input.authorizationPath),
       bundle,
+      attestationBytes: await readFile(resolve(input.attestationPath)),
+      controllerSha: input.controllerSha,
+      repository: input.repository,
       adapter: createGithubPublicationAdapter({
         repository: input.repository,
         token: process.env.BUGDROP_GITHUB_TOKEN,
@@ -564,6 +685,11 @@ async function runCli() {
   } else if (mode === 'inspect-publication') {
     output = await inspectPublication({
       bundle: await jsonFile(input.bundlePath),
+      ...(input.attestationPath
+        ? { attestationBytes: await readFile(resolve(input.attestationPath)) }
+        : {}),
+      controllerSha: input.controllerSha,
+      repository: input.repository,
       adapter: createGithubPublicationAdapter({
         repository: input.repository,
         token: process.env.BUGDROP_GITHUB_TOKEN,
@@ -571,19 +697,21 @@ async function runCli() {
     });
   } else if (mode === 'finalize') {
     const bundle = await jsonFile(input.bundlePath);
-    const publication = await inspectPublication({
+    output = await finalizeInspectedRelease({
       bundle,
+      ...(input.attestationPath
+        ? { attestationBytes: await readFile(resolve(input.attestationPath)) }
+        : {}),
+      controllerSha: input.controllerSha,
+      repository: input.repository,
       adapter: createGithubPublicationAdapter({
         repository: input.repository,
         token: process.env.BUGDROP_GITHUB_TOKEN,
       }),
-    });
-    output = await finalizeRelease({
       baseline: await jsonFile(input.baselinePath),
       client: await cloudflareClient(input),
       deployment: await jsonFile(input.deploymentPath),
       expected: await jsonFile(input.expectedPath),
-      publication,
     });
   } else {
     fail('INVALID_CLI', `unsupported mode ${mode ?? '<missing>'}`);

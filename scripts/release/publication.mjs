@@ -4,6 +4,7 @@ import { buildPublicationMarker } from './plan.mjs';
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const TAG_PATTERN = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 const ASSET_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
+const ATTESTATION_ASSET = 'attestation.intoto.jsonl';
 const CORE_ASSETS = [
   'checksums.sha256',
   'final-release-plan.json',
@@ -48,7 +49,10 @@ function expectedChecksumBytes(hashes) {
       .join('\n')}\n`
   );
 }
-export function validatePublicationBundle(input) {
+export function validatePublicationBundle(
+  input,
+  { allowLegacy = false, requireAttestation = false } = {}
+) {
   const { requestPlan, releaseContent, finalPlan } = input ?? {};
   if (![requestPlan, releaseContent, finalPlan].every(value => value?.constructor === Object)) {
     fail('INVALID_BUNDLE', 'request, content, and final plan records are required');
@@ -99,12 +103,15 @@ export function validatePublicationBundle(input) {
     fail('INVALID_BUNDLE', 'requiredAssets must exactly match the request attestation');
   }
   const assets = input.assets;
-  if (
-    !assets ||
-    assets.constructor !== Object ||
-    !same(Object.keys(assets).sort(compareUtf8), required)
-  ) {
-    fail('INVALID_BUNDLE', 'asset names do not exactly match the final plan');
+  const assetNames = Object.keys(assets ?? {}).sort(compareUtf8);
+  const releaseRequired = [...required, ATTESTATION_ASSET].sort(compareUtf8);
+  const hasAttestation = assetNames.includes(ATTESTATION_ASSET);
+  const validNames =
+    same(assetNames, hasAttestation ? releaseRequired : required) &&
+    (!requireAttestation || hasAttestation) &&
+    (hasAttestation || allowLegacy || !input.attestation);
+  if (!assets || assets.constructor !== Object || !validNames) {
+    fail('INVALID_BUNDLE', 'asset names do not exactly match the release boundary');
   }
   const expectedBytes = {
     'request-plan.json': Buffer.from(`${canonicalize(requestPlan)}\n`),
@@ -131,7 +138,37 @@ export function validatePublicationBundle(input) {
     fail('INVALID_BUNDLE', 'checksums do not bind every published asset');
   }
   hashes['checksums.sha256'] = sha256(checksumBytes);
-  const marker = buildPublicationMarker(finalPlan);
+  if (hasAttestation) {
+    const evidenceBytes = exactBuffer(assets[ATTESTATION_ASSET], ATTESTATION_ASSET);
+    const evidence = input.attestation;
+    const subjectHashes = Object.fromEntries(
+      required
+        .map(name => [name, { sha256: hashes[name] }])
+        .sort(([left], [right]) => compareUtf8(left, right))
+    );
+    if (
+      evidence?.protocol !== 'bugdrop.release-attestation/v1' ||
+      evidence.status !== 'verified' ||
+      evidence.asset !== ATTESTATION_ASSET ||
+      evidence.bundleSha256 !== sha256(evidenceBytes) ||
+      evidence.policy?.repository !== finalPlan.repository ||
+      evidence.policy?.signerDigest !== requestPlan.source?.controllerSha ||
+      evidence.policy?.sourceDigest !== requestPlan.source?.controllerSha ||
+      !same(
+        Object.fromEntries(
+          (evidence.subjects ?? []).map(subject => [subject.name, subject.digest])
+        ),
+        subjectHashes
+      )
+    ) {
+      fail('INVALID_BUNDLE', 'attestation evidence is missing or does not authenticate');
+    }
+    hashes[ATTESTATION_ASSET] = sha256(evidenceBytes);
+  }
+  const historicalMarker = buildPublicationMarker(finalPlan);
+  const marker = hasAttestation
+    ? { ...historicalMarker, requiredEvidence: [ATTESTATION_ASSET] }
+    : historicalMarker;
   const encodedMarker = Buffer.from(canonicalize(marker)).toString('base64url');
   const bodyMarker = `<!-- bugdrop-publication ${encodedMarker} -->`;
   return {
@@ -144,7 +181,8 @@ export function validatePublicationBundle(input) {
     planIdentity: finalPlan.planIdentity,
     protocol: finalPlan.protocol,
     repository: finalPlan.repository,
-    requiredAssets: required,
+    contentAssets: required,
+    requiredAssets: hasAttestation ? releaseRequired : required,
     ...(finalPlan.staticPackageIdentity
       ? { staticPackageIdentity: finalPlan.staticPackageIdentity }
       : {}),
@@ -382,7 +420,7 @@ export async function executePublication({
   ) {
     fail('INVALID_CONVERGENCE_OPTIONS', 'publication convergence options are invalid');
   }
-  const expected = validatePublicationBundle(bundle);
+  const expected = validatePublicationBundle(bundle, { requireAttestation: true });
   const history = [];
   const attemptedActions = new Set();
   let mutated = false;

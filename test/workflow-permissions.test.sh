@@ -30,6 +30,40 @@ expect_failure() {
 
 node "$checker" "$repo_root/.github/workflows" > /dev/null
 
+missing_attestation_oidc=$(make_fixture missing-attestation-oidc)
+perl -0pi -e \
+  's/(  attest-release:.*?    permissions:\n      contents: read\n)      id-token: write\n/$1/s' \
+  "$missing_attestation_oidc/deploy.yml"
+expect_failure "$missing_attestation_oidc" \
+  'deploy.yml:attest-release: effective permissions must be {"attestations":"write","contents":"read","id-token":"write"}'
+
+missing_attestation_write=$(make_fixture missing-attestation-write)
+perl -0pi -e \
+  's/(  attest-release:.*?    permissions:\n      contents: read\n      id-token: write\n)      attestations: write\n/$1/s' \
+  "$missing_attestation_write/deploy.yml"
+expect_failure "$missing_attestation_write" \
+  'deploy.yml:attest-release: effective permissions must be {"attestations":"write","contents":"read","id-token":"write"}'
+
+misplaced_attestation_write=$(make_fixture misplaced-attestation-write)
+perl -0pi -e \
+  's/(  publish-release:.*?    permissions:\n      contents: write\n)/$1      attestations: write\n/s' \
+  "$misplaced_attestation_write/deploy.yml"
+expect_failure "$misplaced_attestation_write" \
+  'deploy.yml:publish-release: attestations: write is not an approved grant'
+
+broad_attestation_job=$(make_fixture broad-attestation-job)
+perl -0pi -e \
+  's/(  attest-release:.*?    permissions:\n)      contents: read\n/$1      contents: write\n/s' \
+  "$broad_attestation_job/deploy.yml"
+expect_failure "$broad_attestation_job" \
+  'deploy.yml:attest-release: contents: write is not an approved grant'
+
+top_level_oidc=$(make_fixture top-level-oidc)
+perl -0pi -e 's/(permissions:\n  contents: read\n)/$1  id-token: write\n/' \
+  "$top_level_oidc/deploy.yml"
+expect_failure "$top_level_oidc" \
+  'deploy.yml: top-level permissions must be {"contents":"read"}'
+
 missing_top=$(make_fixture missing-top)
 perl -0pi -e 's/\npermissions: \{\}\n/\n/' "$missing_top/benchmark-ci.yml"
 expect_failure "$missing_top" 'benchmark-ci.yml: top-level permissions must be explicitly declared'

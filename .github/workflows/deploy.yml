@@ -664,9 +664,97 @@ jobs:
     secrets:
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
+  attest-release:
+    name: Attest exact immutable Release subjects
+    if: ${{ needs.approval-baseline.outputs.proceed == 'true' }}
+    needs: [guard-and-plan, verify-candidate, approval-baseline, deploy-candidate, live-e2e]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - name: Checkout immutable controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.guard-and-plan.outputs.controller_sha }}
+          path: controller
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+
+      - name: Install immutable controller without lifecycle scripts
+        run: npm --prefix controller ci --ignore-scripts
+
+      - name: Download exact approved State 2 artifact
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          artifact-ids: ${{ needs.verify-candidate.outputs.artifact_id }}
+          path: approved
+
+      - name: Materialize exactly six authenticated subjects without rebuilding
+        shell: bash
+        run: |
+          jq -n \
+            --arg bundlePath "$GITHUB_WORKSPACE/approved/state2-bundle.json" \
+            --arg outputDir "$RUNNER_TEMP/release-subjects" \
+            '{$bundlePath, $outputDir}' > attestation-stage-input.json
+          node controller/scripts/release/attestation.mjs stage attestation-stage-input.json \
+            > attestation-subjects.json
+          test "$(jq -er '.subjects | length' attestation-subjects.json)" = '6'
+          jq -r '.subjects[] | "\(.digest.sha256)  \(.name)"' attestation-subjects.json \
+            > "$RUNNER_TEMP/attestation-subjects.sha256"
+
+      - name: Create hosted provenance for the exact subjects
+        id: attest
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-checksums: ${{ runner.temp }}/attestation-subjects.sha256
+
+      - name: Authenticate portable evidence under pinned identity policy
+        shell: bash
+        env:
+          BUGDROP_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          install -d attestation-evidence
+          cp '${{ steps.attest.outputs.bundle-path }}' \
+            attestation-evidence/attestation.intoto.jsonl
+          jq -n \
+            --arg bundlePath "$GITHUB_WORKSPACE/approved/state2-bundle.json" \
+            --arg attestationPath "$GITHUB_WORKSPACE/attestation-evidence/attestation.intoto.jsonl" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg controllerSha '${{ needs.guard-and-plan.outputs.controller_sha }}' \
+            '{$bundlePath, $attestationPath, $repository, $controllerSha}' \
+            > attestation-verify-input.json
+          node controller/scripts/release/attestation.mjs verify attestation-verify-input.json \
+            > attestation-evidence/attestation-verification.json
+          test "$(jq -er '.status' attestation-evidence/attestation-verification.json)" = 'verified'
+
+      - name: Upload exact portable attestation evidence
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-attestation-${{ needs.verify-candidate.outputs.plan_key }}
+          path: attestation-evidence/
+          if-no-files-found: error
+          retention-days: 30
+
   publish-release:
     name: Publish exact authenticated GitHub Release
-    needs: [guard-and-plan, verify-candidate, approval-baseline, deploy-candidate, live-e2e]
+    needs:
+      [
+        guard-and-plan,
+        verify-candidate,
+        approval-baseline,
+        deploy-candidate,
+        live-e2e,
+        attest-release,
+      ]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
@@ -690,10 +778,10 @@ jobs:
       - name: Install immutable controller without lifecycle scripts
         run: npm --prefix controller ci --ignore-scripts
 
-      - name: Download exact State 2 and approved authorization
+      - name: Download exact State 2, authorization, and attestation evidence
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
-          artifact-ids: ${{ needs.verify-candidate.outputs.artifact_id }},${{ needs.approval-baseline.outputs.artifact_id }}
+          artifact-ids: ${{ needs.verify-candidate.outputs.artifact_id }},${{ needs.approval-baseline.outputs.artifact_id }},${{ needs.attest-release.outputs.artifact_id }}
           path: release-state
           merge-multiple: true
 
@@ -706,8 +794,11 @@ jobs:
           jq -n \
             --arg bundlePath "$GITHUB_WORKSPACE/release-state/state2-bundle.json" \
             --arg authorizationPath "$GITHUB_WORKSPACE/release-state/authorization.json" \
+            --arg attestationPath "$GITHUB_WORKSPACE/release-state/attestation.intoto.jsonl" \
+            --arg controllerSha '${{ needs.guard-and-plan.outputs.controller_sha }}' \
             --arg repository "$GITHUB_REPOSITORY" \
-            '{$bundlePath, $authorizationPath, $repository}' > publication-input.json
+            '{$bundlePath, $authorizationPath, $attestationPath, $controllerSha, $repository}' \
+            > publication-input.json
           node controller/scripts/release/live-release.mjs publish publication-input.json > publication.json
           status=$(jq -er '.status' publication.json)
           if [ "$status" = 'published' ]; then
@@ -754,6 +845,7 @@ jobs:
         approval-baseline,
         deploy-candidate,
         live-e2e,
+        attest-release,
         publish-release,
         notify,
       ]
@@ -805,6 +897,13 @@ jobs:
           name: release-deployment-${{ needs.verify-candidate.outputs.plan_key }}
           path: release-state
 
+      - name: Download exact attestation evidence when created
+        if: ${{ needs.deploy-candidate.result != 'skipped' && needs.attest-release.result == 'success' }}
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          artifact-ids: ${{ needs.attest-release.outputs.artifact_id }}
+          path: release-state
+
       - name: Stage exact static package below candidate trust root
         if: ${{ needs.deploy-candidate.result != 'skipped' }}
         run: |
@@ -849,8 +948,11 @@ jobs:
             --arg baselinePath "$GITHUB_WORKSPACE/release-state/baseline.json" \
             --arg deploymentPath "$GITHUB_WORKSPACE/release-state/deployment.json" \
             --arg bundlePath "$GITHUB_WORKSPACE/release-state/state2-bundle.json" \
+            --arg controllerSha '${{ needs.guard-and-plan.outputs.controller_sha }}' \
             --arg repository "$GITHUB_REPOSITORY" \
-            '{$controllerRoot, $candidateRoot, $controllerConfig, $controllerLock, $candidateEntrypoint, $candidateAssets, $targetSha, $expectedPath, $baselinePath, $deploymentPath, $bundlePath, $repository}' \
+            --arg attestationPath "$GITHUB_WORKSPACE/release-state/attestation.intoto.jsonl" \
+            --argjson hasAttestation "$(test -s release-state/attestation.intoto.jsonl && echo true || echo false)" \
+            '{$controllerRoot, $candidateRoot, $controllerConfig, $controllerLock, $candidateEntrypoint, $candidateAssets, $targetSha, $expectedPath, $baselinePath, $deploymentPath, $bundlePath, $controllerSha, $repository} + (if $hasAttestation then {$attestationPath} else {} end)' \
             > finalize-input.json
           node controller/scripts/release/live-release.mjs finalize finalize-input.json > finalization.json
           status=$(jq -er '.status' finalization.json)

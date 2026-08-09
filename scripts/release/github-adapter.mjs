@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url';
 import { canonicalize, compareUtf8 } from './canonical-json.mjs';
 import { observeGitRange } from './git-observer.mjs';
 import {
+  RELEASE_PROTOCOL,
+  RELEASE_PROTOCOL_V2,
+  buildPublicationMarker,
   buildReleaseInventory,
   buildRequestPlan,
   calculateNextTag,
@@ -20,11 +23,15 @@ import {
 import { validatePublicationBundle } from './publication.mjs';
 import { deriveRetentionRequest, writeRetentionInput } from './retention.mjs';
 import { MAX_RETAINED_BYTES, MAX_SNAPSHOT_BYTES, MAX_WIDGET_BYTES } from './limits.mjs';
+import { ATTESTATION_ASSET, attestationPolicy, verifyPortableAttestation } from './attestation.mjs';
 
 const API_VERSION = '2022-11-28';
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const TAG_PATTERN = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+const IDENTITY_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const MARKERLESS_HISTORY_MAX_TAG = 'v1.55.0';
+const UNATTESTED_V2_HISTORY_MAX_TAG = 'v1.55.2';
 const ASSET_TIMEOUT_MS = 30_000;
 const sha256Bytes = bytes => createHash('sha256').update(bytes).digest('hex');
 
@@ -53,12 +60,19 @@ function assertInput(repository, targetSha) {
 }
 
 function compareReleaseTags(left, right) {
+  if (!TAG_PATTERN.test(left?.tag ?? '') || !TAG_PATTERN.test(right?.tag ?? '')) {
+    fail('INVALID_STABLE_TAG', 'release tag comparison requires stable SemVer tags');
+  }
   const a = left.tag.slice(1).split('.').map(BigInt);
   const b = right.tag.slice(1).split('.').map(BigInt);
   for (let index = 0; index < 3; index += 1) {
     if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1;
   }
   return 0;
+}
+
+export function requiresReleaseAttestation(tag) {
+  return compareReleaseTags({ tag }, { tag: UNATTESTED_V2_HISTORY_MAX_TAG }) > 0;
 }
 
 function activeAliasTargets(artifacts) {
@@ -241,6 +255,85 @@ function decodeMarker(body) {
   }
 }
 
+function validatePublicationMarker(marker, ref) {
+  if (!marker || typeof marker !== 'object' || Array.isArray(marker)) {
+    fail('PUBLISHED_RELEASE_CONFLICT', 'publication marker must be a canonical object');
+  }
+  if (![RELEASE_PROTOCOL, RELEASE_PROTOCOL_V2].includes(marker.protocol)) {
+    fail('PUBLISHED_RELEASE_CONFLICT', 'publication marker protocol is unsupported');
+  }
+  if (
+    marker.protocol === RELEASE_PROTOCOL &&
+    compareReleaseTags(ref, { tag: MARKERLESS_HISTORY_MAX_TAG }) > 0
+  ) {
+    fail('PUBLISHED_RELEASE_CONFLICT', 'v1 publication marker is beyond its historical boundary');
+  }
+  const requiresEvidence = Object.hasOwn(marker, 'requiredEvidence');
+  if (
+    marker.protocol === RELEASE_PROTOCOL_V2 &&
+    requiresReleaseAttestation(ref.tag) &&
+    !requiresEvidence
+  ) {
+    fail(
+      'PUBLISHED_RELEASE_CONFLICT',
+      'post-boundary v2 publication marker must require attestation evidence'
+    );
+  }
+  let expected;
+  try {
+    expected = buildPublicationMarker(marker);
+  } catch {
+    fail('PUBLISHED_RELEASE_CONFLICT', 'publication marker fields are invalid');
+  }
+  if (requiresEvidence) {
+    if (marker.protocol !== RELEASE_PROTOCOL_V2) {
+      fail('PUBLISHED_RELEASE_CONFLICT', 'only v2 publication markers may require evidence');
+    }
+    expected = { ...expected, requiredEvidence: [ATTESTATION_ASSET] };
+  }
+  if (
+    canonicalize(marker) !== canonicalize(expected) ||
+    !IDENTITY_PATTERN.test(marker.planIdentity ?? '') ||
+    !IDENTITY_PATTERN.test(marker.requestIdentity ?? '') ||
+    !IDENTITY_PATTERN.test(marker.contentIdentity ?? '') ||
+    !SHA_PATTERN.test(marker.targetSha ?? '') ||
+    !TAG_PATTERN.test(marker.tag ?? '') ||
+    marker.targetSha !== ref.sha ||
+    marker.tag !== ref.tag
+  ) {
+    fail(
+      'PUBLISHED_RELEASE_CONFLICT',
+      'publication marker schema, identities, evidence, tag, or target are invalid'
+    );
+  }
+  return expected;
+}
+
+function releaseMarker(ref, body) {
+  const bodyMarker = decodeMarker(body);
+  const tagMarker = ref.kind === 'annotated' ? ref.marker : null;
+  if (
+    bodyMarker === null &&
+    tagMarker === null &&
+    compareReleaseTags(ref, { tag: MARKERLESS_HISTORY_MAX_TAG }) <= 0
+  ) {
+    return null;
+  }
+  if (bodyMarker === null || tagMarker === null) {
+    fail(
+      'PUBLISHED_RELEASE_CONFLICT',
+      'Release body and immutable annotated-tag markers must either both be absent or both be present'
+    );
+  }
+  if (canonicalize(bodyMarker) !== canonicalize(tagMarker)) {
+    fail(
+      'PUBLISHED_RELEASE_CONFLICT',
+      'Release body marker differs from the immutable annotated-tag marker'
+    );
+  }
+  return validatePublicationMarker(tagMarker, ref);
+}
+
 function canonicalAsset(assets, name) {
   const bytes = assets?.[name];
   if (!Buffer.isBuffer(bytes)) fail('PUBLISHED_ASSET_MISSING', `${name} is unavailable`);
@@ -384,7 +477,7 @@ function validateActiveManifest({
   }
 }
 
-export function authenticatePublishedAssets({ release, assets }) {
+export function authenticatePublishedAssets({ release, assets, attestation }) {
   if (release?.published !== true || release.draft !== false || release.prerelease !== false) {
     fail('PUBLISHED_RELEASE_INVALID', 'completed-plan assets must belong to a stable publication');
   }
@@ -393,7 +486,10 @@ export function authenticatePublishedAssets({ release, assets }) {
   const finalPlan = canonicalAsset(assets, 'final-release-plan.json');
   let expected;
   try {
-    expected = validatePublicationBundle({ requestPlan, releaseContent, finalPlan, assets });
+    expected = validatePublicationBundle(
+      { requestPlan, releaseContent, finalPlan, assets, ...(attestation ? { attestation } : {}) },
+      { allowLegacy: !attestation, requireAttestation: Boolean(attestation) }
+    );
   } catch (error) {
     fail('PUBLISHED_ASSET_INVALID', 'published assets do not authenticate', {
       cause: error instanceof Error ? error.message : String(error),
@@ -412,14 +508,17 @@ export function authenticatePublishedAssets({ release, assets }) {
     requestPlan,
     releaseContent,
     finalPlan,
-    marker: expected.marker,
+    // The planning protocol authenticates its historical marker shape separately. The durable
+    // Release marker (checked above) may additionally require provenance evidence without changing
+    // deterministic State 2 identities.
+    marker: buildPublicationMarker(finalPlan),
     assetVerification: {
       complete: true,
       checksumsMatch: true,
       unexpectedConflicts: false,
       planIdentity: expected.planIdentity,
       contentIdentity: expected.marker.contentIdentity,
-      verifiedAssetNames: expected.requiredAssets,
+      verifiedAssetNames: expected.contentAssets,
     },
     publishedAssets: assets,
   };
@@ -429,6 +528,7 @@ export async function loadPublishedReleaseAssets({
   transport,
   release,
   repository = release?.repository,
+  verifyAttestation = verifyPortableAttestation,
 }) {
   if (!Array.isArray(release?.assets) || release.assets.length === 0) {
     fail('PUBLISHED_ASSET_MISSING', 'published Release has no inspectable assets');
@@ -463,7 +563,38 @@ export async function loadPublishedReleaseAssets({
     });
     budget.used += assets[asset.name].length;
   }
-  return authenticatePublishedAssets({ release, assets });
+  if (!Object.hasOwn(assets, ATTESTATION_ASSET)) {
+    return authenticatePublishedAssets({ release, assets });
+  }
+  const coreAssets = { ...assets };
+  const attestationBytes = coreAssets[ATTESTATION_ASSET];
+  delete coreAssets[ATTESTATION_ASSET];
+  const coreFinalPlan = canonicalAsset(coreAssets, 'final-release-plan.json');
+  const core = authenticatePublishedAssets({
+    release: { ...release, marker: buildPublicationMarker(coreFinalPlan) },
+    assets: coreAssets,
+  });
+  let attestation;
+  try {
+    attestation = await verifyAttestation({
+      bundle: {
+        requestPlan: core.requestPlan,
+        releaseContent: core.releaseContent,
+        finalPlan: core.finalPlan,
+        assets: coreAssets,
+      },
+      attestationBytes,
+      policy: attestationPolicy({
+        repository,
+        controllerSha: core.requestPlan.source.controllerSha,
+      }),
+    });
+  } catch (error) {
+    fail('PUBLISHED_ASSET_INVALID', 'published attestation does not authenticate', {
+      cause: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return authenticatePublishedAssets({ release, assets, attestation });
 }
 
 function tagName(ref) {
@@ -546,7 +677,7 @@ export async function observeGithubState({ transport, repository, targetSha }) {
         downloadUrl: String(asset?.browser_download_url ?? ''),
         size: Number(asset?.size),
       })),
-      marker: decodeMarker(release.body),
+      marker: releaseMarker(ref, release.body),
       relationToTarget:
         published && release.prerelease !== true
           ? await relationToTarget(transport, repository, ref.sha, targetSha)
@@ -618,6 +749,7 @@ export async function createRequestPlanFromGithub({
   transport,
   context,
   gitObserver = observeGitRange,
+  verifyAttestation,
 }) {
   const dispatch = normalizeDispatch({
     ...context?.dispatch,
@@ -666,6 +798,7 @@ export async function createRequestPlanFromGithub({
     const hydrated = await loadPublishedReleaseAssets({
       transport,
       release: exactPublished[0],
+      ...(verifyAttestation ? { verifyAttestation } : {}),
     });
     const completed = findCompletedPlan({
       dispatch,
@@ -740,6 +873,7 @@ export async function createRequestPlanFromGithub({
       transport,
       release,
       repository: dispatch.repository,
+      ...(verifyAttestation ? { verifyAttestation } : {}),
     });
     if (hydrated.requestPlan.protocol !== 'release-plan/v2') {
       fail('PUBLISHED_ASSET_INVALID', `${release.tag} v2 marker does not authenticate v2 assets`);

@@ -58,6 +58,14 @@ job_block() {
   ' "$workflow"
 }
 
+job_needs_block() {
+  job_block "$1" | awk '
+    /^    needs:/ { found = 1 }
+    found && /^    [[:alnum:]_-]+:/ && $0 !~ /^    needs:/ { exit }
+    found { print }
+  '
+}
+
 line_of() {
   grep -nF -- "$1" "$workflow" | head -1 | cut -d: -f1
 }
@@ -112,6 +120,7 @@ for job in \
   approval-baseline \
   deploy-candidate \
   live-e2e \
+  attest-release \
   publish-release \
   notify \
   finalize-cancelled; do
@@ -331,12 +340,41 @@ for literal in \
   grep -Fq -- "$literal" <<< "$live_block" || fail "live-e2e lacks: $literal"
 done
 
-publish_block=$(job_block publish-release)
+attest_block=$(job_block attest-release)
 for literal in \
-  'needs: [guard-and-plan, verify-candidate, approval-baseline, deploy-candidate, live-e2e]' \
+  "needs.approval-baseline.outputs.proceed == 'true'" \
+  'environment: production' \
+  'contents: read' \
+  'id-token: write' \
+  'attestations: write' \
+  'artifact-ids: ${{ needs.verify-candidate.outputs.artifact_id }}' \
+  'node controller/scripts/release/attestation.mjs stage' \
+  "test \"\$(jq -er '.subjects | length' attestation-subjects.json)\" = '6'" \
+  'attestation-subjects.sha256' \
+  'uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1' \
+  'subject-checksums: ${{ runner.temp }}/attestation-subjects.sha256' \
+  'attestation.intoto.jsonl' \
+  'node controller/scripts/release/attestation.mjs verify' \
+  'name: release-attestation-${{ needs.verify-candidate.outputs.plan_key }}'; do
+  grep -Fq -- "$literal" <<< "$attest_block" || fail "attest-release lacks: $literal"
+done
+if grep -Eq 'contents: write|CLOUDFLARE_|DISCORD_' <<< "$attest_block"; then
+  fail 'attestation job combines provenance with publication, deployment, or notification authority'
+fi
+if grep -Fq 'attest-release' <<< "$dry_block$completed_block"; then
+  fail 'dry-run or completed-plan no-op can reach attestation'
+fi
+
+publish_block=$(job_block publish-release)
+publish_needs=$(job_needs_block publish-release)
+grep -Fq 'attest-release' <<< "$publish_needs" ||
+  fail 'publish-release does not depend on attest-release'
+for literal in \
   'environment: production' \
   'timeout-minutes: 15' \
   'contents: write' \
+  'needs.attest-release.outputs.artifact_id' \
+  '--arg attestationPath "$GITHUB_WORKSPACE/release-state/attestation.intoto.jsonl"' \
   'node controller/scripts/release/live-release.mjs publish' \
   'BUGDROP_GITHUB_TOKEN: ${{ github.token }}'; do
   grep -Fq -- "$literal" <<< "$publish_block" || fail "publish-release lacks: $literal"
@@ -344,7 +382,13 @@ done
 if grep -Eq 'CLOUDFLARE_|DISCORD_' <<< "$publish_block"; then
   fail 'publication job must not receive deployment or notification credentials'
 fi
+if grep -Eq 'id-token: write|attestations: write' <<< "$publish_block"; then
+  fail 'publication job must not receive attestation authority'
+fi
 [[ $(grep -Fc 'contents: write' "$workflow") -eq 1 ]] || fail 'write permission must exist only on publish-release'
+[[ $(grep -Fc 'id-token: write' "$workflow") -eq 1 ]] || fail 'OIDC write must exist only on attest-release'
+[[ $(grep -Fc 'attestations: write' "$workflow") -eq 1 ]] ||
+  fail 'attestation write must exist only on attest-release'
 
 notify_block=$(job_block notify)
 for literal in \
@@ -358,6 +402,9 @@ grep -Fq 'DISCORD_RELEASE_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }
   fail 'notification must receive only the named Discord credential'
 
 final_block=$(job_block finalize-cancelled)
+final_needs=$(job_needs_block finalize-cancelled)
+grep -Fq 'attest-release' <<< "$final_needs" ||
+  fail 'finalize-cancelled does not depend on attest-release'
 for literal in \
   'always()' \
   'environment: production' \
@@ -370,6 +417,9 @@ for literal in \
   'diff -qr release-state/static-package candidate/.release-static-package' \
   '--arg candidateAssets "$GITHUB_WORKSPACE/candidate/.release-static-package"' \
   '--arg bundlePath "$GITHUB_WORKSPACE/release-state/state2-bundle.json"' \
+  'needs.attest-release.outputs.artifact_id' \
+  '--arg attestationPath "$GITHUB_WORKSPACE/release-state/attestation.intoto.jsonl"' \
+  '--argjson hasAttestation' \
   'node controller/scripts/release/live-release.mjs finalize' \
   'Preserve finalization evidence' \
   'Upload authoritative finalization outcome' \

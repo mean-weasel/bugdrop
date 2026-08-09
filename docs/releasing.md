@@ -158,6 +158,7 @@ available 14-day workflow artifacts:
 - `request-plan-<request-key>` and `release-plan-<plan-key>`
 - `release-baseline-<plan-key>`
 - `release-deployment-<plan-key>`
+- `release-attestation-<plan-key>` (30-day portable bundle and verification receipt)
 - `release-publication-<plan-key>`
 - finalization status and GitHub job summary
 
@@ -165,6 +166,109 @@ For a completed live release, also record the GitHub Release URL and asset check
 version/build identity, production live-test result, `versions.json` digest, exact widget digest, and
 notification outcome. For recovery, retain raw artifacts and record every observation separately from
 every command attempted.
+
+## Release provenance
+
+A live release publishes seven assets. Six immutable content assets are provenance subjects: the
+exact-version widget, `versions.json`, `request-plan.json`, `release-content.json`,
+`final-release-plan.json`, and `checksums.sha256`. `attestation.intoto.jsonl` is the seventh,
+evidence-only asset. It is intentionally outside the checksum and subject sets so the signed bundle
+never refers to itself. Mutable Cloudflare aliases, retained historical files, rebuilt output, and
+Actions artifact ZIPs are never attested.
+
+After protected approval and successful production tests, the isolated `attest-release` job
+materializes those six files directly from the exact State 2 artifact, creates one GitHub-hosted SLSA
+provenance statement, verifies the portable bundle, and uploads it under an exact artifact ID. The
+job has only `contents: read`, `id-token: write`, and `attestations: write`. The later publication job
+has `contents: write` but no OIDC or attestation authority, downloads that exact artifact ID, repeats
+verification, and publishes the same bytes. Dry runs and authenticated completed-plan no-ops cannot
+reach the attestation job.
+
+Run the following from a directory containing the seven downloaded Release assets. It hashes every
+local subject byte (including `checksums.sha256` itself), verifies the checksum manifest, applies the
+complete identity policy, requires exactly one matching signed statement, and compares its exact six
+name/digest pairs with the local files:
+
+```bash
+set -euo pipefail
+
+controller_sha=$(jq -er '.source.controllerSha | select(test("^[0-9a-f]{40}$"))' request-plan.json)
+tag=$(jq -er '.tag | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))' final-release-plan.json)
+widget="widget.${tag}.js"
+subjects=(
+  checksums.sha256
+  final-release-plan.json
+  release-content.json
+  request-plan.json
+  versions.json
+  "$widget"
+)
+for subject in "${subjects[@]}"; do test -f "$subject"; done
+sha256sum -c checksums.sha256
+LC_ALL=C sha256sum -- "${subjects[@]}" | LC_ALL=C sort -k2 > local-subjects.sha256
+
+identity_policy=(
+  --repo mean-weasel/bugdrop
+  --signer-workflow mean-weasel/bugdrop/.github/workflows/deploy.yml
+  --signer-digest "$controller_sha"
+  --source-digest "$controller_sha"
+  --source-ref refs/heads/main
+  --cert-oidc-issuer https://token.actions.githubusercontent.com
+  --deny-self-hosted-runners
+)
+
+assert_exact_attestation() {
+  local result=$1
+  jq -e '
+    type == "array" and length == 1 and
+    .[0].verificationResult.statement._type == "https://in-toto.io/Statement/v1" and
+    .[0].verificationResult.statement.predicateType == "https://slsa.dev/provenance/v1" and
+    (.[0].verificationResult.statement.subject | type == "array" and length == 6) and
+    all(.[0].verificationResult.statement.subject[];
+      (.name | type == "string") and
+      (.digest | type == "object" and keys == ["sha256"]) and
+      (.digest.sha256 | test("^[0-9a-f]{64}$")))
+  ' "$result" >/dev/null
+  jq -r '.[0].verificationResult.statement.subject[] |
+    "\(.digest.sha256)  \(.name)"' "$result" |
+    LC_ALL=C sort -k2 > "${result}.subjects.sha256"
+  diff -u local-subjects.sha256 "${result}.subjects.sha256"
+}
+
+gh attestation verify "$widget" "${identity_policy[@]}" --format json > online-verification.json
+assert_exact_attestation online-verification.json
+
+# Still online: acquire current roots, then preserve these files through a trusted channel.
+gh attestation trusted-root > trusted_root.jsonl
+sha256sum trusted_root.jsonl > trusted_root.jsonl.sha256
+```
+
+Obtain the trusted root through a separately trusted online channel when the Release download itself
+is under investigation. For genuinely offline verification, preserve the Release assets,
+`local-subjects.sha256`, the function and identity variables from above, and the trusted-root files;
+disconnect the verifier from the network; then run:
+
+```bash
+sha256sum -c trusted_root.jsonl.sha256
+LC_ALL=C sha256sum -- "${subjects[@]}" | LC_ALL=C sort -k2 |
+  diff -u local-subjects.sha256 -
+gh attestation verify "$widget" \
+  --bundle attestation.intoto.jsonl \
+  --custom-trusted-root trusted_root.jsonl \
+  "${identity_policy[@]}" \
+  --format json > offline-verification.json
+assert_exact_attestation offline-verification.json
+```
+
+Either procedure fails for zero or multiple matching attestations, missing or extra subjects,
+name/digest disagreement, an unverified or changed local subject byte, an identity-policy mismatch,
+or an invalid signature. A missing bundle, unexpected eighth Release asset, or one-byte change stops
+publication. After the attestation rollout boundary, missing evidence or verifier failure becomes a
+preinspection publication conflict: GitHub is not inspected because its publication evidence has not
+been authenticated. Finalization still inspects the active Cloudflare candidate and restores and
+verifies the captured production baseline. GitHub is re-inspected only when attestation authentication
+succeeds and the publication-inspection path actually runs. Never delete, replace, or hand-repair a
+partial Release; preserve its evidence and use the reviewed reset-and-replay procedure.
 
 ## Retention
 

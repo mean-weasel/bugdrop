@@ -28,6 +28,7 @@ const denyByDefaultJobs = new Map([
   ['ci.yml:test', { contents: 'read' }],
   ['codeql.yml:analyze', { contents: 'read', 'security-events': 'write' }],
   ['dependency-review.yml:dependency-review', { contents: 'read' }],
+  ['deploy.yml:attest-release', { attestations: 'write', contents: 'read', 'id-token': 'write' }],
   ['live-tests.yml:live-tests', { contents: 'read' }],
   ['sync-docs.yml:sync', { contents: 'read' }],
 ]);
@@ -36,6 +37,8 @@ const allowedWrites = new Set([
   'ci.yml:coverage:id-token',
   'codeql.yml:analyze:security-events',
   'deploy.yml:publish-release:contents',
+  'deploy.yml:attest-release:attestations',
+  'deploy.yml:attest-release:id-token',
   'production-heartbeat.yml:incident:issues',
 ]);
 
