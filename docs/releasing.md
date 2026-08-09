@@ -263,10 +263,12 @@ assert_exact_attestation offline-verification.json
 Either procedure fails for zero or multiple matching attestations, missing or extra subjects,
 name/digest disagreement, an unverified or changed local subject byte, an identity-policy mismatch,
 or an invalid signature. A missing bundle, unexpected eighth Release asset, or one-byte change stops
-publication. If attestation fails after deployment,
-publication remains skipped and finalization reinspects GitHub before restoring the captured
-production baseline. Never delete, replace, or hand-repair a partial Release; preserve its evidence
-and use the reviewed reset-and-replay procedure.
+publication. After the attestation rollout boundary, missing evidence or verifier failure becomes a
+preinspection publication conflict: GitHub is not inspected because its publication evidence has not
+been authenticated. Finalization still inspects the active Cloudflare candidate and restores and
+verifies the captured production baseline. GitHub is re-inspected only when attestation authentication
+succeeds and the publication-inspection path actually runs. Never delete, replace, or hand-repair a
+partial Release; preserve its evidence and use the reviewed reset-and-replay procedure.
 
 ## Retention
 

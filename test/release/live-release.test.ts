@@ -9,6 +9,7 @@ import {
   buildExpectedLive,
   captureBaseline,
   deployCandidate,
+  finalizeInspectedRelease,
   finalizeRelease,
   inspectPublication,
 } from '../../scripts/release/live-release.mjs';
@@ -322,6 +323,76 @@ describe('live release production orchestration', () => {
         verify: async () => ({ status: 'verified', targetSha: postExpected.targetSha }),
       })
     ).resolves.toMatchObject({ status: 'rollback-verified' });
+  });
+
+  it('routes finalization verifier failure into verified rollback without GitHub inspection', async () => {
+    const { bundle, attestationBytes } = attestedBundle(
+      disabledV2WorkflowBundle({
+        previousTag: 'v1.55.2',
+        nextTag: 'v1.55.3',
+      })
+    );
+    const adapter = {
+      inspect: vi.fn(() => expect.unreachable('untrusted state is not inspected')),
+    };
+    const verifierFailure = vi.fn(async () => {
+      throw new Error('trusted-root verification failed');
+    });
+    await expect(
+      inspectPublication({
+        bundle,
+        adapter,
+        attestationBytes,
+        controllerSha: bundle.requestPlan.source.controllerSha,
+        repository: 'mean-weasel/bugdrop',
+        verifyAttestation: verifierFailure,
+      })
+    ).resolves.toMatchObject({
+      status: 'conflict',
+      reason: 'attestation-verification-failed',
+      planIdentity: bundle.finalPlan.planIdentity,
+    });
+    const postExpected = {
+      origin: expected.origin,
+      planIdentity: bundle.finalPlan.planIdentity,
+      targetSha: bundle.finalPlan.targetSha,
+    };
+    const cloudflare = client();
+    const baseline = await captureBaseline({
+      client: cloudflare,
+      expected: postExpected,
+      observe: cloudflare.observe,
+    });
+    const deployment = await deployCandidate({
+      authorization: { status: 'mutation-authorized', planIdentity: postExpected.planIdentity },
+      baseline,
+      client: cloudflare,
+      expected: postExpected,
+      observe: cloudflare.observe,
+      verify: async () => ({ status: 'verified', targetSha: postExpected.targetSha }),
+    });
+
+    await expect(
+      finalizeInspectedRelease({
+        bundle,
+        adapter,
+        attestationBytes,
+        controllerSha: bundle.requestPlan.source.controllerSha,
+        repository: 'mean-weasel/bugdrop',
+        verifyAttestation: verifierFailure,
+        baseline,
+        client: cloudflare,
+        deployment,
+        expected: postExpected,
+        observe: cloudflare.observe,
+        verify: async () => ({ status: 'verified', targetSha: postExpected.targetSha }),
+      })
+    ).resolves.toMatchObject({
+      status: 'rollback-verified',
+      rollbackAttempted: true,
+    });
+    expect(adapter.inspect).not.toHaveBeenCalled();
+    expect(cloudflare.rollback).toHaveBeenCalledOnce();
   });
 
   it('requires the exact seventh evidence asset during authoritative finalization inspection', async () => {

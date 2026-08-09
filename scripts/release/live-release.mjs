@@ -381,20 +381,34 @@ export async function inspectPublication({
   repository,
   verifyAttestation,
 }) {
-  const bundle = Buffer.isBuffer(attestationBytes)
-    ? await authenticatedPublicationBundle({
+  const hasAttestation = Buffer.isBuffer(attestationBytes);
+  let bundle;
+  if (hasAttestation) {
+    try {
+      bundle = await authenticatedPublicationBundle({
         rawBundle,
         attestationBytes,
         controllerSha,
         repository,
         ...(verifyAttestation ? { verifyAttestation } : {}),
-      })
-    : hydratedBundle(rawBundle);
+      });
+    } catch {
+      const untrusted = validatePublicationBundle(hydratedBundle(rawBundle), { allowLegacy: true });
+      return {
+        protocol: PROTOCOL,
+        status: 'conflict',
+        reason: 'attestation-verification-failed',
+        planIdentity: untrusted.planIdentity,
+      };
+    }
+  } else {
+    bundle = hydratedBundle(rawBundle);
+  }
   const expected = validatePublicationBundle(bundle, {
-    allowLegacy: !Buffer.isBuffer(attestationBytes),
-    requireAttestation: Buffer.isBuffer(attestationBytes),
+    allowLegacy: !hasAttestation,
+    requireAttestation: hasAttestation,
   });
-  if (!Buffer.isBuffer(attestationBytes) && requiresReleaseAttestation(expected.tag)) {
+  if (!hasAttestation && requiresReleaseAttestation(expected.tag)) {
     return {
       protocol: PROTOCOL,
       status: 'conflict',
@@ -570,6 +584,45 @@ export async function finalizeRelease({
       };
 }
 
+export async function finalizeInspectedRelease({
+  bundle,
+  adapter,
+  attestationBytes,
+  controllerSha,
+  repository,
+  verifyAttestation,
+  baseline,
+  client,
+  deployment,
+  expected,
+  inspectionAttempts,
+  inspectionIntervalMs,
+  observe,
+  sleep,
+  verify,
+}) {
+  const publication = await inspectPublication({
+    bundle,
+    adapter,
+    ...(Buffer.isBuffer(attestationBytes) ? { attestationBytes } : {}),
+    controllerSha,
+    repository,
+    ...(verifyAttestation ? { verifyAttestation } : {}),
+  });
+  return finalizeRelease({
+    baseline,
+    client,
+    deployment,
+    expected,
+    publication,
+    ...(inspectionAttempts !== undefined ? { inspectionAttempts } : {}),
+    ...(inspectionIntervalMs !== undefined ? { inspectionIntervalMs } : {}),
+    ...(observe ? { observe } : {}),
+    ...(sleep ? { sleep } : {}),
+    ...(verify ? { verify } : {}),
+  });
+}
+
 async function jsonFile(path) {
   return JSON.parse(await readFile(resolve(path), 'utf8'));
 }
@@ -644,7 +697,7 @@ async function runCli() {
     });
   } else if (mode === 'finalize') {
     const bundle = await jsonFile(input.bundlePath);
-    const publication = await inspectPublication({
+    output = await finalizeInspectedRelease({
       bundle,
       ...(input.attestationPath
         ? { attestationBytes: await readFile(resolve(input.attestationPath)) }
@@ -655,13 +708,10 @@ async function runCli() {
         repository: input.repository,
         token: process.env.BUGDROP_GITHUB_TOKEN,
       }),
-    });
-    output = await finalizeRelease({
       baseline: await jsonFile(input.baselinePath),
       client: await cloudflareClient(input),
       deployment: await jsonFile(input.deploymentPath),
       expected: await jsonFile(input.expectedPath),
-      publication,
     });
   } else {
     fail('INVALID_CLI', `unsupported mode ${mode ?? '<missing>'}`);
