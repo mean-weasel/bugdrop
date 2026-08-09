@@ -122,6 +122,7 @@ the live page after testing to restore its original widget and `fetch` implement
 ## Documentation
 
 - [Full Documentation](https://bugdrop.dev/docs)
+- [Service Status](https://bugdrop.dev/status)
 - [Built with BugDrop Showcase](https://bugdrop.dev/showcase)
 - [GitHub Marketplace](https://github.com/marketplace/bugdrop-in-app-feedback-to-github-issues)
 - [Configuration](https://bugdrop.dev/docs/configuration)
@@ -163,8 +164,10 @@ the complete path from the browser to Cloudflare, the GitHub App, and the result
 
 This coverage has grown from pre-merge preview validation into scheduled production verification.
 We will keep turning new failure modes and operational lessons into repeatable checks, with public
-workflow history as evidence. Inspect the [merge-queue checks](https://github.com/mean-weasel/bugdrop/actions/workflows/ci.yml)
-and [production heartbeat](https://github.com/mean-weasel/bugdrop/actions/workflows/production-heartbeat.yml),
+workflow history as evidence. View the current component health and incident history on the
+[public service status page](https://bugdrop.dev/status). Inspect the
+[merge-queue checks](https://github.com/mean-weasel/bugdrop/actions/workflows/ci.yml) and
+[production heartbeat](https://github.com/mean-weasel/bugdrop/actions/workflows/production-heartbeat.yml),
 or read the detailed [preview canary](docs/merge-queue-issue-canary.md) and
 [production heartbeat](docs/production-heartbeat.md) designs.
 
