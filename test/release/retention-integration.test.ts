@@ -146,6 +146,17 @@ async function vertical({ postBoundaryLegacy = false } = {}) {
   });
   const marker = buildPublicationMarker(bundleN.finalPlan);
   const legacySha = '7'.repeat(40);
+  const tagObjectSha = '8'.repeat(40);
+  const legacyTagObjectSha = '9'.repeat(40);
+  const postBoundaryMarker = {
+    schema: 'bugdrop.publication-marker/v1',
+    protocol: 'release-plan/v1',
+    planIdentity: `sha256:${'7'.repeat(64)}`,
+    requestIdentity: `sha256:${'8'.repeat(64)}`,
+    contentIdentity: `sha256:${'9'.repeat(64)}`,
+    targetSha: legacySha,
+    tag: 'v1.55.1',
+  };
   const assetEntries = Object.entries(bundleN.assets).map(([name, bytes], index) => ({
     id: 1000 + index,
     name,
@@ -179,7 +190,7 @@ async function vertical({ postBoundaryLegacy = false } = {}) {
                   prerelease: false,
                   published_at: '2026-08-01T12:00:00Z',
                   html_url: 'https://github.test/releases/56',
-                  body: '',
+                  body: `<!-- bugdrop-publication ${Buffer.from(canonicalize(postBoundaryMarker)).toString('base64url')} -->`,
                   assets: [],
                 },
               ]
@@ -190,11 +201,32 @@ async function vertical({ postBoundaryLegacy = false } = {}) {
     if (path === `/repos/${REPOSITORY}/git/matching-refs/tags/v?per_page=100&page=1`)
       return {
         data: [
-          { ref: 'refs/tags/v1.55.0', object: { type: 'commit', sha: N_SHA } },
+          { ref: 'refs/tags/v1.55.0', object: { type: 'tag', sha: tagObjectSha } },
           ...(postBoundaryLegacy
-            ? [{ ref: 'refs/tags/v1.55.1', object: { type: 'commit', sha: legacySha } }]
+            ? [
+                {
+                  ref: 'refs/tags/v1.55.1',
+                  object: { type: 'tag', sha: legacyTagObjectSha },
+                },
+              ]
             : []),
         ],
+        hasNext: false,
+      };
+    if (path === `/repos/${REPOSITORY}/git/tags/${tagObjectSha}`)
+      return {
+        data: {
+          object: { type: 'commit', sha: N_SHA },
+          message: `BugDrop v1.55.0\n\n${canonicalize(marker)}`,
+        },
+        hasNext: false,
+      };
+    if (path === `/repos/${REPOSITORY}/git/tags/${legacyTagObjectSha}`)
+      return {
+        data: {
+          object: { type: 'commit', sha: legacySha },
+          message: `BugDrop v1.55.1\n\n${canonicalize(postBoundaryMarker)}`,
+        },
         hasNext: false,
       };
     if (path === `/repos/${REPOSITORY}/compare/${N_SHA}...${N1_SHA}`)

@@ -34,6 +34,30 @@ const SHA = {
 };
 const REPOSITORY = 'mean-weasel/bugdrop';
 
+function releaseBody(marker: unknown) {
+  return `<!-- bugdrop-publication ${Buffer.from(canonicalize(marker)).toString('base64url')} -->`;
+}
+
+function withAttestation(bundle: ReturnType<typeof disabledV2WorkflowBundle>) {
+  const evidence = Buffer.from('{"signed":"portable"}\n');
+  const attestation = {
+    protocol: 'bugdrop.release-attestation/v1',
+    status: 'verified',
+    asset: 'attestation.intoto.jsonl',
+    bundleSha256: createHash('sha256').update(evidence).digest('hex'),
+    policy: attestationPolicy({
+      repository: REPOSITORY,
+      controllerSha: bundle.requestPlan.source.controllerSha,
+    }),
+    subjects: attestationSubjects(bundle),
+  };
+  return {
+    ...bundle,
+    assets: { ...bundle.assets, 'attestation.intoto.jsonl': evidence },
+    attestation,
+  };
+}
+
 function transportFor(entries: Record<string, unknown>) {
   return {
     request: vi.fn(async (path: string) => {
@@ -79,14 +103,28 @@ function observationEntries() {
   };
 }
 
-function publishedBundleRecord(bundle: ReturnType<typeof disabledV2WorkflowBundle>, index: number) {
+function publishedBundleRecord(
+  bundle: ReturnType<typeof disabledV2WorkflowBundle>,
+  index: number,
+  immutableMarker = true,
+  tagMarkerMode: 'valid' | 'missing' | 'malformed' = 'valid',
+  markerTransform: (marker: unknown) => unknown = marker => marker
+) {
   const attested = bundle as ReturnType<typeof disabledV2WorkflowBundle> & {
     attestation?: Record<string, unknown>;
   };
-  const marker = attested.attestation
-    ? validatePublicationBundle(attested, { requireAttestation: true }).marker
-    : buildPublicationMarker(bundle.finalPlan);
+  const marker = markerTransform(
+    attested.attestation
+      ? validatePublicationBundle(attested, { requireAttestation: true }).marker
+      : buildPublicationMarker(bundle.finalPlan)
+  );
   const authorityIndex = Number.parseInt(bundle.finalPlan.targetSha[0], 16) || index;
+  const tagObjectSha = authorityIndex.toString(16).slice(-1).repeat(40);
+  const tagMessage = {
+    valid: `BugDrop ${bundle.finalPlan.tag}\n\n${canonicalize(marker)}`,
+    missing: `BugDrop ${bundle.finalPlan.tag}`,
+    malformed: `BugDrop ${bundle.finalPlan.tag}\n\n{not-json`,
+  }[tagMarkerMode];
   return {
     release: {
       id: 100 + authorityIndex,
@@ -95,7 +133,7 @@ function publishedBundleRecord(bundle: ReturnType<typeof disabledV2WorkflowBundl
       prerelease: false,
       published_at: bundle.requestPlan.attestation.candidateCommitTimestamp,
       html_url: `https://github.test/releases/${bundle.finalPlan.tag}`,
-      body: `<!-- bugdrop-publication ${Buffer.from(canonicalize(marker)).toString('base64url')} -->`,
+      body: releaseBody(marker),
       assets: Object.keys(bundle.assets).map((name, assetIndex) => ({
         id: authorityIndex * 100 + assetIndex + 1,
         name,
@@ -106,8 +144,22 @@ function publishedBundleRecord(bundle: ReturnType<typeof disabledV2WorkflowBundl
     },
     ref: {
       ref: `refs/tags/${bundle.finalPlan.tag}`,
-      object: { type: 'commit', sha: bundle.finalPlan.targetSha },
+      object: immutableMarker
+        ? { type: 'tag', sha: tagObjectSha }
+        : { type: 'commit', sha: bundle.finalPlan.targetSha },
     },
+    tagObject: immutableMarker
+      ? {
+          path: `/repos/${REPOSITORY}/git/tags/${tagObjectSha}`,
+          response: {
+            data: {
+              object: { type: 'commit', sha: bundle.finalPlan.targetSha },
+              message: tagMessage,
+            },
+            hasNext: false,
+          },
+        }
+      : null,
     bundle,
   };
 }
@@ -120,6 +172,10 @@ async function planFromPublishedBundles({
   reverseAssets = false,
   downloadDelay = 0,
   releaseTransform = (release: Record<string, unknown>) => release,
+  immutableTagMarkers = true,
+  tagMarkerMode = 'valid',
+  markerTransform = (marker: unknown) => marker,
+  requestBytes,
   verifyAttestation,
 }: {
   bundles: ReturnType<typeof disabledV2WorkflowBundle>[];
@@ -129,9 +185,15 @@ async function planFromPublishedBundles({
   reverseAssets?: boolean;
   downloadDelay?: number;
   releaseTransform?: (release: Record<string, unknown>, index: number) => Record<string, unknown>;
+  immutableTagMarkers?: boolean;
+  tagMarkerMode?: 'valid' | 'missing' | 'malformed';
+  markerTransform?: (marker: unknown) => unknown;
+  requestBytes?: (_url: string, options: { assetId: string }) => Promise<Buffer>;
   verifyAttestation?: (input: unknown) => Promise<unknown>;
 }) {
-  const records = bundles.map((bundle, index) => publishedBundleRecord(bundle, index + 1));
+  const records = bundles.map((bundle, index) =>
+    publishedBundleRecord(bundle, index + 1, immutableTagMarkers, tagMarkerMode, markerTransform)
+  );
   records.forEach((record, index) => {
     record.release = releaseTransform(record.release, index) as typeof record.release;
   });
@@ -169,6 +231,11 @@ async function planFromPublishedBundles({
       hasNext: false,
     },
     ...Object.fromEntries(
+      records
+        .filter(record => record.tagObject)
+        .map(record => [record.tagObject!.path, record.tagObject!.response])
+    ),
+    ...Object.fromEntries(
       [
         ...records.map(record => record.bundle.finalPlan.targetSha),
         ...legacy.map(x => x.targetSha),
@@ -198,12 +265,14 @@ async function planFromPublishedBundles({
     },
   });
   Object.assign(transport, {
-    requestBytes: vi.fn(async (_url: string, options: { assetId: string }) => {
-      if (downloadDelay) await new Promise(resolve => setTimeout(resolve, downloadDelay));
-      const bytes = assetBytes.get(options.assetId);
-      if (!bytes) throw new Error(`missing asset ${options.assetId}`);
-      return bytes;
-    }),
+    requestBytes:
+      requestBytes ??
+      vi.fn(async (_url: string, options: { assetId: string }) => {
+        if (downloadDelay) await new Promise(resolve => setTimeout(resolve, downloadDelay));
+        const bytes = assetBytes.get(options.assetId);
+        if (!bytes) throw new Error(`missing asset ${options.assetId}`);
+        return bytes;
+      }),
   });
   return createRequestPlanFromGithub({
     transport,
@@ -680,6 +749,223 @@ describe('GitHub release-state observation', () => {
     ).rejects.toBeInstanceOf(GithubAdapterError);
   });
 
+  it('rejects deletion plus editable body downgrade against the immutable tag marker', async () => {
+    const original = disabledV2WorkflowBundle();
+    const attested = withAttestation(original);
+    const verifyAttestation = vi.fn(async () => attested.attestation);
+    const historicalBody = releaseBody(buildPublicationMarker(original.finalPlan));
+    const deleteEvidenceAndRewriteBody = (release: Record<string, unknown>) => ({
+      ...release,
+      body: historicalBody,
+      assets: (release.assets as Array<{ name: string }>).filter(
+        asset => asset.name !== 'attestation.intoto.jsonl'
+      ),
+    });
+
+    for (const candidateSha of [original.finalPlan.targetSha, '9'.repeat(40)]) {
+      await expect(
+        planFromPublishedBundles({
+          bundles: [attested],
+          candidateSha,
+          immutableTagMarkers: true,
+          releaseTransform: deleteEvidenceAndRewriteBody,
+          verifyAttestation,
+        })
+      ).rejects.toMatchObject({ code: 'PUBLISHED_RELEASE_CONFLICT' });
+    }
+    expect(verifyAttestation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'completed-plan',
+      (bundle: ReturnType<typeof disabledV2WorkflowBundle>) => bundle.finalPlan.targetSha,
+    ],
+    ['N+1', () => '9'.repeat(40)],
+  ])(
+    'rejects evidence deletion plus body-marker removal on the %s path',
+    async (_path, candidateShaFor) => {
+      const original = disabledV2WorkflowBundle();
+      const attested = withAttestation(original);
+      const verifyAttestation = vi.fn(async () => attested.attestation);
+
+      await expect(
+        planFromPublishedBundles({
+          bundles: [attested],
+          candidateSha: candidateShaFor(original),
+          immutableTagMarkers: true,
+          releaseTransform: release => ({
+            ...release,
+            body: '',
+            assets: (release.assets as Array<{ name: string }>).filter(
+              asset => asset.name !== 'attestation.intoto.jsonl'
+            ),
+          }),
+          verifyAttestation,
+        })
+      ).rejects.toMatchObject({ code: 'PUBLISHED_RELEASE_CONFLICT' });
+      expect(verifyAttestation).not.toHaveBeenCalled();
+    }
+  );
+
+  it('rejects lightweight, markerless, and malformed tag replacements after body downgrade', async () => {
+    const original = disabledV2WorkflowBundle();
+    const attested = withAttestation(original);
+    const historicalBody = releaseBody(buildPublicationMarker(original.finalPlan));
+    const downgradedRelease = (release: Record<string, unknown>) => ({
+      ...release,
+      body: historicalBody,
+      assets: (release.assets as Array<{ name: string }>).filter(
+        asset => asset.name !== 'attestation.intoto.jsonl'
+      ),
+    });
+    const variants = [
+      { immutableTagMarkers: false as const, tagMarkerMode: 'valid' as const },
+      { immutableTagMarkers: true as const, tagMarkerMode: 'missing' as const },
+      { immutableTagMarkers: true as const, tagMarkerMode: 'malformed' as const },
+    ];
+
+    for (const variant of variants) {
+      for (const candidateSha of [original.finalPlan.targetSha, '9'.repeat(40)]) {
+        await expect(
+          planFromPublishedBundles({
+            bundles: [attested],
+            candidateSha,
+            releaseTransform: downgradedRelease,
+            ...variant,
+          })
+        ).rejects.toMatchObject({ code: 'PUBLISHED_RELEASE_CONFLICT' });
+      }
+    }
+  });
+
+  it.each([
+    [
+      'completed-plan',
+      (bundle: ReturnType<typeof disabledV2WorkflowBundle>) => bundle.finalPlan.targetSha,
+    ],
+    ['N+1', () => '9'.repeat(40)],
+  ])(
+    'rejects protocol-era marker deletion plus tag replacement before downloads on the %s path',
+    async (_path, candidateShaFor) => {
+      const original = disabledV2WorkflowBundle();
+      const attested = withAttestation(original);
+
+      for (const variant of [
+        { immutableTagMarkers: false as const, tagMarkerMode: 'valid' as const },
+        { immutableTagMarkers: true as const, tagMarkerMode: 'missing' as const },
+      ]) {
+        const requestBytes = vi.fn(async () => expect.unreachable('must reject before downloads'));
+        await expect(
+          planFromPublishedBundles({
+            bundles: [attested],
+            candidateSha: candidateShaFor(original),
+            releaseTransform: release => ({
+              ...release,
+              body: '',
+              assets: (release.assets as Array<{ name: string }>).filter(
+                asset => asset.name !== 'attestation.intoto.jsonl'
+              ),
+            }),
+            requestBytes,
+            ...variant,
+          })
+        ).rejects.toMatchObject({ code: 'PUBLISHED_RELEASE_CONFLICT' });
+        expect(requestBytes).not.toHaveBeenCalled();
+      }
+    }
+  );
+
+  it.each([
+    [
+      'completed-plan',
+      (bundle: ReturnType<typeof disabledV2WorkflowBundle>) => bundle.finalPlan.targetSha,
+    ],
+    ['N+1', () => '9'.repeat(40)],
+  ])(
+    'rejects equal malformed markers before classification on the %s path',
+    async (_path, candidateShaFor) => {
+      const bundle = disabledV2WorkflowBundle();
+      const invalidMarkers: Array<[string, (marker: Record<string, unknown>) => unknown]> = [
+        ['scalar', () => 'release-plan/v1'],
+        ['array', () => []],
+        ['empty object', () => ({})],
+        ['wrong protocol', marker => ({ ...marker, protocol: 'release-plan/v3' })],
+        ['wrong schema', marker => ({ ...marker, schema: 'bugdrop.publication-marker/v9' })],
+        ['wrong tag', marker => ({ ...marker, tag: 'v9.9.9' })],
+        ['wrong target', marker => ({ ...marker, targetSha: '0'.repeat(40) })],
+        ['malformed identity', marker => ({ ...marker, planIdentity: 'sha256:bad' })],
+        [
+          'malformed digest',
+          marker => ({ ...marker, contentIdentity: `sha512:${'0'.repeat(64)}` }),
+        ],
+        ['invalid requiredEvidence', marker => ({ ...marker, requiredEvidence: [] })],
+        ['unexpected key', marker => ({ ...marker, legacy: true })],
+      ];
+
+      for (const [name, markerTransform] of invalidMarkers) {
+        const requestBytes = vi.fn(async () =>
+          expect.unreachable(`${name} must reject before downloads`)
+        );
+        await expect(
+          planFromPublishedBundles({
+            bundles: [bundle],
+            candidateSha: candidateShaFor(bundle),
+            markerTransform: markerTransform as (marker: unknown) => unknown,
+            requestBytes,
+          }),
+          name
+        ).rejects.toMatchObject({ code: 'PUBLISHED_RELEASE_CONFLICT' });
+        expect(requestBytes, name).not.toHaveBeenCalled();
+      }
+    }
+  );
+
+  it('accepts legitimate immutable historical and attested markers but rejects disagreement', async () => {
+    const historical = disabledV2WorkflowBundle();
+    const attested = withAttestation(historical);
+    const verifyAttestation = vi.fn(async () => attested.attestation);
+
+    await expect(
+      planFromPublishedBundles({ bundles: [historical], immutableTagMarkers: true })
+    ).resolves.toMatchObject({ request: { previousTag: historical.finalPlan.tag } });
+    await expect(
+      planFromPublishedBundles({
+        bundles: [historical],
+        immutableTagMarkers: true,
+        markerTransform: marker => ({
+          ...(marker as Record<string, unknown>),
+          schema: 'bugdrop.publication-marker/v1',
+          protocol: 'release-plan/v1',
+        }),
+      })
+    ).resolves.toMatchObject({ request: { previousTag: historical.finalPlan.tag } });
+    await expect(
+      planFromPublishedBundles({
+        bundles: [historical],
+        immutableTagMarkers: false,
+        releaseTransform: release => ({ ...release, body: '' }),
+      })
+    ).rejects.toMatchObject({ code: 'PUBLISHED_RELEASE_CONFLICT' });
+    await expect(
+      planFromPublishedBundles({
+        bundles: [attested],
+        immutableTagMarkers: true,
+        verifyAttestation,
+      })
+    ).resolves.toMatchObject({ request: { previousTag: historical.finalPlan.tag } });
+    await expect(
+      planFromPublishedBundles({
+        bundles: [historical],
+        immutableTagMarkers: true,
+        releaseTransform: release => ({
+          ...release,
+          body: releaseBody({ ...buildPublicationMarker(historical.finalPlan), mismatch: true }),
+        }),
+      })
+    ).rejects.toMatchObject({ code: 'PUBLISHED_RELEASE_CONFLICT' });
+  });
+
   it('authenticates retention mode before charging an exact asset to cumulative history', async () => {
     const bundle = disabledV2WorkflowBundle();
     const exactName = `widget.${bundle.finalPlan.tag}.js`;
@@ -870,6 +1156,7 @@ describe('GitHub release-state observation', () => {
     expect(state.published).toEqual([
       expect.objectContaining({
         tag: 'v1.55.0',
+        marker: null,
         targetSha: SHA.release,
         resolvedTagSha: SHA.release,
         relationToTarget: 'ancestor',
@@ -990,11 +1277,16 @@ describe('authenticated disabled v2 frontier history', () => {
   });
 
   it.each([
-    ['disabled', () => second(), []],
-    ['legacy', () => null, [{ tag: 'v1.55.1', targetSha: '2'.repeat(40) }]],
+    ['disabled', () => second(), [], /RETENTION_HISTORY_INCOMPLETE/],
+    [
+      'legacy',
+      () => null,
+      [{ tag: 'v1.55.1', targetSha: '2'.repeat(40) }],
+      /PUBLISHED_RELEASE_CONFLICT/,
+    ],
   ])(
     'rejects %s history at or above an authenticated active boundary',
-    async (_kind, later, legacy) => {
+    async (_kind, later, legacy, expected) => {
       const active = bootstrapV2WorkflowBundle({
         previousTag: 'v1.54.0',
         nextTag: 'v1.55.0',
@@ -1008,7 +1300,7 @@ describe('authenticated disabled v2 frontier history', () => {
           bundles: laterBundle ? [active, laterBundle] : [active],
           legacy,
         })
-      ).rejects.toThrow(/RETENTION_HISTORY_INCOMPLETE/);
+      ).rejects.toThrow(expected);
     }
   );
 

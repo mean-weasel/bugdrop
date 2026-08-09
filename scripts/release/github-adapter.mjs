@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { canonicalize, compareUtf8 } from './canonical-json.mjs';
 import { observeGitRange } from './git-observer.mjs';
 import {
+  RELEASE_PROTOCOL,
+  RELEASE_PROTOCOL_V2,
   buildPublicationMarker,
   buildReleaseInventory,
   buildRequestPlan,
@@ -27,6 +29,8 @@ const API_VERSION = '2022-11-28';
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const TAG_PATTERN = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+const IDENTITY_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const MARKERLESS_HISTORY_MAX_TAG = 'v1.55.0';
 const ASSET_TIMEOUT_MS = 30_000;
 const sha256Bytes = bytes => createHash('sha256').update(bytes).digest('hex');
 
@@ -55,6 +59,9 @@ function assertInput(repository, targetSha) {
 }
 
 function compareReleaseTags(left, right) {
+  if (!TAG_PATTERN.test(left?.tag ?? '') || !TAG_PATTERN.test(right?.tag ?? '')) {
+    fail('INVALID_STABLE_TAG', 'release tag comparison requires stable SemVer tags');
+  }
   const a = left.tag.slice(1).split('.').map(BigInt);
   const b = right.tag.slice(1).split('.').map(BigInt);
   for (let index = 0; index < 3; index += 1) {
@@ -241,6 +248,68 @@ function decodeMarker(body) {
   } catch {
     fail('INVALID_MARKER', 'release body identity marker is invalid');
   }
+}
+
+function validatePublicationMarker(marker, ref) {
+  if (!marker || typeof marker !== 'object' || Array.isArray(marker)) {
+    fail('PUBLISHED_RELEASE_CONFLICT', 'publication marker must be a canonical object');
+  }
+  if (![RELEASE_PROTOCOL, RELEASE_PROTOCOL_V2].includes(marker.protocol)) {
+    fail('PUBLISHED_RELEASE_CONFLICT', 'publication marker protocol is unsupported');
+  }
+  let expected;
+  try {
+    expected = buildPublicationMarker(marker);
+  } catch {
+    fail('PUBLISHED_RELEASE_CONFLICT', 'publication marker fields are invalid');
+  }
+  if (Object.hasOwn(marker, 'requiredEvidence')) {
+    if (marker.protocol !== RELEASE_PROTOCOL_V2) {
+      fail('PUBLISHED_RELEASE_CONFLICT', 'only v2 publication markers may require evidence');
+    }
+    expected = { ...expected, requiredEvidence: [ATTESTATION_ASSET] };
+  }
+  if (
+    canonicalize(marker) !== canonicalize(expected) ||
+    !IDENTITY_PATTERN.test(marker.planIdentity ?? '') ||
+    !IDENTITY_PATTERN.test(marker.requestIdentity ?? '') ||
+    !IDENTITY_PATTERN.test(marker.contentIdentity ?? '') ||
+    !SHA_PATTERN.test(marker.targetSha ?? '') ||
+    !TAG_PATTERN.test(marker.tag ?? '') ||
+    marker.targetSha !== ref.sha ||
+    marker.tag !== ref.tag
+  ) {
+    fail(
+      'PUBLISHED_RELEASE_CONFLICT',
+      'publication marker schema, identities, evidence, tag, or target are invalid'
+    );
+  }
+  return expected;
+}
+
+function releaseMarker(ref, body) {
+  const bodyMarker = decodeMarker(body);
+  const tagMarker = ref.kind === 'annotated' ? ref.marker : null;
+  if (
+    bodyMarker === null &&
+    tagMarker === null &&
+    compareReleaseTags(ref, { tag: MARKERLESS_HISTORY_MAX_TAG }) <= 0
+  ) {
+    return null;
+  }
+  if (bodyMarker === null || tagMarker === null) {
+    fail(
+      'PUBLISHED_RELEASE_CONFLICT',
+      'Release body and immutable annotated-tag markers must either both be absent or both be present'
+    );
+  }
+  if (canonicalize(bodyMarker) !== canonicalize(tagMarker)) {
+    fail(
+      'PUBLISHED_RELEASE_CONFLICT',
+      'Release body marker differs from the immutable annotated-tag marker'
+    );
+  }
+  return validatePublicationMarker(tagMarker, ref);
 }
 
 function canonicalAsset(assets, name) {
@@ -586,7 +655,7 @@ export async function observeGithubState({ transport, repository, targetSha }) {
         downloadUrl: String(asset?.browser_download_url ?? ''),
         size: Number(asset?.size),
       })),
-      marker: decodeMarker(release.body),
+      marker: releaseMarker(ref, release.body),
       relationToTarget:
         published && release.prerelease !== true
           ? await relationToTarget(transport, repository, ref.sha, targetSha)

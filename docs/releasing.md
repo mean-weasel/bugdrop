@@ -184,50 +184,86 @@ has `contents: write` but no OIDC or attestation authority, downloads that exact
 verification, and publishes the same bytes. Dry runs and authenticated completed-plan no-ops cannot
 reach the attestation job.
 
-To verify a downloaded release, first run `sha256sum -c checksums.sha256`. Read the immutable
-controller SHA from `request-plan.json` at `.source.controllerSha`. While still online, acquire the
-current trusted roots and preserve their checksum with the downloaded Release evidence:
+Run the following from a directory containing the seven downloaded Release assets. It hashes every
+local subject byte (including `checksums.sha256` itself), verifies the checksum manifest, applies the
+complete identity policy, requires exactly one matching signed statement, and compares its exact six
+name/digest pairs with the local files:
 
 ```bash
+set -euo pipefail
+
+controller_sha=$(jq -er '.source.controllerSha | select(test("^[0-9a-f]{40}$"))' request-plan.json)
+tag=$(jq -er '.tag | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))' final-release-plan.json)
+widget="widget.${tag}.js"
+subjects=(
+  checksums.sha256
+  final-release-plan.json
+  release-content.json
+  request-plan.json
+  versions.json
+  "$widget"
+)
+for subject in "${subjects[@]}"; do test -f "$subject"; done
+sha256sum -c checksums.sha256
+LC_ALL=C sha256sum -- "${subjects[@]}" | LC_ALL=C sort -k2 > local-subjects.sha256
+
+identity_policy=(
+  --repo mean-weasel/bugdrop
+  --signer-workflow mean-weasel/bugdrop/.github/workflows/deploy.yml
+  --signer-digest "$controller_sha"
+  --source-digest "$controller_sha"
+  --source-ref refs/heads/main
+  --cert-oidc-issuer https://token.actions.githubusercontent.com
+  --deny-self-hosted-runners
+)
+
+assert_exact_attestation() {
+  local result=$1
+  jq -e '
+    type == "array" and length == 1 and
+    .[0].verificationResult.statement._type == "https://in-toto.io/Statement/v1" and
+    .[0].verificationResult.statement.predicateType == "https://slsa.dev/provenance/v1" and
+    (.[0].verificationResult.statement.subject | type == "array" and length == 6) and
+    all(.[0].verificationResult.statement.subject[];
+      (.name | type == "string") and
+      (.digest | type == "object" and keys == ["sha256"]) and
+      (.digest.sha256 | test("^[0-9a-f]{64}$")))
+  ' "$result" >/dev/null
+  jq -r '.[0].verificationResult.statement.subject[] |
+    "\(.digest.sha256)  \(.name)"' "$result" |
+    LC_ALL=C sort -k2 > "${result}.subjects.sha256"
+  diff -u local-subjects.sha256 "${result}.subjects.sha256"
+}
+
+gh attestation verify "$widget" "${identity_policy[@]}" --format json > online-verification.json
+assert_exact_attestation online-verification.json
+
+# Still online: acquire current roots, then preserve these files through a trusted channel.
 gh attestation trusted-root > trusted_root.jsonl
 sha256sum trusted_root.jsonl > trusted_root.jsonl.sha256
 ```
 
 Obtain the trusted root through a separately trusted online channel when the Release download itself
-is under investigation. After preserving it, verify each of the six subjects online:
-
-```bash
-gh attestation verify <subject> \
-  --repo mean-weasel/bugdrop \
-  --signer-workflow mean-weasel/bugdrop/.github/workflows/deploy.yml \
-  --signer-digest <controller-sha> \
-  --source-digest <controller-sha> \
-  --source-ref refs/heads/main \
-  --cert-oidc-issuer https://token.actions.githubusercontent.com \
-  --deny-self-hosted-runners
-
-```
-
-For genuinely offline verification, disconnect the verifier from the network, check the preserved
-trusted-root checksum, and verify the portable bundle without an API lookup:
+is under investigation. For genuinely offline verification, preserve the Release assets,
+`local-subjects.sha256`, the function and identity variables from above, and the trusted-root files;
+disconnect the verifier from the network; then run:
 
 ```bash
 sha256sum -c trusted_root.jsonl.sha256
-gh attestation verify <subject> \
+LC_ALL=C sha256sum -- "${subjects[@]}" | LC_ALL=C sort -k2 |
+  diff -u local-subjects.sha256 -
+gh attestation verify "$widget" \
   --bundle attestation.intoto.jsonl \
   --custom-trusted-root trusted_root.jsonl \
-  --repo mean-weasel/bugdrop \
-  --signer-workflow mean-weasel/bugdrop/.github/workflows/deploy.yml \
-  --signer-digest <controller-sha> \
-  --source-digest <controller-sha> \
-  --source-ref refs/heads/main \
-  --cert-oidc-issuer https://token.actions.githubusercontent.com \
-  --deny-self-hosted-runners
+  "${identity_policy[@]}" \
+  --format json > offline-verification.json
+assert_exact_attestation offline-verification.json
 ```
 
-Verification must return one unambiguous SLSA statement whose subject set is exactly those six
-files. A missing bundle, missing or extra subject, identity-policy mismatch, unexpected eighth
-Release asset, or one-byte change stops publication. If attestation fails after deployment,
+Either procedure fails for zero or multiple matching attestations, missing or extra subjects,
+name/digest disagreement, an unverified or changed local subject byte, an identity-policy mismatch,
+or an invalid signature. A missing bundle, unexpected eighth Release asset, or one-byte change stops
+publication. If attestation fails after deployment,
 publication remains skipped and finalization reinspects GitHub before restoring the captured
 production baseline. Never delete, replace, or hand-repair a partial Release; preserve its evidence
 and use the reviewed reset-and-replay procedure.
