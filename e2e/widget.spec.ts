@@ -2830,6 +2830,152 @@ test.describe('JavaScript API', () => {
     }
   });
 
+  test('simultaneous inline variants isolate answers, submission IDs, reset, disposal, and legacy state', async ({
+    page,
+  }) => {
+    const submitted: Record<string, unknown>[] = [];
+    await page.route('**/api/check**', route =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{"installed":true}' })
+    );
+    await page.route('**/api/feedback', route => {
+      submitted.push(route.request().postDataJSON() as Record<string, unknown>);
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          issueNumber: 92,
+          issueUrl: 'https://github.com/mean-weasel/bugdrop-widget-test/issues/92',
+          isPublic: false,
+        }),
+      });
+    });
+    await page.goto('/test/');
+    const legacyHost = page.locator('#bugdrop-host');
+    await legacyHost.locator('css=.bd-trigger').waitFor();
+
+    const identities = await page.evaluate(() => {
+      const firstSlot = document.createElement('div');
+      firstSlot.id = 'simultaneous-first';
+      const secondSlot = document.createElement('div');
+      secondSlot.id = 'simultaneous-second';
+      document.body.append(firstSlot, secondSlot);
+      const handle = window.BugDrop!.registerVariant({
+        id: 'simultaneous-inline-poll',
+        presentation: { kind: 'inline' },
+        content: { title: 'Pick a provider', submitLabel: 'Submit vote' },
+        fields: [
+          {
+            id: 'choice',
+            type: 'singleChoice',
+            label: 'Provider',
+            required: true,
+            options: [
+              { value: 'one', label: 'One' },
+              { value: 'two', label: 'Two' },
+            ],
+          },
+          { id: 'detail', type: 'shortText', label: 'Detail' },
+        ],
+        issue: {
+          title: 'Provider {{choice}}',
+          sections: [
+            { heading: 'Choice', field: 'choice', format: 'choice' },
+            { heading: 'Detail', field: 'detail', omitWhenEmpty: true },
+          ],
+        },
+      });
+      const first = handle.mount(firstSlot, { initialAnswers: { choice: 'one' } });
+      const second = handle.mount(secondSlot, { initialAnswers: { choice: 'two' } });
+      const firstHost = firstSlot.querySelector<HTMLElement>('[data-bugdrop-owned]')!;
+      const secondHost = secondSlot.querySelector<HTMLElement>('[data-bugdrop-owned]')!;
+      const firstName =
+        firstHost.shadowRoot!.querySelector<HTMLInputElement>('input[type="radio"]')!.name;
+      const secondName =
+        secondHost.shadowRoot!.querySelector<HTMLInputElement>('input[type="radio"]')!.name;
+      (
+        window as Window & {
+          __simultaneous?: {
+            first: { reset(): void; unmount(): void };
+            second: { unmount(): void };
+          };
+        }
+      ).__simultaneous = { first, second };
+      return { firstName, secondName, firstId: first.instanceId, secondId: second.instanceId };
+    });
+
+    expect(identities.firstId).not.toBe(identities.secondId);
+    expect(identities.firstName).not.toBe(identities.secondName);
+    const first = page.locator('#simultaneous-first > [data-bugdrop-owned]');
+    const second = page.locator('#simultaneous-second > [data-bugdrop-owned]');
+    await first.getByRole('textbox', { name: 'Detail' }).fill('First answer');
+    await second.getByRole('textbox', { name: 'Detail' }).fill('Second answer');
+    await first.getByRole('button', { name: 'Submit vote' }).click();
+    await second.getByRole('button', { name: 'Submit vote' }).click();
+    await expect(first.getByRole('heading', { name: 'Thanks for your feedback!' })).toBeVisible();
+    await expect(second.getByRole('heading', { name: 'Thanks for your feedback!' })).toBeVisible();
+    expect(submitted).toHaveLength(2);
+    expect(submitted[0]).toMatchObject({
+      issue: {
+        title: 'Provider one',
+        sections: [
+          { heading: 'Choice', value: 'One', format: 'text' },
+          { heading: 'Detail', value: 'First answer', format: 'text' },
+        ],
+      },
+    });
+    expect(submitted[1]).toMatchObject({
+      issue: {
+        title: 'Provider two',
+        sections: [
+          { heading: 'Choice', value: 'Two', format: 'text' },
+          { heading: 'Detail', value: 'Second answer', format: 'text' },
+        ],
+      },
+    });
+    expect(submitted[0]?.submissionId).not.toBe(submitted[1]?.submissionId);
+
+    await page.evaluate(() =>
+      (
+        window as Window & {
+          __simultaneous?: { first: { reset(): void } };
+        }
+      ).__simultaneous?.first.reset()
+    );
+    await expect(first.getByRole('radio', { name: 'One' })).toBeChecked();
+    await expect(first.getByRole('textbox', { name: 'Detail' })).toHaveValue('');
+    await expect(second.getByRole('heading', { name: 'Thanks for your feedback!' })).toBeVisible();
+    await first.getByRole('button', { name: 'Submit vote' }).click();
+    expect(submitted).toHaveLength(3);
+    expect(submitted[2]?.submissionId).not.toBe(submitted[0]?.submissionId);
+
+    await page.evaluate(() =>
+      (
+        window as Window & {
+          __simultaneous?: { first: { unmount(): void } };
+        }
+      ).__simultaneous?.first.unmount()
+    );
+    await expect(first).toHaveCount(0);
+    await expect(second).toHaveCount(1);
+
+    await page.evaluate(() => window.BugDrop!.open());
+    await expect(legacyHost.locator('css=.bd-modal')).toBeVisible();
+    await expect(second).toHaveCount(1);
+    await page.evaluate(() => window.BugDrop!.close());
+    await expect(legacyHost.locator('css=.bd-modal')).not.toBeVisible();
+    await page.evaluate(() =>
+      (
+        window as Window & {
+          __simultaneous?: { second: { unmount(): void } };
+        }
+      ).__simultaneous?.second.unmount()
+    );
+    await expect(second).toHaveCount(0);
+    await expect(page.locator('[data-bugdrop-owned]')).toHaveCount(0);
+    await expect(legacyHost.locator('css=.bd-trigger')).toBeVisible();
+  });
+
   test('rejects failed and noncanonical structured submission responses', async ({ page }) => {
     await page.route('**/api/feedback', route => {
       const payload = route.request().postDataJSON() as { submissionId?: string };

@@ -55,7 +55,7 @@ const VARIANT_CSS = `
   *, *::before, *::after { box-sizing: border-box; }
 
   .bdv-root {
-    --bdv-bg: #ffffff;
+    --bdv-bg: #fff;
     --bdv-bg-muted: #f8fafc;
     --bdv-text: #0f172a;
     --bdv-text-muted: #64748b;
@@ -87,7 +87,7 @@ const VARIANT_CSS = `
     background: var(--bdv-bg);
     color: var(--bdv-text);
     padding: 24px;
-    box-shadow: 0 8px 28px rgb(15 23 42 / 10%);
+    box-shadow: 0 8px 28px #0f172a1a;
   }
 
   .bdv-root[data-density="compact"] .bdv-surface { padding: 16px; }
@@ -105,8 +105,8 @@ const VARIANT_CSS = `
   .bdv-field { min-width: 0; }
   .bdv-label { display: block; margin-bottom: 6px; font-weight: 650; }
   .bdv-required { color: var(--bdv-danger); }
-  .bdv-help { margin: -2px 0 7px; color: var(--bdv-text-muted); font-size: 0.875rem; }
-  .bdv-error { margin-top: 6px; color: var(--bdv-danger); font-size: 0.875rem; }
+  .bdv-help { margin: -2px 0 7px; color: var(--bdv-text-muted); font-size: .875rem; }
+  .bdv-error { margin-top: 6px; color: var(--bdv-danger); font-size: .875rem; }
 
   .bdv-input {
     width: 100%;
@@ -121,6 +121,7 @@ const VARIANT_CSS = `
   textarea.bdv-input { min-height: 108px; resize: vertical; }
   .bdv-input:focus-visible,
   .bdv-rating-option:focus-visible,
+  .choice > label:has(:focus-visible),
   .bdv-submit:focus-visible,
   .bdv-cancel:focus-visible,
   .bdv-close:focus-visible,
@@ -145,14 +146,34 @@ const VARIANT_CSS = `
   }
   .bdv-rating-option:hover,
   .bdv-rating-option--active { color: var(--bdv-accent); border-color: var(--bdv-accent); }
-  .bdv-rating-option:disabled { cursor: wait; opacity: 0.65; }
+  .bdv-rating-option:disabled { cursor: wait; opacity: .65; }
   .bdv-rating-labels {
     display: flex;
     justify-content: space-between;
     margin-top: 5px;
     color: var(--bdv-text-muted);
-    font-size: 0.8rem;
+    font-size: .8rem;
   }
+
+  .choice { display: grid; gap: 8px; }
+  .choice > label {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    min-height: 44px;
+    align-items: center;
+    gap: 0 10px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    cursor: pointer;
+    padding: 9px 10px;
+    font-weight: 650;
+  }
+  .choice > label:has(:checked) { border-color: var(--bdv-accent); }
+  .cards > *, .buttons > * { background: var(--bdv-bg-muted); border-color: var(--bdv-border); }
+  .buttons { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+  .choice input { grid-row: span 2; width: 20px; height: 20px; accent-color: var(--bdv-accent); }
+  .choice .bdv-help { margin: 0; font-weight: 400; }
+  .choice :disabled ~ * { opacity: .65; }
 
   .bdv-actions { display: flex; align-items: center; gap: 12px; margin-top: 20px; }
   .bdv-submit {
@@ -160,7 +181,7 @@ const VARIANT_CSS = `
     border: 0;
     border-radius: 9px;
     background: var(--bdv-accent);
-    color: #ffffff;
+    color: #fff;
     cursor: pointer;
     padding: 10px 18px;
     font: inherit;
@@ -177,7 +198,7 @@ const VARIANT_CSS = `
     font: inherit;
     font-weight: 650;
   }
-  .bdv-cancel:disabled { cursor: wait; opacity: 0.65; }
+  .bdv-cancel:disabled { cursor: wait; opacity: .65; }
   .bdv-overlay {
     display: grid;
     min-height: 100%;
@@ -185,7 +206,7 @@ const VARIANT_CSS = `
     overflow: auto;
     padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
       max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
-    background: rgb(15 23 42 / 56%);
+    background: #0f172a8f;
   }
   .bdv-root[data-presentation="modal"] { height: 100%; }
   .bdv-root[data-presentation="modal"] .bdv-surface { max-width: 560px; }
@@ -210,7 +231,7 @@ const VARIANT_CSS = `
   }
   .bdv-close:hover { background: var(--bdv-bg-muted); color: var(--bdv-text); }
   .bdv-root[data-presentation="modal"] .bdv-header { padding-right: 36px; }
-  .bdv-submit:disabled { cursor: wait; opacity: 0.65; }
+  .bdv-submit:disabled { cursor: wait; opacity: .65; }
   .bdv-status { min-height: 1.5em; margin: 12px 0 0; color: var(--bdv-text-muted); }
   .bdv-status[data-kind="error"] { color: var(--bdv-danger); }
   .bdv-success { outline: none; }

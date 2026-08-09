@@ -34,6 +34,27 @@ describe('variant config validation', () => {
     expect(Object.isFrozen(frozen.fields[0])).toBe(true);
   });
 
+  it('accepts bounded choices while keeping stable values separate from display copy', () => {
+    const choiceConfig: VariantConfig = {
+      ...config(),
+      fields: [
+        {
+          id: 'choice',
+          type: 'singleChoice',
+          label: 'Choose one',
+          display: 'cards',
+          options: [
+            { value: 'onedrive', label: '<OneDrive>', description: 'Best for <Office>' },
+            { value: 'box', label: 'Box' },
+          ],
+        },
+      ],
+      issue: { title: 'Vote {{choice}}' },
+    };
+
+    expect(validateAndFreezeVariantConfig(choiceConfig).fields[0]).toEqual(choiceConfig.fields[0]);
+  });
+
   it.each([
     ['reserved id', { ...config(), id: 'legacy' }],
     ['invalid id', { ...config(), id: 'Export Review' }],
@@ -88,6 +109,23 @@ describe('variant config validation', () => {
               { value: 'b', label: 'B' },
             ],
             display: 'select',
+          },
+        ],
+      },
+    ],
+    [
+      'duplicate choice value',
+      {
+        ...config(),
+        fields: [
+          {
+            id: 'choice',
+            type: 'singleChoice',
+            label: 'Choice',
+            options: [
+              { value: 'same', label: 'A' },
+              { value: 'same', label: 'B' },
+            ],
           },
         ],
       },

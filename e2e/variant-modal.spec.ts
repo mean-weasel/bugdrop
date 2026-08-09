@@ -49,7 +49,98 @@ async function registerProviderQuestion(page: Page) {
   });
 }
 
+async function openCompactSuggestion(page: Page) {
+  await page.evaluate(() => {
+    window
+      .BugDrop!.registerVariant({
+        id: 'compact-suggestion',
+        presentation: { kind: 'modal', size: 'default' },
+        content: { title: 'Share an idea', submitLabel: 'Submit idea' },
+        fields: [
+          {
+            id: 'summary',
+            type: 'shortText',
+            label: 'Idea',
+            required: true,
+            maxLength: 120,
+          },
+          {
+            id: 'detail',
+            type: 'longText',
+            label: 'How would this help?',
+            maxLength: 2_000,
+          },
+        ],
+        issue: {
+          classification: 'feature',
+          title: '[Idea] {{summary}}',
+          sections: [
+            { heading: 'Idea', field: 'summary' },
+            { heading: 'Why it would help', field: 'detail', omitWhenEmpty: true },
+          ],
+        },
+      })
+      .open();
+  });
+}
+
 test.describe('rendered CTA modal variant', () => {
+  test('composes the compact suggestion and intercepts its exact draft', async ({ page }) => {
+    const submissions: Array<Record<string, unknown>> = [];
+    await page.route('**/api/feedback', route => {
+      submissions.push(route.request().postDataJSON() as Record<string, unknown>);
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          issueNumber: 205,
+          issueUrl: 'https://github.com/mean-weasel/bugdrop-widget-test/issues/205',
+          isPublic: false,
+        }),
+      });
+    });
+    await ready(page);
+    await openCompactSuggestion(page);
+
+    const host = page.locator('body > [data-bugdrop-owned]');
+    await expect(host.getByRole('dialog', { name: 'Share an idea' })).toBeVisible();
+    const summary = host.getByRole('textbox', { name: 'Idea' });
+    await host.getByRole('button', { name: 'Submit idea' }).click();
+    await expect(summary).toHaveAttribute('aria-invalid', 'true');
+    await expect(summary).toBeFocused();
+    expect(submissions).toHaveLength(0);
+
+    await summary.fill('  Add keyboard shortcuts  ');
+    await summary.press('Enter');
+    expect(submissions).toHaveLength(0);
+    await host
+      .getByRole('textbox', { name: 'How would this help?' })
+      .fill('  They would speed up repeated triage.  ');
+    await host.getByRole('button', { name: 'Submit idea' }).click();
+    await expect(host.getByRole('heading', { name: 'Thanks for your feedback!' })).toBeVisible();
+
+    expect(submissions).toHaveLength(1);
+    expect(submissions[0]).toMatchObject({
+      kind: 'bugdrop.variant-submission',
+      schemaVersion: 1,
+      repo: 'mean-weasel/bugdrop-widget-test',
+      variantId: 'compact-suggestion',
+      issue: {
+        title: '[Idea] Add keyboard shortcuts',
+        classification: 'feature',
+        sections: [
+          { heading: 'Idea', value: 'Add keyboard shortcuts', format: 'text' },
+          {
+            heading: 'Why it would help',
+            value: 'They would speed up repeated triage.',
+            format: 'text',
+          },
+        ],
+      },
+    });
+  });
+
   test('creates the exact draft only after explicit Submit and settles submitted', async ({
     page,
   }) => {

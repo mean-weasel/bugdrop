@@ -54,6 +54,134 @@ test('rating keyboard behavior requires explicit Submit', async ({ page }) => {
   expect(submissionCount).toBe(1);
 });
 
+test('single-choice keyboard behavior requires explicit Submit', async ({ page }) => {
+  let submissionCount = 0;
+  await page.route('**/feedback', route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    submissionCount += 1;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        issueNumber: 302,
+        issueUrl: 'https://github.com/mean-weasel/bugdrop-widget-test/issues/302',
+        isPublic: false,
+      }),
+    });
+  });
+  await page.goto('/test/');
+  await expect
+    .poll(() => page.evaluate(() => typeof window.BugDrop?.registerVariant))
+    .toBe('function');
+  await page.evaluate(() => {
+    const slot = document.createElement('div');
+    slot.id = 'cross-browser-poll-slot';
+    document.body.appendChild(slot);
+    window
+      .BugDrop!.registerVariant({
+        id: 'cross-browser-poll',
+        presentation: { kind: 'inline' },
+        content: { title: 'Choose an integration', submitLabel: 'Submit vote' },
+        fields: [
+          {
+            id: 'choice',
+            type: 'singleChoice',
+            label: 'Integration',
+            required: true,
+            display: 'buttons',
+            options: [
+              { value: 'onedrive', label: 'OneDrive' },
+              { value: 'box', label: 'Box' },
+              { value: 'other', label: 'Something else' },
+            ],
+          },
+        ],
+        issue: { title: 'Integration vote {{choice}}' },
+      })
+      .mount(slot);
+  });
+
+  const host = page.locator('#cross-browser-poll-slot > [data-bugdrop-owned]');
+  const choices = host.getByRole('radiogroup', { name: 'Integration' });
+  const submit = host.getByRole('button', { name: 'Submit vote' });
+  await submit.click();
+  await expect(choices).toHaveAttribute('aria-invalid', 'true');
+  const oneDrive = choices.getByRole('radio', { name: 'OneDrive' });
+  await expect(oneDrive).toBeFocused();
+  await oneDrive.press('ArrowRight');
+  const box = choices.getByRole('radio', { name: 'Box' });
+  await expect(box).toBeFocused();
+  await expect(box).toBeChecked();
+  await box.press('Enter');
+  await box.press('Space');
+  expect(submissionCount).toBe(0);
+  await submit.click();
+  await expect(host.getByRole('heading', { name: 'Thanks for your feedback!' })).toBeVisible();
+  expect(submissionCount).toBe(1);
+});
+
+test('compact suggestion validates and submits explicitly across browser engines', async ({
+  page,
+}) => {
+  let submissionCount = 0;
+  await page.route('**/feedback', route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    submissionCount += 1;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        issueNumber: 303,
+        issueUrl: 'https://github.com/mean-weasel/bugdrop-widget-test/issues/303',
+        isPublic: false,
+      }),
+    });
+  });
+  await page.goto('/test/');
+  await expect
+    .poll(() => page.evaluate(() => typeof window.BugDrop?.registerVariant))
+    .toBe('function');
+  await page.evaluate(() => {
+    window
+      .BugDrop!.registerVariant({
+        id: 'cross-browser-compact-suggestion',
+        presentation: { kind: 'modal', size: 'default' },
+        content: { title: 'Share an idea', submitLabel: 'Submit idea' },
+        fields: [
+          { id: 'summary', type: 'shortText', label: 'Idea', required: true, maxLength: 120 },
+          { id: 'detail', type: 'longText', label: 'How would this help?', maxLength: 2_000 },
+        ],
+        issue: {
+          title: '[Idea] {{summary}}',
+          sections: [
+            { heading: 'Idea', field: 'summary' },
+            { heading: 'Why it would help', field: 'detail', omitWhenEmpty: true },
+          ],
+        },
+      })
+      .open();
+  });
+
+  const host = page.locator('body > [data-bugdrop-owned]');
+  const summary = host.getByRole('textbox', { name: 'Idea' });
+  const submit = host.getByRole('button', { name: 'Submit idea' });
+  await submit.click();
+  await expect(summary).toHaveAttribute('aria-invalid', 'true');
+  await expect(summary).toBeFocused();
+  expect(submissionCount).toBe(0);
+  await summary.fill('Keyboard-friendly compact form');
+  await summary.press('Enter');
+  expect(submissionCount).toBe(0);
+  expect(
+    await submit.evaluate(element => element.getBoundingClientRect().height)
+  ).toBeGreaterThanOrEqual(44);
+  await submit.click();
+  await expect(host.getByRole('heading', { name: 'Thanks for your feedback!' })).toBeVisible();
+  expect(submissionCount).toBe(1);
+});
+
 test('modal focus is contained and Escape restores the host page', async ({ page }) => {
   await page.goto('/test/');
   await expect

@@ -89,4 +89,50 @@ describe('rendered variant field controllers', () => {
     expect(rating.getValue()).toBe('');
     rating.dispose();
   });
+
+  it.each(['radio', 'cards', 'buttons'] as const)(
+    'renders %s choices with native radio semantics and stable values',
+    display => {
+      const choice = createFieldController(
+        {
+          id: 'provider',
+          type: 'singleChoice',
+          label: 'Provider',
+          helpText: 'Choose one',
+          required: true,
+          display,
+          options: [
+            { value: 'stable-gcp', label: '<Google Cloud>', description: '<Fast & global>' },
+            { value: 'stable-azure', label: 'Microsoft Azure' },
+          ],
+        },
+        `instance-${display}`
+      );
+      document.body.appendChild(choice.element);
+      const group = choice.element.querySelector<HTMLElement>('[role="radiogroup"]');
+      const inputs = Array.from(choice.element.querySelectorAll<HTMLInputElement>('input'));
+
+      expect(group?.classList.contains(display)).toBe(true);
+      expect(inputs).toHaveLength(2);
+      expect(inputs.every(input => input.type === 'radio')).toBe(true);
+      const optionCopy = group?.querySelector('label');
+      expect(optionCopy?.childNodes[1]?.textContent).toBe('<Google Cloud>');
+      expect(optionCopy?.querySelector('.bdv-help')?.textContent).toBe('<Fast & global>');
+      expect(choice.element.querySelector('img')).toBeNull();
+
+      inputs[1]?.click();
+      expect(choice.getValue()).toBe('stable-azure');
+      choice.setValue('stable-gcp');
+      expect(inputs[0]?.checked).toBe(true);
+      choice.setValue('unknown');
+      expect(choice.getValue()).toBe('');
+      choice.setError('Choose an option');
+      expect(group?.getAttribute('aria-invalid')).toBe('true');
+      choice.focus();
+      expect(document.activeElement).toBe(inputs[0]);
+      choice.setDisabled(true);
+      expect(inputs.every(input => input.disabled)).toBe(true);
+      choice.dispose();
+    }
+  );
 });

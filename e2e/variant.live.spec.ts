@@ -162,4 +162,124 @@ test.describe('rendered variants on the deployed widget', () => {
       },
     });
   });
+
+  test('renders and submits the exact inline poll draft from pinned bytes', async ({ page }) => {
+    const submissions = await interceptOneSubmission(page);
+    await loadExactWidget(page);
+    await page.evaluate(() => {
+      const slot = document.createElement('div');
+      slot.id = 'live-poll-slot';
+      document.body.appendChild(slot);
+      window
+        .BugDrop!.registerVariant({
+          id: 'live-next-integration-poll',
+          presentation: { kind: 'inline' },
+          content: { title: 'What should we build next?', submitLabel: 'Vote' },
+          fields: [
+            {
+              id: 'choice',
+              type: 'singleChoice',
+              label: 'Choose one',
+              required: true,
+              display: 'cards',
+              options: [
+                { value: 'onedrive', label: 'OneDrive' },
+                { value: 'box', label: 'Box' },
+              ],
+            },
+            { id: 'detail', type: 'longText', label: 'Optional detail', maxLength: 500 },
+          ],
+          issue: {
+            classification: 'feature',
+            title: 'Integration vote — {{choice}}',
+            sections: [
+              { heading: 'Choice', field: 'choice', format: 'choice' },
+              { heading: 'Detail', field: 'detail', omitWhenEmpty: true },
+            ],
+          },
+        })
+        .mount(slot);
+    });
+
+    const host = page.locator('#live-poll-slot > [data-bugdrop-owned]');
+    await host.getByRole('radio', { name: 'OneDrive' }).click();
+    await host.getByRole('textbox', { name: 'Optional detail' }).fill('Exact preview poll');
+    expect(submissions).toHaveLength(0);
+    await host.getByRole('button', { name: 'Vote' }).click();
+    await expect(host.getByRole('heading', { name: 'Thanks for your feedback!' })).toBeVisible();
+    expect(submissions).toHaveLength(1);
+    expect(submissions[0].postDataJSON()).toMatchObject({
+      kind: 'bugdrop.variant-submission',
+      schemaVersion: 1,
+      variantId: 'live-next-integration-poll',
+      issue: {
+        title: 'Integration vote — onedrive',
+        classification: 'feature',
+        sections: [
+          { heading: 'Choice', value: 'OneDrive', format: 'text' },
+          { heading: 'Detail', value: 'Exact preview poll', format: 'text' },
+        ],
+      },
+    });
+  });
+
+  test('opens and submits the exact compact-suggestion draft from pinned bytes', async ({
+    page,
+  }) => {
+    const submissions = await interceptOneSubmission(page);
+    await loadExactWidget(page);
+    await page.evaluate(() => {
+      window
+        .BugDrop!.registerVariant({
+          id: 'live-compact-suggestion',
+          presentation: { kind: 'modal', size: 'default' },
+          content: { title: 'Share an idea', submitLabel: 'Submit idea' },
+          fields: [
+            { id: 'summary', type: 'shortText', label: 'Idea', required: true, maxLength: 120 },
+            {
+              id: 'detail',
+              type: 'longText',
+              label: 'How would this help?',
+              maxLength: 2_000,
+            },
+          ],
+          issue: {
+            classification: 'feature',
+            title: '[Idea] {{summary}}',
+            sections: [
+              { heading: 'Idea', field: 'summary' },
+              { heading: 'Why it would help', field: 'detail', omitWhenEmpty: true },
+            ],
+          },
+        })
+        .open();
+    });
+
+    const host = page.locator('body > [data-bugdrop-owned]');
+    await host.getByRole('textbox', { name: 'Idea' }).fill('Pinned preview suggestion');
+    await host
+      .getByRole('textbox', { name: 'How would this help?' })
+      .fill('It proves the existing primitives compose.');
+    expect(submissions).toHaveLength(0);
+    await host.getByRole('button', { name: 'Submit idea' }).click();
+    await expect(host.getByRole('heading', { name: 'Thanks for your feedback!' })).toBeVisible();
+    expect(submissions).toHaveLength(1);
+    expect(submissions[0].postDataJSON()).toMatchObject({
+      kind: 'bugdrop.variant-submission',
+      schemaVersion: 1,
+      variantId: 'live-compact-suggestion',
+      issue: {
+        title: '[Idea] Pinned preview suggestion',
+        classification: 'feature',
+        sections: [
+          { heading: 'Idea', value: 'Pinned preview suggestion', format: 'text' },
+          {
+            heading: 'Why it would help',
+            value: 'It proves the existing primitives compose.',
+            format: 'text',
+          },
+        ],
+      },
+    });
+  });
 });
