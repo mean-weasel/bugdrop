@@ -66,9 +66,26 @@
     });
   }
 
+  function loadLocalQaStore() {
+    var params = new URLSearchParams(window.location.search);
+    var isLocalHost =
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1' ||
+      window.location.hostname.endsWith('.localhost');
+
+    if (params.get('localQa') !== '1' || !isLocalHost) {
+      return Promise.resolve();
+    }
+
+    return loadOptionalScript('/test/local-submissions.js');
+  }
+
   window.loadBugDropTestWidget = function loadBugDropTestWidget(options) {
     var opts = options || {};
-    return loadScript('/test/config.js')
+    return loadLocalQaStore()
+      .then(function () {
+        return loadScript('/test/config.js');
+      })
       .then(function () {
         return loadOptionalScript('/test/local-config.js');
       })

@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BugDrop Local QA Submissions</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #171824;
+      --panel: #232638;
+      --panel-strong: #2d3148;
+      --border: #414866;
+      --text: #c8d1f3;
+      --muted: #8790b2;
+      --accent: #ff9e64;
+      --danger: #f7768e;
+      --success: #9ece6a;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button, input, textarea, select { font: inherit; }
+
+    button, .button-link {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.65rem 0.9rem;
+      background: var(--panel-strong);
+      color: var(--text);
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    button:hover, .button-link:hover { border-color: var(--accent); }
+    button:focus-visible, .button-link:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--accent) 60%, transparent);
+      outline-offset: 2px;
+    }
+
+    .danger { color: #ffd5dc; border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); }
+    .primary { background: var(--accent); border-color: var(--accent); color: #20170f; font-weight: 700; }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 1.25rem clamp(1rem, 4vw, 3rem);
+      border-bottom: 1px solid var(--border);
+      background: rgba(35, 38, 56, 0.8);
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 0.2rem; font-size: clamp(1.35rem, 3vw, 1.8rem); }
+    .eyebrow { color: var(--accent); font-size: 0.75rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
+    .muted { color: var(--muted); }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(250px, 340px) minmax(0, 1fr);
+      min-height: calc(100vh - 96px);
+    }
+
+    aside { border-right: 1px solid var(--border); padding: 1rem; }
+    main { padding: clamp(1rem, 4vw, 2.5rem); }
+    .toolbar { display: flex; gap: 0.6rem; justify-content: space-between; margin-bottom: 1rem; }
+    .submission-list { display: grid; gap: 0.65rem; }
+
+    .submission-card {
+      width: 100%;
+      text-align: left;
+      display: grid;
+      gap: 0.25rem;
+      padding: 0.85rem;
+      background: var(--panel);
+    }
+
+    .submission-card[aria-current="true"] { border-color: var(--accent); background: var(--panel-strong); }
+    .submission-card strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .submission-card span { color: var(--muted); font-size: 0.82rem; }
+
+    .empty, .notice {
+      border: 1px dashed var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      color: var(--muted);
+      background: var(--panel);
+    }
+
+    form { display: grid; gap: 1rem; max-width: 760px; }
+    label { display: grid; gap: 0.4rem; font-weight: 650; }
+    input, textarea, select {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem;
+      background: #191b29;
+      color: var(--text);
+    }
+    textarea { min-height: 130px; resize: vertical; }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.65rem; }
+
+    .details-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 0.75rem;
+      margin: 1.5rem 0;
+    }
+
+    .detail {
+      padding: 0.85rem;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--panel);
+    }
+    .detail dt { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; }
+    .detail dd { margin: 0.35rem 0 0; overflow-wrap: anywhere; }
+
+    .screenshot {
+      display: block;
+      max-width: min(100%, 900px);
+      max-height: 520px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      object-fit: contain;
+      background: white;
+    }
+
+    details { margin-top: 1.5rem; max-width: 960px; }
+    pre { overflow: auto; padding: 1rem; border-radius: 10px; background: #10111a; color: #b4f9f8; }
+    #status { min-height: 1.5rem; color: var(--success); }
+
+    @media (max-width: 760px) {
+      header { align-items: flex-start; flex-direction: column; }
+      .layout { grid-template-columns: 1fr; }
+      aside { border-right: 0; border-bottom: 1px solid var(--border); }
+      .submission-list { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <div class="eyebrow">Local QA only</div>
+      <h1>BugDrop submissions</h1>
+      <div class="muted">Create through the widget, then inspect, edit, or delete here.</div>
+    </div>
+    <a class="button-link" href="/test/?localQa=1&showIssueLink=always&showName=true&sendConsoleLogs=true">Back to widget</a>
+  </header>
+
+  <div class="layout">
+    <aside>
+      <div class="toolbar">
+        <button id="refresh" type="button">Refresh</button>
+        <button id="clear-all" class="danger" type="button">Delete all</button>
+      </div>
+      <div id="submission-list" class="submission-list" aria-label="Local submissions"></div>
+    </aside>
+
+    <main>
+      <div id="local-only" class="notice" hidden>This page is available only on localhost subdomains.</div>
+      <div id="empty" class="empty">Select a submission or create one from the widget.</div>
+      <section id="detail" hidden>
+        <h2 id="detail-heading">Submission</h2>
+        <p id="status" role="status" aria-live="polite"></p>
+        <form id="edit-form">
+          <label>
+            Title
+            <input id="title" name="title" required>
+          </label>
+          <label>
+            Description
+            <textarea id="description" name="description"></textarea>
+          </label>
+          <label>
+            Category
+            <select id="category" name="category">
+              <option value="bug">Bug</option>
+              <option value="feature">Feature</option>
+              <option value="question">Question</option>
+            </select>
+          </label>
+          <div class="actions">
+            <button class="primary" type="submit">Save changes</button>
+            <button id="delete" class="danger" type="button">Delete submission</button>
+          </div>
+        </form>
+
+        <dl class="details-grid">
+          <div class="detail"><dt>ID</dt><dd id="record-id"></dd></div>
+          <div class="detail"><dt>Created</dt><dd id="created-at"></dd></div>
+          <div class="detail"><dt>Updated</dt><dd id="updated-at"></dd></div>
+          <div class="detail"><dt>Screenshot</dt><dd id="screenshot-size"></dd></div>
+        </dl>
+
+        <section id="screenshot-section" hidden>
+          <h3>Screenshot</h3>
+          <img id="screenshot" class="screenshot" alt="Captured feedback screenshot">
+        </section>
+
+        <details>
+          <summary>Raw legacy payload</summary>
+          <pre id="raw-payload"></pre>
+        </details>
+      </section>
+    </main>
+  </div>
+
+  <script src="/test/local-submissions.js"></script>
+  <script>
+    (function () {
+      var api = window.BugDropLocalSubmissions;
+      var listElement = document.getElementById('submission-list');
+      var emptyElement = document.getElementById('empty');
+      var detailElement = document.getElementById('detail');
+      var localOnlyElement = document.getElementById('local-only');
+      var selectedRecord = null;
+
+      function isLocalHost() {
+        return location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname.endsWith('.localhost');
+      }
+
+      function formatDate(value) {
+        return value ? new Date(value).toLocaleString() : '—';
+      }
+
+      function formatBytes(value) {
+        if (!value) return 'None';
+        if (value < 1024) return value + ' bytes';
+        return (value / 1024).toFixed(1) + ' KB';
+      }
+
+      function selectedIdFromUrl() {
+        var value = new URLSearchParams(location.search).get('id');
+        return value ? Number(value) : null;
+      }
+
+      function setSelectedUrl(id) {
+        var url = new URL(location.href);
+        if (id) url.searchParams.set('id', id);
+        else url.searchParams.delete('id');
+        history.replaceState(null, '', url);
+      }
+
+      function renderDetail(record) {
+        selectedRecord = record || null;
+        emptyElement.hidden = Boolean(record);
+        detailElement.hidden = !record;
+        if (!record) return;
+
+        var payload = record.payload || {};
+        document.getElementById('detail-heading').textContent = 'Submission #' + record.id;
+        document.getElementById('title').value = payload.title || '';
+        document.getElementById('description').value = payload.description || '';
+        document.getElementById('category').value = payload.category || 'bug';
+        document.getElementById('record-id').textContent = String(record.id);
+        document.getElementById('created-at').textContent = formatDate(record.createdAt);
+        document.getElementById('updated-at').textContent = formatDate(record.updatedAt);
+        document.getElementById('screenshot-size').textContent = formatBytes(payload.screenshot ? payload.screenshot.length : 0);
+        var displayPayload = Object.assign({}, payload, {
+          screenshot: payload.screenshot
+            ? '[Screenshot data URL omitted from JSON view · ' + payload.screenshot.length + ' characters]'
+            : null,
+        });
+        document.getElementById('raw-payload').textContent = JSON.stringify(displayPayload, null, 2);
+
+        var screenshotSection = document.getElementById('screenshot-section');
+        var screenshot = document.getElementById('screenshot');
+        screenshotSection.hidden = !payload.screenshot;
+        if (payload.screenshot) screenshot.src = payload.screenshot;
+        else screenshot.removeAttribute('src');
+      }
+
+      function renderList(records) {
+        listElement.replaceChildren();
+        if (!records.length) {
+          var message = document.createElement('div');
+          message.className = 'empty';
+          message.textContent = 'No local submissions yet.';
+          listElement.appendChild(message);
+          return;
+        }
+
+        records.forEach(function (record) {
+          var button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'submission-card';
+          button.setAttribute('aria-current', selectedRecord && selectedRecord.id === record.id ? 'true' : 'false');
+
+          var title = document.createElement('strong');
+          title.textContent = record.payload && record.payload.title ? record.payload.title : 'Untitled submission';
+          var meta = document.createElement('span');
+          meta.textContent = '#' + record.id + ' · ' + formatDate(record.createdAt);
+          button.append(title, meta);
+          button.addEventListener('click', function () {
+            setSelectedUrl(record.id);
+            renderDetail(record);
+            renderList(records);
+          });
+          listElement.appendChild(button);
+        });
+      }
+
+      async function refresh() {
+        var records = await api.list();
+        var requestedId = selectedRecord ? selectedRecord.id : selectedIdFromUrl();
+        var next = records.find(function (record) { return record.id === requestedId; }) || records[0] || null;
+        renderDetail(next);
+        if (next) setSelectedUrl(next.id);
+        renderList(records);
+      }
+
+      if (!isLocalHost() || !api) {
+        localOnlyElement.hidden = false;
+        emptyElement.hidden = true;
+        document.querySelector('aside').hidden = true;
+        return;
+      }
+
+      document.getElementById('refresh').addEventListener('click', refresh);
+      document.getElementById('edit-form').addEventListener('submit', async function (event) {
+        event.preventDefault();
+        if (!selectedRecord) return;
+        selectedRecord.payload.title = document.getElementById('title').value;
+        selectedRecord.payload.description = document.getElementById('description').value;
+        selectedRecord.payload.category = document.getElementById('category').value;
+        await api.update(selectedRecord);
+        document.getElementById('status').textContent = 'Saved.';
+        await refresh();
+      });
+      document.getElementById('delete').addEventListener('click', async function () {
+        if (!selectedRecord) return;
+        await api.remove(selectedRecord.id);
+        selectedRecord = null;
+        setSelectedUrl(null);
+        await refresh();
+      });
+      document.getElementById('clear-all').addEventListener('click', async function () {
+        await api.clear();
+        selectedRecord = null;
+        setSelectedUrl(null);
+        await refresh();
+      });
+
+      refresh().catch(function (error) {
+        emptyElement.textContent = 'Could not load local submissions: ' + error.message;
+      });
+    })();
+  </script>
+</body>
+</html>
