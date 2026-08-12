@@ -65,6 +65,119 @@ That's it! Users can now click the bug button to submit feedback as GitHub Issue
 
 See [full documentation](https://bugdrop.dev/docs/configuration) for all options including styling, submitter info, and dismissible button.
 
+### Composable feedback flows
+
+`window.BugDrop.registerFlow` registers a versioned modal flow without changing the default BugDrop
+button or `registerVariant`. Forms are reusable configuration objects, screens determine their
+order and visibility, and submission still uses BugDrop's established feedback payload.
+
+A default-shaped message → details → optional screenshot journey:
+
+```js
+const defaultFlow = window.BugDrop.registerFlow({
+  configVersion: 1,
+  id: 'default-shaped-feedback',
+  presentation: { kind: 'modal' },
+  forms: [
+    {
+      id: 'details',
+      title: 'Tell us what happened',
+      fields: [
+        { id: 'summary', type: 'shortText', label: 'Title', required: true },
+        { id: 'description', type: 'longText', label: 'Description' },
+        { id: 'attachments', type: 'attachments', label: 'Attachments' },
+        { id: 'send-logs', type: 'checkbox', label: 'Include console logs' },
+        { id: 'name', type: 'shortText', label: 'Name' },
+        { id: 'email', type: 'shortText', label: 'Email' },
+      ],
+    },
+  ],
+  screens: [
+    { id: 'welcome', type: 'message', title: 'Share feedback' },
+    { id: 'details-screen', type: 'form', form: 'details' },
+    { id: 'screenshot', type: 'screenshot', mode: 'optional' },
+  ],
+  issue: {
+    classification: 'bug',
+    title: '{{details.summary}}',
+    sections: [
+      {
+        heading: 'Description',
+        answer: 'details.description',
+        omitWhenEmpty: true,
+      },
+    ],
+  },
+  evidence: {
+    attachments: 'details.attachments',
+    sendConsoleLogs: 'details.send-logs',
+    submitter: { name: 'details.name', email: 'details.email' },
+  },
+});
+
+defaultFlow.open();
+```
+
+A materially different product-triage flow can show follow-up and screenshot screens only for a
+bug or a low rating. Conditions are serializable and reference answers from earlier forms:
+
+```js
+const needsEvidence = {
+  any: [
+    { answer: 'triage.kind', equals: 'bug' },
+    { answer: 'triage.rating', equals: 1 },
+  ],
+};
+
+const triageFlow = window.BugDrop.registerFlow({
+  configVersion: 1,
+  id: 'product-triage',
+  presentation: { kind: 'modal' },
+  forms: [
+    {
+      id: 'triage',
+      title: 'Classify your feedback',
+      fields: [
+        {
+          id: 'kind',
+          type: 'singleChoice',
+          label: 'Type',
+          required: true,
+          options: [
+            { value: 'bug', label: 'Bug' },
+            { value: 'idea', label: 'Idea' },
+          ],
+        },
+        { id: 'rating', type: 'rating', label: 'Experience', required: true },
+        { id: 'summary', type: 'shortText', label: 'Summary', required: true },
+      ],
+    },
+    {
+      id: 'detail',
+      title: 'Add diagnostic detail',
+      fields: [{ id: 'steps', type: 'longText', label: 'Steps to reproduce' }],
+    },
+  ],
+  screens: [
+    { id: 'intro', type: 'message', title: 'Help us prioritize' },
+    { id: 'triage-screen', type: 'form', form: 'triage' },
+    { id: 'detail-screen', type: 'form', form: 'detail', when: needsEvidence },
+    { id: 'screenshot', type: 'screenshot', mode: 'optional', when: needsEvidence },
+  ],
+  issue: {
+    classification: 'bug',
+    title: '{{triage.summary}}',
+    sections: [
+      { heading: 'Type', answer: 'triage.kind', format: 'choice' },
+      { heading: 'Experience', answer: 'triage.rating', format: 'stars' },
+      { heading: 'Steps', answer: 'detail.steps', omitWhenEmpty: true },
+    ],
+  },
+});
+
+triageFlow.open();
+```
+
 ## Test a Local Widget on a Live Site
 
 Build the widget and start the local server:

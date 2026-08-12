@@ -138,4 +138,7 @@ export interface BugDropPublicAPI {
   isButtonVisible(): boolean;
   setTheme(mode: VariantTheme): void;
   registerVariant(config: VariantConfig): VariantHandle;
+  registerFlow(
+    config: import('../flows/public-types').FlowConfig
+  ): import('../flows/public-types').FlowHandle;
 }

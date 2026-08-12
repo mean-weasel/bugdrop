@@ -195,6 +195,9 @@ test.describe('Widget Loading', () => {
     const trigger = host.locator('css=.bd-trigger');
     const handle = host.locator('css=.bd-trigger-drag-handle');
     await expect(handle).toBeVisible({ timeout: 5000 });
+    await trigger.evaluate(async el => {
+      await Promise.all(el.getAnimations().map(animation => animation.finished));
+    });
 
     await dragTriggerHandle(page, -160);
     const repo = await getWidgetRepo(page);
@@ -220,7 +223,7 @@ test.describe('Widget Loading', () => {
     await page.mouse.up();
     await expect
       .poll(() => page.evaluate(key => Number(localStorage.getItem(key)), storageKey))
-      .toBeCloseTo(activeDragTop, 0);
+      .toBe(Math.round(activeDragTop));
   });
 
   test('hidden feedback button keeps saved position across viewport resize', async ({ page }) => {
@@ -2589,6 +2592,7 @@ test.describe('JavaScript API', () => {
     expect(apiMethods).toContain('show');
     expect(apiMethods).toContain('isOpen');
     expect(apiMethods).toContain('isButtonVisible');
+    expect(apiMethods).toContain('registerFlow');
     expect(apiMethods).toContain('registerVariant');
   });
 
@@ -2661,6 +2665,7 @@ test.describe('JavaScript API', () => {
             'isButtonVisible',
             'isOpen',
             'open',
+            'registerFlow',
             'registerVariant',
             'setTheme',
             'show',
@@ -5626,6 +5631,9 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
     await expect(modal).toBeVisible({ timeout: 10000 });
     await expect(stage).toBeVisible();
     await expect(canvas).toBeVisible();
+    await modal.evaluate(async el => {
+      await Promise.all(el.getAnimations().map(animation => animation.finished));
+    });
 
     const modalBox = await modal.boundingBox();
     const stageBox = await stage.boundingBox();
@@ -5693,6 +5701,9 @@ test.describe('Screenshot Crash Prevention (#67)', () => {
       '/test/annotation-preview-size.html',
       '#preview-size-target'
     );
+    await modal.evaluate(async el => {
+      await Promise.all(el.getAnimations().map(animation => animation.finished));
+    });
 
     const modalBox = await modal.boundingBox();
     const stageBox = await stage.boundingBox();

@@ -84,7 +84,122 @@ async function openCompactSuggestion(page: Page) {
   });
 }
 
+async function openTallSuggestion(page: Page) {
+  await page.evaluate(() => {
+    window
+      .BugDrop!.registerVariant({
+        id: 'tall-suggestion',
+        presentation: { kind: 'modal', size: 'default' },
+        content: { title: 'Tall suggestion', submitLabel: 'Send tall suggestion' },
+        fields: Array.from({ length: 6 }, (_, index) => ({
+          id: `detail-${index + 1}`,
+          type: 'longText' as const,
+          label: `Detail ${index + 1}`,
+          required: index === 0,
+        })),
+        issue: {
+          classification: 'feature',
+          title: 'Tall suggestion — {{detail-1}}',
+        },
+      })
+      .open();
+  });
+}
+
+async function modalGeometry(host: import('@playwright/test').Locator) {
+  return host.evaluate(element => {
+    const overlay = element.shadowRoot?.querySelector<HTMLElement>('.bdv-overlay');
+    const surface = element.shadowRoot?.querySelector<HTMLElement>('.bdv-surface');
+    if (!overlay || !surface) throw new Error('Expected rendered modal geometry');
+    const overlayRect = overlay.getBoundingClientRect();
+    const surfaceRect = surface.getBoundingClientRect();
+    const style = getComputedStyle(overlay);
+    return {
+      overlayTop: overlayRect.top,
+      overlayBottom: overlayRect.bottom,
+      overlayClientHeight: overlay.clientHeight,
+      overlayScrollHeight: overlay.scrollHeight,
+      overlayScrollTop: overlay.scrollTop,
+      surfaceTop: surfaceRect.top,
+      surfaceBottom: surfaceRect.bottom,
+      paddingTop: Number.parseFloat(style.paddingTop),
+      paddingBottom: Number.parseFloat(style.paddingBottom),
+    };
+  });
+}
+
 test.describe('rendered CTA modal variant', () => {
+  for (const viewport of [
+    { name: 'desktop', width: 1280, height: 720 },
+    { name: 'mobile', width: 375, height: 667 },
+  ]) {
+    test(`centers short dialogs and makes tall controls ${viewport.name}-actionable`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await page.route('**/api/feedback', route =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            issueNumber: 207,
+            issueUrl: 'https://github.com/mean-weasel/bugdrop-widget-test/issues/207',
+            isPublic: false,
+          }),
+        })
+      );
+      await ready(page);
+      await registerProviderQuestion(page);
+      await page.getByRole('button', { name: 'Request a provider' }).click();
+
+      const shortHost = page.locator('body > [data-bugdrop-owned]');
+      const short = await modalGeometry(shortHost);
+      expect(short.overlayClientHeight).toBe(viewport.height);
+      expect(short.overlayScrollHeight).toBe(short.overlayClientHeight);
+      expect(Math.abs(short.surfaceTop - (short.overlayBottom - short.surfaceBottom))).toBeLessThan(
+        2
+      );
+      await shortHost.getByRole('button', { name: 'Not now' }).click();
+
+      await openTallSuggestion(page);
+      const tallHost = page.locator('body > [data-bugdrop-owned]');
+      const firstDetail = tallHost.getByRole('textbox', { name: 'Detail 1' });
+      const submit = tallHost.getByRole('button', { name: 'Send tall suggestion' });
+      const initial = await modalGeometry(tallHost);
+      expect(initial.overlayClientHeight).toBe(viewport.height);
+      expect(initial.overlayScrollHeight).toBeGreaterThan(initial.overlayClientHeight);
+      expect(initial.surfaceTop - initial.overlayTop).toBeGreaterThanOrEqual(
+        initial.paddingTop - 1
+      );
+      expect(initial.overlayScrollHeight - initial.surfaceBottom).toBeGreaterThanOrEqual(
+        initial.paddingBottom - 1
+      );
+
+      await firstDetail.fill(`${viewport.name} tall modal`);
+      if (viewport.name === 'desktop') {
+        await submit.hover();
+        const scrolled = await modalGeometry(tallHost);
+        expect(scrolled.overlayScrollTop).toBeGreaterThan(0);
+        await submit.click();
+      } else {
+        await expect(firstDetail).toBeFocused();
+        for (let index = 0; index < 6; index += 1) await page.keyboard.press('Tab');
+        await expect(submit).toBeFocused();
+        const submitBox = await submit.boundingBox();
+        expect(submitBox).not.toBeNull();
+        expect(submitBox!.y).toBeGreaterThanOrEqual(0);
+        expect(submitBox!.y + submitBox!.height).toBeLessThanOrEqual(viewport.height);
+        const scrolled = await modalGeometry(tallHost);
+        expect(scrolled.overlayScrollTop).toBeGreaterThan(0);
+        await page.keyboard.press('Enter');
+      }
+      await expect(
+        tallHost.getByRole('heading', { name: 'Thanks for your feedback!' })
+      ).toBeVisible();
+    });
+  }
+
   test('composes the compact suggestion and intercepts its exact draft', async ({ page }) => {
     const submissions: Array<Record<string, unknown>> = [];
     await page.route('**/api/feedback', route => {

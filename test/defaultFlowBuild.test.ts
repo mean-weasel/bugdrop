@@ -90,7 +90,7 @@ describe('internal default-flow build selector', () => {
     for (const source of [fixedSource, privateSource]) {
       expect(source).not.toContain('__bugdropDefaultFlowRuntime');
       expect(source).not.toContain('__bugdropMockToPng');
-      expect(source).not.toContain('registerFlow');
+      expect(source).toContain('registerFlow');
       expect(source).not.toContain('FlowConfig');
     }
     expect(fixedSource).not.toContain('bugdrop-default@1');

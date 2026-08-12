@@ -54,6 +54,7 @@ test('serves a test-hook-free authoritative artifact with the unchanged API', as
       'isButtonVisible',
       'isOpen',
       'open',
+      'registerFlow',
       'registerVariant',
       'setTheme',
       'show',

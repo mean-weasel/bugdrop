@@ -1,0 +1,307 @@
+import { countConditionNodes } from './conditions';
+import { validateFlowFieldConfig, validateFlowShell } from './field-validation';
+import type {
+  FlowCondition,
+  FlowConfig,
+  FlowField,
+  FlowIssueSection,
+  FlowScreen,
+} from './public-types';
+const ID = /^[a-z][a-z0-9_-]{0,63}$/;
+const PATH = /^([a-z][a-z0-9_-]{0,63})\.([a-z][a-z0-9_-]{0,63})$/;
+const TOP_KEYS = new Set([
+  'configVersion',
+  'id',
+  'presentation',
+  'appearance',
+  'content',
+  'forms',
+  'screens',
+  'issue',
+  'evidence',
+]);
+const BASE_FIELD_KEYS = ['id', 'type', 'label', 'helpText', 'required', 'layout'];
+const FIELD_KEYS: Record<FlowField['type'], Set<string>> = {
+  shortText: new Set([...BASE_FIELD_KEYS, 'placeholder', 'minLength', 'maxLength']),
+  longText: new Set([...BASE_FIELD_KEYS, 'placeholder', 'rows', 'minLength', 'maxLength']),
+  rating: new Set([...BASE_FIELD_KEYS, 'scale', 'icon', 'lowLabel', 'highLabel']),
+  singleChoice: new Set([...BASE_FIELD_KEYS, 'options', 'display']),
+  checkbox: new Set([...BASE_FIELD_KEYS, 'initialValue']),
+  attachments: new Set([...BASE_FIELD_KEYS, 'maxFiles', 'maxFileSize', 'accept']),
+};
+export function validateAndFreezeFlowConfig(input: FlowConfig): Readonly<FlowConfig> {
+  if (!object(input)) fail('config must be an object');
+  only(input, TOP_KEYS, 'config');
+  if (input.configVersion !== 1) fail('configVersion must be 1');
+  validId(input.id, 'id');
+  validateFlowShell(input);
+  if (!Array.isArray(input.forms) || input.forms.length === 0 || input.forms.length > 12) {
+    fail('forms must contain 1-12 entries');
+  }
+  if (!Array.isArray(input.screens) || input.screens.length === 0 || input.screens.length > 20) {
+    fail('screens must contain 1-20 entries');
+  }
+
+  const answerFields = new Map<string, FlowField>();
+  const forms = new Map<string, FlowConfig['forms'][number]>();
+  for (const form of input.forms) validateForm(form, forms, answerFields);
+  const referencedForms = new Set<string>();
+  const earlierAnswers = new Set<string>();
+  let screenshots = 0;
+  const screenIds = new Set<string>();
+  for (const screen of input.screens) {
+    validateScreen(screen, screenIds, forms, earlierAnswers);
+    if (screen.type === 'form') {
+      if (referencedForms.has(screen.form)) fail(`form ${screen.form} may be referenced only once`);
+      referencedForms.add(screen.form);
+      for (const field of forms.get(screen.form)!.fields)
+        earlierAnswers.add(`${screen.form}.${field.id}`);
+    }
+    if (screen.type === 'screenshot' && ++screenshots > 1)
+      fail('only one screenshot screen is supported');
+  }
+  for (const formId of forms.keys())
+    if (!referencedForms.has(formId)) fail(`form ${formId} is unused`);
+  validateIssue(input.issue, answerFields);
+  validateEvidence(input.evidence, answerFields);
+  return deepFreeze(structuredClone(input));
+}
+
+function validateForm(
+  form: FlowConfig['forms'][number],
+  forms: Map<string, FlowConfig['forms'][number]>,
+  answerFields: Map<string, FlowField>
+) {
+  if (!object(form)) fail('form must be an object');
+  only(form, new Set(['id', 'title', 'description', 'fields']), 'form');
+  validId(form.id, 'form id');
+  if (forms.has(form.id)) fail(`duplicate form id ${form.id}`);
+  text(form.title, 'form title', 500);
+  optionalText(form.description, 'form description', 2_000);
+  if (!Array.isArray(form.fields) || form.fields.length === 0 || form.fields.length > 20)
+    fail('form fields must contain 1-20 entries');
+  const ids = new Set<string>();
+  for (const field of form.fields) {
+    if (!object(field) || typeof field.type !== 'string' || !(field.type in FIELD_KEYS))
+      fail('field type is unsupported');
+    only(field, FIELD_KEYS[field.type as FlowField['type']], 'field');
+    validId(field.id, 'field id');
+    if (ids.has(field.id)) fail(`duplicate field id ${field.id}`);
+    ids.add(field.id);
+    text(field.label, 'field label', 500);
+    optionalText(field.helpText, 'field helpText', 1_000);
+    if (field.required !== undefined && typeof field.required !== 'boolean')
+      fail('field required must be boolean');
+    validateFlowFieldConfig(field as FlowField);
+    answerFields.set(`${form.id}.${field.id}`, field as FlowField);
+  }
+  forms.set(form.id, form);
+}
+
+function validateScreen(
+  screen: FlowScreen,
+  ids: Set<string>,
+  forms: Map<string, FlowConfig['forms'][number]>,
+  earlier: Set<string>
+) {
+  if (!object(screen)) fail('screen must be an object');
+  validId(screen.id, 'screen id');
+  if (ids.has(screen.id)) fail(`duplicate screen id ${screen.id}`);
+  ids.add(screen.id);
+  if (!['message', 'form', 'screenshot'].includes(screen.type)) fail('screen type is unsupported');
+  const keys =
+    screen.type === 'message'
+      ? new Set(['id', 'type', 'when', 'title', 'description', 'continueLabel'])
+      : screen.type === 'form'
+        ? new Set(['id', 'type', 'when', 'form', 'continueLabel', 'backLabel'])
+        : new Set([
+            'id',
+            'type',
+            'when',
+            'title',
+            'description',
+            'mode',
+            'continueLabel',
+            'backLabel',
+          ]);
+  only(screen, keys, 'screen');
+  if (Object.prototype.hasOwnProperty.call(screen, 'when'))
+    validateCondition(screen.when as FlowCondition, earlier);
+  if (screen.type === 'message') {
+    text(screen.title, 'message title', 500);
+    optionalText(screen.description, 'message description', 2_000);
+  }
+  if (screen.type === 'form' && !forms.has(screen.form))
+    fail(`screen references unknown form ${screen.form}`);
+  if (screen.type === 'screenshot' && !['optional', 'auto', 'required'].includes(screen.mode))
+    fail('screenshot mode is invalid');
+  if (screen.type === 'screenshot') {
+    optionalText(screen.title, 'screenshot title', 500);
+    optionalText(screen.description, 'screenshot description', 2_000);
+  }
+  optionalText(screen.continueLabel, 'screen continueLabel', 120);
+  if (screen.type !== 'message') optionalText(screen.backLabel, 'screen backLabel', 120);
+}
+
+function validateCondition(condition: FlowCondition, earlier: Set<string>) {
+  if (!object(condition)) fail('condition must be an object');
+  countConditionNodes(condition);
+  if ('answer' in condition) {
+    only(condition, new Set(['answer', 'equals']), 'answer condition');
+    if (!earlier.has(condition.answer))
+      fail(`condition answer must reference an earlier field: ${condition.answer}`);
+    scalar(condition.equals, 'condition equals');
+    return;
+  }
+  if ('context' in condition) {
+    only(condition, new Set(['context', 'equals']), 'context condition');
+    validId(condition.context, 'condition context');
+    scalar(condition.equals, 'condition equals');
+    return;
+  }
+  const key = 'all' in condition ? 'all' : 'any' in condition ? 'any' : null;
+  if (!key) fail('condition must contain answer, context, all, or any');
+  only(condition, new Set([key]), 'condition group');
+  const children =
+    key === 'all'
+      ? (condition as Extract<FlowCondition, { all: FlowCondition[] }>).all
+      : (condition as Extract<FlowCondition, { any: FlowCondition[] }>).any;
+  if (!Array.isArray(children) || children.length < 1 || children.length > 8)
+    fail(`condition ${key} must contain 1-8 entries`);
+  for (const child of children) validateCondition(child, earlier);
+}
+
+function validateIssue(issue: FlowConfig['issue'], answers: Map<string, FlowField>) {
+  if (!object(issue)) fail('issue must be an object');
+  only(issue, new Set(['classification', 'title', 'sections']), 'issue');
+  text(issue.title, 'issue title', 2_000);
+  if (
+    issue.classification !== undefined &&
+    !['bug', 'feature', 'question'].includes(issue.classification)
+  )
+    fail('issue classification is invalid');
+  validateIssueTitleTemplate(issue.title, answers);
+  if (issue.sections !== undefined) {
+    if (!Array.isArray(issue.sections) || issue.sections.length > 20)
+      fail('issue sections are invalid');
+    const headings = new Set<string>();
+    for (const section of issue.sections) validateSection(section, answers, headings);
+  }
+}
+
+function validateSection(
+  section: FlowIssueSection,
+  answers: Map<string, FlowField>,
+  headings: Set<string>
+) {
+  if (!object(section)) fail('issue section must be an object');
+  if ('answer' in section) {
+    only(section, new Set(['heading', 'answer', 'format', 'omitWhenEmpty']), 'issue section');
+    validateScalarAnswer(section.answer, answers, 'issue section');
+  } else {
+    only(section, new Set(['heading', 'context', 'format', 'omitWhenEmpty']), 'issue section');
+    validId(section.context, 'issue context');
+  }
+  text(section.heading, 'issue section heading', 120);
+  const heading = section.heading.trim().toLowerCase();
+  if (headings.has(heading)) fail(`duplicate issue section heading ${section.heading}`);
+  headings.add(heading);
+  if (section.omitWhenEmpty !== undefined && typeof section.omitWhenEmpty !== 'boolean')
+    fail('issue section omitWhenEmpty must be boolean');
+  const format = section.format ?? 'text';
+  if ('answer' in section) {
+    if (!['text', 'quote', 'stars', 'choice', 'code'].includes(format))
+      fail('issue answer format is invalid');
+    const field = answers.get(section.answer)!;
+    if (format === 'stars' && field.type !== 'rating') fail('stars format requires a rating field');
+    if (format === 'choice' && field.type !== 'singleChoice')
+      fail('choice format requires a singleChoice field');
+  } else if (!['text', 'code'].includes(format)) fail('issue context format is invalid');
+}
+
+function validateEvidence(evidence: FlowConfig['evidence'], answers: Map<string, FlowField>) {
+  if (evidence === undefined) return;
+  if (!object(evidence)) fail('evidence must be an object');
+  only(evidence, new Set(['attachments', 'sendConsoleLogs', 'submitter']), 'evidence');
+  typedPath(evidence.attachments, 'attachments', answers, 'attachments');
+  typedPath(evidence.sendConsoleLogs, 'checkbox', answers, 'sendConsoleLogs');
+  if (evidence.submitter !== undefined) {
+    if (!object(evidence.submitter)) fail('evidence submitter must be an object');
+    only(evidence.submitter, new Set(['name', 'email']), 'evidence submitter');
+    if (!evidence.submitter.name && !evidence.submitter.email)
+      fail('evidence submitter must map name or email');
+    if (evidence.submitter.name)
+      validateScalarAnswer(evidence.submitter.name, answers, 'submitter name');
+    if (evidence.submitter.email)
+      validateScalarAnswer(evidence.submitter.email, answers, 'submitter email');
+  }
+}
+function typedPath(
+  path: string | undefined,
+  type: FlowField['type'],
+  answers: Map<string, FlowField>,
+  label: string
+) {
+  if (path !== undefined && answers.get(path)?.type !== type)
+    fail(`${label} must reference a ${type} field`);
+}
+function validateScalarAnswer(path: string, answers: Map<string, FlowField>, label: string) {
+  if (!PATH.test(path) || !answers.has(path) || answers.get(path)?.type === 'attachments')
+    fail(`${label} references an unknown scalar answer: ${path}`);
+}
+function validateIssueTitleTemplate(template: string, answers: Map<string, FlowField>) {
+  let cursor = 0;
+  for (const match of template.matchAll(/{{\s*([^{}]+?)\s*}}/g)) {
+    const index = match.index!;
+    const before = template.slice(cursor, index);
+    if (before.includes('{{') || before.includes('}}') || before.endsWith('{'))
+      fail('issue title template is malformed');
+    validateScalarAnswer(match[1]!.trim(), answers, 'issue title');
+    cursor = index + match[0].length;
+    if (template[cursor] === '}') fail('issue title template is malformed');
+  }
+  const after = template.slice(cursor);
+  if (after.includes('{{') || after.includes('}}')) fail('issue title template is malformed');
+}
+function only(value: object, keys: Set<string>, label: string) {
+  for (const key of Object.keys(value))
+    if (!keys.has(key)) fail(`${label} contains unknown key ${key}`);
+}
+function validId(value: unknown, label: string) {
+  if (typeof value !== 'string' || !ID.test(value) || value === 'legacy')
+    fail(`${label} is invalid`);
+}
+function text(value: unknown, label: string, maximum: number) {
+  if (
+    typeof value !== 'string' ||
+    value.trim().length === 0 ||
+    value.length > maximum ||
+    [...value].some(character => {
+      const code = character.charCodeAt(0);
+      return code < 32 && code !== 9 && code !== 10 && code !== 13;
+    })
+  )
+    fail(`${label} is invalid`);
+}
+function optionalText(value: unknown, label: string, maximum: number) {
+  if (value !== undefined) text(value, label, maximum);
+}
+function scalar(value: unknown, label: string) {
+  if (
+    (value !== null && !['string', 'number', 'boolean'].includes(typeof value)) ||
+    (typeof value === 'number' && !Number.isFinite(value))
+  )
+    fail(`${label} must be scalar`);
+}
+function object(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+function fail(message: string): never {
+  throw new TypeError(`BugDrop flow ${message}`);
+}
+function deepFreeze<T>(value: T): Readonly<T> {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  Object.freeze(value);
+  for (const child of Object.values(value)) deepFreeze(child);
+  return value;
+}

@@ -37,6 +37,7 @@ import type { BugDropPublicAPI } from './variants/public-types';
 import { createVariantManager, type VariantManager } from './variants/manager';
 import { runDefaultJourney } from './default-flow/runtime';
 import { normalizeDefaultDefinition } from './default-flow/definition';
+import { createFlowManager, type FlowManager } from './flows/manager';
 
 declare const __BUGDROP_ENABLE_TEST_HOOKS__: boolean;
 declare const __BUGDROP_DEFAULT_FLOW_RUNTIME__: 'fixed' | 'private';
@@ -892,6 +893,7 @@ function exposeBugDropAPI(root: HTMLElement, config: WidgetConfig) {
   // state needed — keeps per-init isolation if multi-instance is ever added.
   let currentMode: ThemeMode = config.theme;
   let variantManager: VariantManager | undefined;
+  let flowManager: FlowManager | undefined;
 
   window.BugDrop = {
     // Open the feedback modal programmatically
@@ -985,6 +987,30 @@ function exposeBugDropAPI(root: HTMLElement, config: WidgetConfig) {
         { isLegacyModalOpen: () => _isModalOpen }
       );
       return variantManager.register(variantConfig);
+    },
+
+    registerFlow: flowConfig => {
+      flowManager ??= createFlowManager(
+        {
+          repo: config.repo,
+          apiUrl: config.apiUrl,
+          authTokenProvider: config.authTokenProvider,
+        },
+        {
+          preflight: () => checkInstallation(config),
+          capture: async (screen, includeScreenshot) => {
+            const result = await runScreenshotCaptureFlow(
+              root,
+              { ...config, screenshotMode: screen.mode },
+              includeScreenshot,
+              () => {}
+            );
+            return result;
+          },
+        },
+        { isLegacyModalOpen: () => _isModalOpen }
+      );
+      return flowManager.register(flowConfig);
     },
   };
 
