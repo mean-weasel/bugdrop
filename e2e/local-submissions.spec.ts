@@ -28,9 +28,12 @@ test('local QA submissions can be created, viewed, edited, and deleted', async (
 
   await widget(page).locator('.bd-trigger').click();
   const getStarted = widget(page).getByRole('button', { name: 'Get Started' });
-  if (await getStarted.isVisible()) await getStarted.click();
+  await expect(getStarted).toBeVisible();
+  await getStarted.click();
 
-  await widget(page).getByLabel('Title *', { exact: true }).fill('Local CRUD submission');
+  const title = widget(page).getByLabel('Title *', { exact: true });
+  await expect(title).toBeVisible();
+  await title.fill('Local CRUD submission');
   await widget(page).getByLabel('Description', { exact: true }).fill('Created from the widget.');
   await widget(page).getByLabel('Name', { exact: true }).fill('Local tester');
   await widget(page).getByLabel('📸 Include a screenshot').uncheck();
