@@ -96,11 +96,14 @@ class FlowModalController {
           preflight.status === 'not_installed'
             ? `Install the ${preflight.appName ?? 'BugDrop'} GitHub App to continue.`
             : 'BugDrop could not reach the feedback service.';
-        this.renderError(message, () => this.close());
+        this.renderError(message, () => void this.preflight());
       }
     } catch {
       if (!this.closed)
-        this.renderError('BugDrop could not reach the feedback service.', () => this.close());
+        this.renderError(
+          'BugDrop could not reach the feedback service.',
+          () => void this.preflight()
+        );
     }
   }
 

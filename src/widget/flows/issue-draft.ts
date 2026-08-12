@@ -11,7 +11,7 @@ export function compileFlowIssueDraft(
   answers: Readonly<Record<string, unknown>>,
   context: Readonly<Record<string, FlowScalar>>
 ): FlowIssueDraft {
-  const title = interpolate(config.issue.title, answers).trim();
+  const title = interpolate(config.issue.title, answers).trim().slice(0, 256);
   if (!title) throw new TypeError('BugDrop flow Issue title cannot be empty');
   const sections = (config.issue.sections ?? [])
     .map(section => compileSection(config, section, answers, context))

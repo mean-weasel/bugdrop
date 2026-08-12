@@ -14,6 +14,17 @@ export interface FlowAttachment {
   dataUrl: string;
 }
 
+const ALLOWED_ATTACHMENT_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'application/pdf',
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+]);
+
 export interface NormalizedFlowOpenOptions {
   context: Readonly<Record<string, FlowScalar>>;
   initialAnswers: Record<string, unknown>;
@@ -39,6 +50,33 @@ export function validateFlowFieldConfig(field: FlowField): void {
   else if (field.type === 'singleChoice') validateChoiceField(field);
   else if (field.type === 'checkbox') validateCheckboxField(field);
   else validateAttachmentsField(field);
+}
+
+export function validateFlowConditionValue(field: FlowField, value: FlowScalar): void {
+  if (field.type === 'rating') {
+    const scale = field.scale ?? 5;
+    if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > scale)
+      fail(`condition equals is not a valid value for field ${field.id}`);
+    return;
+  }
+  if (field.type === 'singleChoice') {
+    if (typeof value !== 'string' || !field.options.some(option => option.value === value))
+      fail(`condition equals is not a valid value for field ${field.id}`);
+    return;
+  }
+  if (field.type === 'checkbox') {
+    if (typeof value !== 'boolean')
+      fail(`condition equals is not a valid value for field ${field.id}`);
+    return;
+  }
+  if (field.type === 'attachments')
+    fail(`condition answer cannot reference attachments field ${field.id}`);
+  if (typeof value !== 'string' || value !== value.trim())
+    fail(`condition equals is not a valid value for field ${field.id}`);
+  const minimum = field.minLength ?? 0;
+  const maximum = field.maxLength ?? (field.type === 'shortText' ? 500 : 5_000);
+  if (value.length < minimum || value.length > maximum)
+    fail(`condition equals is not a valid value for field ${field.id}`);
 }
 
 export function validateFlowShell(config: FlowConfig): void {
@@ -210,14 +248,22 @@ function normalizeAttachments(field: AttachmentsField, raw: unknown): FlowAttach
     if (!isObject(value)) fail(`initial answer ${field.id} has an invalid attachment`);
     assertOnlyKeys(value, new Set(['name', 'type', 'size', 'dataUrl']), 'attachment');
     requiredCopy(value.name, 'attachment name', 500);
-    if (typeof value.type !== 'string' || value.type.length > 200)
+    if (typeof value.type !== 'string' || !ALLOWED_ATTACHMENT_TYPES.has(value.type))
       fail('attachment type is invalid');
     if (!boundedInteger(value.size, 0, field.maxFileSize ?? 5 * 1024 * 1024))
       fail('attachment size is invalid');
-    if (typeof value.dataUrl !== 'string' || !value.dataUrl.startsWith('data:'))
+    if (
+      typeof value.dataUrl !== 'string' ||
+      !new RegExp(`^data:${escapeRegex(value.type)};base64,[A-Za-z0-9+/]+={0,2}$`).test(
+        value.dataUrl
+      )
+    )
       fail('attachment dataUrl is invalid');
     return { name: value.name, type: value.type, size: value.size, dataUrl: value.dataUrl };
   });
+}
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function requiredCopy(value: unknown, label: string, maximum: number): asserts value is string {

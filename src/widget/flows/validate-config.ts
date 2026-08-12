@@ -1,5 +1,9 @@
 import { countConditionNodes } from './conditions';
-import { validateFlowFieldConfig, validateFlowShell } from './field-validation';
+import {
+  validateFlowConditionValue,
+  validateFlowFieldConfig,
+  validateFlowShell,
+} from './field-validation';
 import type {
   FlowCondition,
   FlowConfig,
@@ -7,7 +11,16 @@ import type {
   FlowIssueSection,
   FlowScreen,
 } from './public-types';
-const ID = /^[a-z][a-z0-9_-]{0,63}$/;
+import {
+  deepFreeze,
+  fail,
+  object,
+  only,
+  optionalText,
+  scalar,
+  text,
+  validId,
+} from './validation-utils';
 const PATH = /^([a-z][a-z0-9_-]{0,63})\.([a-z][a-z0-9_-]{0,63})$/;
 const TOP_KEYS = new Set([
   'configVersion',
@@ -46,7 +59,7 @@ export function validateAndFreezeFlowConfig(input: FlowConfig): Readonly<FlowCon
   const forms = new Map<string, FlowConfig['forms'][number]>();
   for (const form of input.forms) validateForm(form, forms, answerFields);
   const referencedForms = new Set<string>();
-  const earlierAnswers = new Set<string>();
+  const earlierAnswers = new Map<string, FlowField>();
   let screenshots = 0;
   const screenIds = new Set<string>();
   for (const screen of input.screens) {
@@ -55,13 +68,15 @@ export function validateAndFreezeFlowConfig(input: FlowConfig): Readonly<FlowCon
       if (referencedForms.has(screen.form)) fail(`form ${screen.form} may be referenced only once`);
       referencedForms.add(screen.form);
       for (const field of forms.get(screen.form)!.fields)
-        earlierAnswers.add(`${screen.form}.${field.id}`);
+        earlierAnswers.set(`${screen.form}.${field.id}`, field);
     }
     if (screen.type === 'screenshot' && ++screenshots > 1)
       fail('only one screenshot screen is supported');
   }
   for (const formId of forms.keys())
     if (!referencedForms.has(formId)) fail(`form ${formId} is unused`);
+  if (input.screens.every(screen => screen.when !== undefined))
+    fail('at least one screen must be unconditional');
   validateIssue(input.issue, answerFields);
   validateEvidence(input.evidence, answerFields);
   return deepFreeze(structuredClone(input));
@@ -102,7 +117,7 @@ function validateScreen(
   screen: FlowScreen,
   ids: Set<string>,
   forms: Map<string, FlowConfig['forms'][number]>,
-  earlier: Set<string>
+  earlier: Map<string, FlowField>
 ) {
   if (!object(screen)) fail('screen must be an object');
   validId(screen.id, 'screen id');
@@ -143,14 +158,15 @@ function validateScreen(
   if (screen.type !== 'message') optionalText(screen.backLabel, 'screen backLabel', 120);
 }
 
-function validateCondition(condition: FlowCondition, earlier: Set<string>) {
+function validateCondition(condition: FlowCondition, earlier: Map<string, FlowField>) {
   if (!object(condition)) fail('condition must be an object');
   countConditionNodes(condition);
   if ('answer' in condition) {
     only(condition, new Set(['answer', 'equals']), 'answer condition');
-    if (!earlier.has(condition.answer))
-      fail(`condition answer must reference an earlier field: ${condition.answer}`);
+    const field = earlier.get(condition.answer);
+    if (!field) fail(`condition answer must reference an earlier field: ${condition.answer}`);
     scalar(condition.equals, 'condition equals');
+    validateFlowConditionValue(field, condition.equals);
     return;
   }
   if ('context' in condition) {
@@ -262,46 +278,4 @@ function validateIssueTitleTemplate(template: string, answers: Map<string, FlowF
   }
   const after = template.slice(cursor);
   if (after.includes('{{') || after.includes('}}')) fail('issue title template is malformed');
-}
-function only(value: object, keys: Set<string>, label: string) {
-  for (const key of Object.keys(value))
-    if (!keys.has(key)) fail(`${label} contains unknown key ${key}`);
-}
-function validId(value: unknown, label: string) {
-  if (typeof value !== 'string' || !ID.test(value) || value === 'legacy')
-    fail(`${label} is invalid`);
-}
-function text(value: unknown, label: string, maximum: number) {
-  if (
-    typeof value !== 'string' ||
-    value.trim().length === 0 ||
-    value.length > maximum ||
-    [...value].some(character => {
-      const code = character.charCodeAt(0);
-      return code < 32 && code !== 9 && code !== 10 && code !== 13;
-    })
-  )
-    fail(`${label} is invalid`);
-}
-function optionalText(value: unknown, label: string, maximum: number) {
-  if (value !== undefined) text(value, label, maximum);
-}
-function scalar(value: unknown, label: string) {
-  if (
-    (value !== null && !['string', 'number', 'boolean'].includes(typeof value)) ||
-    (typeof value === 'number' && !Number.isFinite(value))
-  )
-    fail(`${label} must be scalar`);
-}
-function object(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function fail(message: string): never {
-  throw new TypeError(`BugDrop flow ${message}`);
-}
-function deepFreeze<T>(value: T): Readonly<T> {
-  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
-  Object.freeze(value);
-  for (const child of Object.values(value)) deepFreeze(child);
-  return value;
 }

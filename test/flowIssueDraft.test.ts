@@ -40,4 +40,9 @@ describe('flow Issue mapping', () => {
       'cannot be empty'
     );
   });
+
+  it('bounds compiled Issue titles to the receiver contract', () => {
+    const draft = compileFlowIssueDraft(flowConfig(), { 'triage.summary': 'x'.repeat(500) }, {});
+    expect(draft.title).toHaveLength(256);
+  });
 });

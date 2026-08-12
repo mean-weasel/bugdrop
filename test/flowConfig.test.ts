@@ -94,6 +94,16 @@ describe('FlowConfig validation', () => {
     ],
     ['dangling evidence', { ...flowConfig(), evidence: { attachments: 'triage.summary' } }],
     [
+      'all conditional screens',
+      {
+        ...flowConfig(),
+        screens: flowConfig().screens.map(screen => ({
+          ...screen,
+          when: { context: 'show', equals: true },
+        })),
+      },
+    ],
+    [
       'two screenshots',
       {
         ...flowConfig(),
@@ -147,6 +157,21 @@ describe('FlowConfig validation', () => {
     const classification = flowConfig();
     classification.issue.classification = 'feedback' as never;
     expect(() => validateAndFreezeFlowConfig(classification)).toThrow('classification');
+  });
+
+  it('rejects answer conditions outside the referenced field domain', () => {
+    const unknownChoice = flowConfig();
+    unknownChoice.screens[2]!.when = { answer: 'triage.kind', equals: 'other' };
+    expect(() => validateAndFreezeFlowConfig(unknownChoice)).toThrow('valid value');
+
+    const wrongScalar = flowConfig();
+    wrongScalar.forms[0]!.fields[0] = {
+      id: 'kind',
+      type: 'rating',
+      label: 'Rating',
+    };
+    wrongScalar.screens[2]!.when = { answer: 'triage.kind', equals: '1' };
+    expect(() => validateAndFreezeFlowConfig(wrongScalar)).toThrow('valid value');
   });
 
   it.each([null, false, 0, ''])('rejects an explicitly defined malformed condition: %j', when => {

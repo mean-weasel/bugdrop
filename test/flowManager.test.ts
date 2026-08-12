@@ -46,8 +46,61 @@ describe('flow manager and modal', () => {
     expect(() => handle.open({ initialAnswers: { 'triage.kind': 'invalid' } })).toThrow(
       'configured choice'
     );
+    expect(() =>
+      handle.open({
+        initialAnswers: {
+          'detail.files': [
+            {
+              name: 'archive.zip',
+              type: 'application/zip',
+              size: 8,
+              dataUrl: 'data:application/zip;base64,UEsDBAo=',
+            },
+          ],
+        },
+      })
+    ).toThrow('attachment type');
+    expect(() =>
+      handle.open({
+        initialAnswers: {
+          'detail.files': [
+            {
+              name: 'image.png',
+              type: 'image/png',
+              size: 1,
+              dataUrl: 'data:text/plain;base64,QQ==',
+            },
+          ],
+        },
+      })
+    ).toThrow('dataUrl');
     expect(preflight).not.toHaveBeenCalled();
     expect(document.body.childElementCount).toBe(0);
+  });
+  it('retries installation preflight without closing the opened flow', async () => {
+    const preflight = vi
+      .fn<() => Promise<{ status: 'unreachable' | 'installed' }>>()
+      .mockResolvedValueOnce({ status: 'unreachable' })
+      .mockResolvedValueOnce({ status: 'installed' });
+    const opened = createFlowManager(
+      { repo: 'owner/repo', apiUrl: '/api' },
+      { ...ports, preflight }
+    )
+      .register(flowConfig())
+      .open();
+    await Promise.resolve();
+    await Promise.resolve();
+    const host = document.querySelector<HTMLElement>('[data-bugdrop-flow="product-triage"]')!;
+    expect(host.shadowRoot?.querySelector('.bdv-description')?.textContent).toContain(
+      'could not reach'
+    );
+    host.shadowRoot?.querySelector<HTMLButtonElement>('.bdv-submit')?.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(preflight).toHaveBeenCalledTimes(2);
+    expect(host.isConnected).toBe(true);
+    expect(host.shadowRoot?.querySelector('.bdv-title')?.textContent).toBe('Help us improve');
+    opened.close();
   });
   it('opens accessibly, restores focus and closes idempotently', async () => {
     const trigger = document.createElement('button');
