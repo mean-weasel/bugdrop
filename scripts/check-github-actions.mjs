@@ -34,6 +34,7 @@ const approvedReleases = new Map([
   ['actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3', 'v8.0.0'],
   ['actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c', 'v8.0.1'],
   ['actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd', 'v8.0.0'],
+  ['actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3', 'v9.0.0'],
   ['actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444', 'v5.0.0'],
   ['actions/setup-node@820762786026740c76f36085b0efc47a31fe5020', 'v7.0.0'],
   ['actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4', 'v5.0.0'],
