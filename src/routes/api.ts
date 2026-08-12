@@ -283,7 +283,8 @@ api.post('/feedback', async c => {
         const fallbackMessage =
           fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
         throw new Error(
-          `Failed to create issue with both configured labels (${formatLabelList(labelResolution.labels)}) and default labels (${formatLabelList(fallbackLabels)}): ${fallbackMessage}`
+          `Failed to create issue with both configured labels (${formatLabelList(labelResolution.labels)}) and default labels (${formatLabelList(fallbackLabels)}): ${fallbackMessage}`,
+          { cause: fallbackError }
         );
       }
     }
