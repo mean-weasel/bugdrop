@@ -185,6 +185,16 @@ describe('FlowConfig validation', () => {
     );
   });
 
+  it('rejects an Issue title sourced only from a conditional required answer', () => {
+    const config = flowConfig();
+    config.issue.title = '{{detail.description}}';
+    const description = config.forms[1]!.fields.find(field => field.id === 'description')!;
+    description.required = true;
+    expect(() => validateAndFreezeFlowConfig(config)).toThrow(
+      'issue title must contain text or reference a required answer'
+    );
+  });
+
   it('rejects answer conditions outside the referenced field domain', () => {
     const unknownChoice = flowConfig();
     unknownChoice.screens[2]!.when = { answer: 'triage.kind', equals: 'other' };

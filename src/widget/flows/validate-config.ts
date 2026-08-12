@@ -59,6 +59,7 @@ export function validateAndFreezeFlowConfig(input: FlowConfig): Readonly<FlowCon
   const forms = new Map<string, FlowConfig['forms'][number]>();
   for (const form of input.forms) validateForm(form, forms, answerFields);
   const referencedForms = new Set<string>();
+  const guaranteedRequiredAnswers = new Set<string>();
   const earlierAnswers = new Map<string, FlowField>();
   let screenshots = 0;
   const screenIds = new Set<string>();
@@ -69,6 +70,9 @@ export function validateAndFreezeFlowConfig(input: FlowConfig): Readonly<FlowCon
       referencedForms.add(screen.form);
       for (const field of forms.get(screen.form)!.fields)
         earlierAnswers.set(`${screen.form}.${field.id}`, field);
+      if (screen.when === undefined)
+        for (const field of forms.get(screen.form)!.fields)
+          if (field.required) guaranteedRequiredAnswers.add(`${screen.form}.${field.id}`);
     }
     if (screen.type === 'screenshot' && ++screenshots > 1)
       fail('only one screenshot screen is supported');
@@ -77,7 +81,7 @@ export function validateAndFreezeFlowConfig(input: FlowConfig): Readonly<FlowCon
     if (!referencedForms.has(formId)) fail(`form ${formId} is unused`);
   if (input.screens.every(screen => screen.when !== undefined))
     fail('at least one screen must be unconditional');
-  validateIssue(input.issue, answerFields);
+  validateIssue(input.issue, answerFields, guaranteedRequiredAnswers);
   validateEvidence(input.evidence, answerFields);
   return deepFreeze(structuredClone(input));
 }
@@ -187,7 +191,11 @@ function validateCondition(condition: FlowCondition, earlier: Map<string, FlowFi
   for (const child of children) validateCondition(child, earlier);
 }
 
-function validateIssue(issue: FlowConfig['issue'], answers: Map<string, FlowField>) {
+function validateIssue(
+  issue: FlowConfig['issue'],
+  answers: Map<string, FlowField>,
+  guaranteedRequiredAnswers: ReadonlySet<string>
+) {
   if (!object(issue)) fail('issue must be an object');
   only(issue, new Set(['classification', 'title', 'sections']), 'issue');
   text(issue.title, 'issue title', 2_000);
@@ -196,7 +204,7 @@ function validateIssue(issue: FlowConfig['issue'], answers: Map<string, FlowFiel
     !['bug', 'feature', 'question'].includes(issue.classification)
   )
     fail('issue classification is invalid');
-  validateIssueTitleTemplate(issue.title, answers);
+  validateIssueTitleTemplate(issue.title, answers, guaranteedRequiredAnswers);
   if (issue.sections !== undefined) {
     if (!Array.isArray(issue.sections) || issue.sections.length > 20)
       fail('issue sections are invalid');
@@ -270,7 +278,11 @@ function validateTextAnswer(path: string, answers: Map<string, FlowField>, label
   if (!PATH.test(path) || (type !== 'shortText' && type !== 'longText'))
     fail(`${label} must reference a text field`);
 }
-function validateIssueTitleTemplate(template: string, answers: Map<string, FlowField>) {
+function validateIssueTitleTemplate(
+  template: string,
+  answers: Map<string, FlowField>,
+  guaranteedRequiredAnswers: ReadonlySet<string>
+) {
   let cursor = 0;
   let hasRequiredSource = false;
   let literal = '';
@@ -282,7 +294,7 @@ function validateIssueTitleTemplate(template: string, answers: Map<string, FlowF
       fail('issue title template is malformed');
     const path = match[1]!.trim();
     validateScalarAnswer(path, answers, 'issue title');
-    hasRequiredSource ||= answers.get(path)?.required === true;
+    hasRequiredSource ||= guaranteedRequiredAnswers.has(path);
     cursor = index + match[0].length;
     if (template[cursor] === '}') fail('issue title template is malformed');
   }
