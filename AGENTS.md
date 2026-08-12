@@ -2,6 +2,12 @@
 
 Follow `CLAUDE.md` for repo-level agent guidance.
 
+## Local Servers
+
+When starting or handing off a local server, always use a named `.localhost`
+subdomain (for example, `bugdrop.localhost`) instead of bare `localhost` or
+`127.0.0.1`.
+
 ## Pull Request Review
 
 For every pull request, run `codex-pr-review-toolkit:review-pull-request` against its base before merge.
