@@ -68,7 +68,7 @@ See [full documentation](https://bugdrop.dev/docs/configuration) for all options
 ### Composable feedback flows
 
 `window.BugDrop.registerFlow` registers a versioned modal flow without changing the default BugDrop
-button or `registerVariant`. Forms are reusable configuration objects, screens determine their
+button or `registerVariant`. Forms define field groups, screens determine their
 order and visibility, and submission still uses BugDrop's established feedback payload.
 
 A default-shaped message → details → optional screenshot journey:

@@ -67,16 +67,19 @@ export function createAttachmentsController(
   let values = Array.isArray(initialValue) ? ([...initialValue] as FlowAttachment[]) : [];
   let readFailed = false;
   let pending: Promise<void> = Promise.resolve();
+  let readVersion = 0;
   renderNames(
     list,
     values.map(value => value.name)
   );
   const onChange = () => {
+    const version = ++readVersion;
     readFailed = false;
     scaffold.setError(input, null);
     const files = Array.from(input.files ?? []);
     pending = readFiles(files, field)
       .then(next => {
+        if (version !== readVersion) return;
         values = next;
         renderNames(
           list,
@@ -84,6 +87,7 @@ export function createAttachmentsController(
         );
       })
       .catch(error => {
+        if (version !== readVersion) return;
         readFailed = true;
         scaffold.setError(
           input,
@@ -104,7 +108,10 @@ export function createAttachmentsController(
       if (!readFailed) scaffold.setError(input, show ? 'Select at least one attachment.' : null);
     },
     focus: () => input.focus(),
-    dispose: () => input.removeEventListener('change', onChange),
+    dispose: () => {
+      readVersion += 1;
+      input.removeEventListener('change', onChange);
+    },
   };
 }
 
@@ -175,12 +182,20 @@ async function readFiles(
 ): Promise<FlowAttachment[]> {
   if (files.length > (field.maxFiles ?? 5))
     throw new TypeError(`Select at most ${field.maxFiles ?? 5} attachments.`);
-  return Promise.all(files.map(file => readAttachment(file, field.maxFileSize ?? 5 * 1024 * 1024)));
+  return Promise.all(
+    files.map(file => readAttachment(file, field.maxFileSize ?? 5 * 1024 * 1024, field.accept))
+  );
 }
 
-async function readAttachment(file: File, maxSize: number): Promise<FlowAttachment> {
+async function readAttachment(
+  file: File,
+  maxSize: number,
+  accept: ReadonlyArray<string> | undefined
+): Promise<FlowAttachment> {
   if (!isAllowedFlowAttachmentType(file.type))
     throw new TypeError(`${file.name} has an unsupported file type.`);
+  if (accept && !accept.includes(file.type))
+    throw new TypeError(`${file.name} is not an accepted file type.`);
   if (file.size > maxSize) throw new TypeError(`${file.name} is too large.`);
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();

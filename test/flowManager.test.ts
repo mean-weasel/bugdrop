@@ -74,6 +74,27 @@ describe('flow manager and modal', () => {
         },
       })
     ).toThrow('dataUrl');
+    const pngOnly = flowConfig();
+    const attachments = pngOnly.forms[1]!.fields.find(field => field.id === 'files');
+    if (attachments?.type === 'attachments') attachments.accept = ['image/png'];
+    const pngHandle = createFlowManager(
+      { repo: 'owner/repo', apiUrl: '/api' },
+      { ...ports, preflight }
+    ).register(pngOnly);
+    expect(() =>
+      pngHandle.open({
+        initialAnswers: {
+          'detail.files': [
+            {
+              name: 'document.pdf',
+              type: 'application/pdf',
+              size: 1,
+              dataUrl: 'data:application/pdf;base64,QQ==',
+            },
+          ],
+        },
+      })
+    ).toThrow('disallowed attachment type');
     expect(preflight).not.toHaveBeenCalled();
     expect(document.body.childElementCount).toBe(0);
   });
@@ -129,6 +150,48 @@ describe('flow manager and modal', () => {
     resolvers[1]!({ status: 'unreachable' });
     await Promise.resolve();
     expect(host.shadowRoot?.querySelector('.bdv-title')?.textContent).toBe('Help us improve');
+    opened.close();
+  });
+  it('ignores a second form advance while async collection is in progress', async () => {
+    const config = flowConfig();
+    config.forms = [
+      {
+        id: 'first',
+        title: 'First form',
+        fields: [{ id: 'value', type: 'shortText', label: 'First', required: true }],
+      },
+      {
+        id: 'second',
+        title: 'Second form',
+        fields: [{ id: 'value', type: 'shortText', label: 'Second', required: true }],
+      },
+    ];
+    config.screens = [
+      { id: 'first-screen', type: 'form', form: 'first' },
+      { id: 'second-screen', type: 'form', form: 'second' },
+    ];
+    config.issue.title = '{{first.value}}';
+    config.issue.sections = [{ heading: 'Second', answer: 'second.value' }];
+    config.evidence = undefined;
+    const submit = vi.fn(async () => ({ issueNumber: 1, issueUrl: '', isPublic: false }));
+    const opened = createFlowManager({ repo: 'owner/repo', apiUrl: '/api' }, { ...ports, submit })
+      .register(config)
+      .open();
+    await Promise.resolve();
+    const host = document.querySelector<HTMLElement>('[data-bugdrop-flow]')!;
+    host.shadowRoot?.querySelector<HTMLInputElement>('input')?.setAttribute('value', 'First');
+    const firstInput = host.shadowRoot?.querySelector<HTMLInputElement>('input');
+    if (firstInput) firstInput.value = 'First';
+    const advance = host.shadowRoot?.querySelector<HTMLButtonElement>('.bdv-submit');
+    advance?.click();
+    advance?.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(
+      host.shadowRoot?.querySelector<HTMLInputElement>('input')?.getAttribute('aria-label')
+    ).toBe(null);
+    expect(host.shadowRoot?.querySelector('.bdv-label')?.textContent).toContain('Second');
+    expect(submit).not.toHaveBeenCalled();
     opened.close();
   });
   it('opens accessibly, restores focus and closes idempotently', async () => {

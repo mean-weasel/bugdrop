@@ -1,6 +1,7 @@
 import type { FlowConfig, FlowHandle, FlowOpenOptions } from './public-types';
 import { normalizeFlowDefinition, type FlowDefinition } from './definition';
-import { createBusyOpenedFlow, openFlowModal, type FlowModalPorts } from './modal';
+import { createBusyOpenedFlow } from './busy-opened-flow';
+import { openFlowModal, type FlowModalPorts } from './modal';
 import { submitFlow, type FlowTransportConfig } from './submission';
 import { validateAndFreezeFlowConfig } from './validate-config';
 import { normalizeFlowOpenOptions } from './field-validation';

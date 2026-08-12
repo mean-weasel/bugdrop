@@ -36,10 +36,11 @@ export function abortableCapture<T>(
 }
 
 function cancelCaptureUi(root: HTMLElement): void {
-  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   const overlays = Array.from(root.querySelectorAll('.bd-overlay')) as HTMLElement[];
   for (const overlay of overlays) {
     (overlay.querySelector('.bd-close') as HTMLButtonElement | null)?.click();
     overlay.remove();
   }
+  document.querySelector<HTMLButtonElement>('#bugdrop-element-picker-cancel')?.click();
+  document.querySelector<HTMLButtonElement>('#bugdrop-area-picker-cancel')?.click();
 }

@@ -260,6 +260,8 @@ function normalizeAttachments(field: AttachmentsField, raw: unknown): FlowAttach
     requiredCopy(value.name, 'attachment name', 500);
     if (typeof value.type !== 'string' || !isAllowedFlowAttachmentType(value.type))
       fail('attachment type is invalid');
+    if (field.accept && !field.accept.includes(value.type))
+      fail(`initial answer ${field.id} has a disallowed attachment type`);
     if (!boundedInteger(value.size, 0, field.maxFileSize ?? 5 * 1024 * 1024))
       fail('attachment size is invalid');
     if (

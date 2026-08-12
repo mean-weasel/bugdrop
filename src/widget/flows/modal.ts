@@ -1,3 +1,4 @@
+/* eslint-disable max-lines */
 import { createRuntimeId } from '../variants/form';
 import { closeActiveVariantModal } from '../variants/modal-coordinator';
 import type { SubmissionResult } from '../variants/public-types';
@@ -171,17 +172,27 @@ class FlowModalController {
     surface: HTMLElement
   ): Promise<void> {
     if (this.busy) return;
+    this.busy = true;
     if (screen.type === 'form') {
       const values = await this.currentForm?.collect();
-      if (!values || this.closed) return;
+      if (!values || this.closed) {
+        this.busy = false;
+        return;
+      }
       this.runtime.setFormAnswers(screen.form, values);
     }
     if (screen.type === 'screenshot') {
+      this.busy = false;
       await this.capture(screen, surface);
       return;
     }
-    if (!this.runtime.next()) await this.finish();
-    else this.render();
+    if (!this.runtime.next()) {
+      this.busy = false;
+      await this.finish();
+    } else {
+      this.busy = false;
+      this.render();
+    }
   }
 
   private async capture(screen: Readonly<ScreenshotScreen>, surface: HTMLElement): Promise<void> {
@@ -304,12 +315,4 @@ class FlowModalController {
   private onBackdrop(event: PointerEvent): void {
     if (event.target === this.state.overlay) this.close();
   }
-}
-
-export function createBusyOpenedFlow(flowId: string): OpenedFlow {
-  return Object.freeze({
-    instanceId: createRuntimeId(flowId),
-    result: Promise.resolve<FlowOutcome>({ status: 'busy' }),
-    close() {},
-  });
 }

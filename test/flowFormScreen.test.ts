@@ -76,6 +76,46 @@ describe('flow form screen', () => {
     expect(controller.element.textContent).toContain('unsupported file type');
   });
 
+  it('does not let an older file read overwrite a newer selection', async () => {
+    const readers: Array<{ file?: File; resolve(): void }> = [];
+    class ControlledReader {
+      result: string | ArrayBuffer | null = null;
+      private load: (() => void) | null = null;
+      addEventListener(type: string, listener: () => void) {
+        if (type === 'load') this.load = listener;
+      }
+      readAsDataURL(file: File) {
+        const entry = {
+          file,
+          resolve: () => {
+            this.result = `data:${file.type};base64,QQ==`;
+            this.load?.();
+          },
+        };
+        readers.push(entry);
+      }
+    }
+    vi.stubGlobal('FileReader', ControlledReader);
+    const controller = createFlowFormScreen(form, 'instance', { 'details.agree': true });
+    const input = controller.element.querySelector<HTMLInputElement>('#instance-files')!;
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: [new File(['a'], 'old.png', { type: 'image/png' })],
+    });
+    input.dispatchEvent(new Event('change'));
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: [new File(['b'], 'new.png', { type: 'image/png' })],
+    });
+    input.dispatchEvent(new Event('change'));
+    readers[1]!.resolve();
+    await Promise.resolve();
+    readers[0]!.resolve();
+    await Promise.resolve();
+    await expect(controller.collect()).resolves.toMatchObject({ files: [{ name: 'new.png' }] });
+    vi.unstubAllGlobals();
+  });
+
   it('snapshots the last valid attachment after a read failure without accepting it forward', async () => {
     const previous = {
       name: 'previous.txt',
