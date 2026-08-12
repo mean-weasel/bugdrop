@@ -139,7 +139,7 @@ describe('GitHub API boundary', () => {
 
   it('creates issues and classifies only structured label validation failures', async () => {
     const issue = { number: 7, html_url: 'https://github.com/acme/widgets/issues/7' };
-    let fetchMock = expectRequests([
+    const fetchMock = expectRequests([
       {
         url: `${API_ROOT}/issues`,
         method: 'POST',
@@ -152,7 +152,7 @@ describe('GitHub API boundary', () => {
     ).resolves.toEqual(issue);
     expect(fetchMock).toHaveBeenCalledOnce();
 
-    fetchMock = expectRequests([
+    expectRequests([
       {
         url: `${API_ROOT}/issues`,
         method: 'POST',
