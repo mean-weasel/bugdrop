@@ -136,13 +136,22 @@
     document.body.appendChild(link);
   }
 
-  function relabelLocalIssueLink() {
+  function relabelLocalIssueLink(issueUrl, localUrl) {
     var attempts = 0;
     var timer = window.setInterval(function () {
       attempts += 1;
       var root = document.querySelector('#bugdrop-host');
-      var link = root && root.shadowRoot && root.shadowRoot.querySelector('.bd-issue-link');
-      if (link && link.getAttribute('href').indexOf('/test/submissions.html') !== -1) {
+      var legacyLink = root && root.shadowRoot && root.shadowRoot.querySelector('.bd-issue-link');
+      var variantLinks = Array.from(document.querySelectorAll('[data-bugdrop-owned]'))
+        .map(function (host) {
+          return host.shadowRoot && host.shadowRoot.querySelector('.bdv-success-link');
+        })
+        .filter(Boolean);
+      var link = [legacyLink].concat(variantLinks).find(function (candidate) {
+        return candidate && candidate.href === issueUrl;
+      });
+      if (link) {
+        link.href = localUrl;
         Array.from(link.childNodes).forEach(function (node) {
           if (node.nodeType === Node.TEXT_NODE) node.remove();
         });
@@ -173,24 +182,38 @@
   }
 
   window.fetch = async function (input, init) {
-    var url = typeof input === 'string' ? input : input.url;
+    var url =
+      typeof input === 'string'
+        ? input
+        : typeof URL !== 'undefined' && input instanceof URL
+          ? input.href
+          : input.url;
 
-    if (url.indexOf('/api/check/') !== -1) {
+    if (typeof url === 'string' && url.indexOf('/api/check/') !== -1) {
       return new Response(JSON.stringify({ installed: true }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
     }
 
-    if (url.endsWith('/feedback')) {
+    if (typeof url === 'string' && url.endsWith('/feedback')) {
       var payload = await readPayload(input, init);
       var id = await create(payload);
-      relabelLocalIssueLink();
+      var localUrl = window.location.origin + '/test/submissions.html?id=' + id;
+      var issueUrl = localUrl;
+      if (
+        payload &&
+        payload.kind === 'bugdrop.variant-submission' &&
+        typeof payload.repo === 'string'
+      ) {
+        issueUrl = 'https://github.com/' + payload.repo + '/issues/' + id;
+      }
+      relabelLocalIssueLink(issueUrl, localUrl);
       return new Response(
         JSON.stringify({
           success: true,
           issueNumber: id,
-          issueUrl: window.location.origin + '/test/submissions.html?id=' + id,
+          issueUrl: issueUrl,
           isPublic: true,
         }),
         { status: 200, headers: { 'content-type': 'application/json' } }
