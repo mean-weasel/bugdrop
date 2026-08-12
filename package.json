@@ -90,7 +90,7 @@
     "globals": "^16.5.0",
     "husky": "^9.1.7",
     "jsdom": "^29.0.1",
-    "knip": "^5.76.1",
+    "knip": "^6.32.0",
     "lint-staged": "^17.3.0",
     "prettier": "^3.9.6",
     "typescript": "^5.7.2",
