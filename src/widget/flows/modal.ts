@@ -158,12 +158,17 @@ class FlowModalController {
 
   private async back(screen: NonNullable<ReturnType<FlowRuntime['current']>>): Promise<void> {
     if (this.busy) return;
+    this.busy = true;
     if (screen.type === 'form') {
       const values = await this.currentForm?.snapshot();
-      if (values === null || this.closed) return;
+      if (values === null || this.closed) {
+        this.busy = false;
+        return;
+      }
       if (values) this.runtime.setFormAnswers(screen.form, values);
     }
     this.runtime.back();
+    this.busy = false;
     this.render();
   }
 

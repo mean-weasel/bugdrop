@@ -176,6 +176,15 @@ describe('FlowConfig validation', () => {
     );
   });
 
+  it('rejects an Issue title sourced only from an optional answer', () => {
+    const config = flowConfig();
+    const summary = config.forms[0]!.fields.find(field => field.id === 'summary')!;
+    summary.required = false;
+    expect(() => validateAndFreezeFlowConfig(config)).toThrow(
+      'issue title must contain text or reference a required answer'
+    );
+  });
+
   it('rejects answer conditions outside the referenced field domain', () => {
     const unknownChoice = flowConfig();
     unknownChoice.screens[2]!.when = { answer: 'triage.kind', equals: 'other' };

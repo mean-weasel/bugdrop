@@ -194,6 +194,35 @@ describe('flow manager and modal', () => {
     expect(submit).not.toHaveBeenCalled();
     opened.close();
   });
+  it('ignores a second Back action while form snapshotting is in progress', async () => {
+    const config = flowConfig();
+    config.forms.push({
+      id: 'final',
+      title: 'Final form',
+      fields: [{ id: 'note', type: 'shortText', label: 'Final note' }],
+    });
+    config.screens = [
+      { id: 'first', type: 'form', form: 'triage' },
+      { id: 'second', type: 'form', form: 'detail' },
+      { id: 'third', type: 'form', form: 'final' },
+    ];
+    const opened = createFlowManager({ repo: 'owner/repo', apiUrl: '/api' }, ports)
+      .register(config)
+      .open({ initialAnswers: { 'triage.summary': 'Title' } });
+    await Promise.resolve();
+    const host = document.querySelector<HTMLElement>('[data-bugdrop-flow]')!;
+    host.shadowRoot?.querySelector<HTMLButtonElement>('.bdv-submit')?.click();
+    await Promise.resolve();
+    host.shadowRoot?.querySelector<HTMLButtonElement>('.bdv-submit')?.click();
+    await Promise.resolve();
+    const back = host.shadowRoot?.querySelector<HTMLButtonElement>('.bdv-back');
+    back?.click();
+    back?.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(host.shadowRoot?.querySelector('.bdv-title')?.textContent).toBe('Add details');
+    opened.close();
+  });
   it('opens accessibly, restores focus and closes idempotently', async () => {
     const trigger = document.createElement('button');
     document.body.appendChild(trigger);

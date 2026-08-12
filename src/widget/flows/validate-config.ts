@@ -272,15 +272,23 @@ function validateTextAnswer(path: string, answers: Map<string, FlowField>, label
 }
 function validateIssueTitleTemplate(template: string, answers: Map<string, FlowField>) {
   let cursor = 0;
+  let hasRequiredSource = false;
+  let literal = '';
   for (const match of template.matchAll(/{{\s*([^{}]+?)\s*}}/g)) {
     const index = match.index!;
     const before = template.slice(cursor, index);
+    literal += before;
     if (before.includes('{{') || before.includes('}}') || before.endsWith('{'))
       fail('issue title template is malformed');
-    validateScalarAnswer(match[1]!.trim(), answers, 'issue title');
+    const path = match[1]!.trim();
+    validateScalarAnswer(path, answers, 'issue title');
+    hasRequiredSource ||= answers.get(path)?.required === true;
     cursor = index + match[0].length;
     if (template[cursor] === '}') fail('issue title template is malformed');
   }
   const after = template.slice(cursor);
   if (after.includes('{{') || after.includes('}}')) fail('issue title template is malformed');
+  literal += after;
+  if (!literal.trim() && !hasRequiredSource)
+    fail('issue title must contain text or reference a required answer');
 }
