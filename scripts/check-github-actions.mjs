@@ -21,6 +21,7 @@ const minimumMajor = new Map([
 
 const approvedReleases = new Map([
   ['actions/attest@a1948c3f048ba23858d222213b7c278aabede763', 'v4.1.1'],
+  ['actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6', 'v4.2.2'],
   ['actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9', 'v6.1.0'],
   ['actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9', 'v6.1.0'],
   ['actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25', 'v5.1.0'],
