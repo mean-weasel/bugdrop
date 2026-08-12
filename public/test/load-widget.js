@@ -13,6 +13,20 @@
     });
   }
 
+  function loadRequiredScript(src) {
+    return new Promise(function (resolve, reject) {
+      var script = document.createElement('script');
+      script.src = src;
+      script.onload = function () {
+        resolve();
+      };
+      script.onerror = function () {
+        reject(new Error('Failed to load required script: ' + src));
+      };
+      document.head.appendChild(script);
+    });
+  }
+
   function loadOptionalScript(src) {
     return fetch(src)
       .then(function (response) {
@@ -77,7 +91,7 @@
       return Promise.resolve();
     }
 
-    return loadOptionalScript('/test/local-submissions.js');
+    return loadRequiredScript('/test/local-submissions.js');
   }
 
   window.loadBugDropTestWidget = function loadBugDropTestWidget(options) {

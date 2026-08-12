@@ -62,7 +62,10 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: /.*\.(?:live|live-radix|cross-browser-live|issue-canary|radix)\.spec\.ts$/,
+      testIgnore: [
+        /.*\.(?:live|live-radix|cross-browser-live|issue-canary|radix)\.spec\.ts$/,
+        /default-flow-production\.spec\.ts$/,
+      ],
     },
     {
       name: 'chromium-radix',

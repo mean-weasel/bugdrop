@@ -3,8 +3,8 @@ import type { IssueLinkVisibility } from '../ui';
 
 export const DEFAULT_DEFINITION_ID = 'bugdrop-default@1' as const;
 
-export type DefaultWelcomePolicy = 'once' | 'always' | 'never';
-export type DefaultScreenshotMode = 'optional' | 'auto' | 'required';
+type DefaultWelcomePolicy = 'once' | 'always' | 'never';
+type DefaultScreenshotMode = 'optional' | 'auto' | 'required';
 type DefaultCategory = 'bug' | 'feature' | 'question';
 type DefaultCategoryLabels = Partial<Record<DefaultCategory, string | readonly string[]>>;
 

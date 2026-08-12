@@ -7,7 +7,7 @@ import type {
   DefaultWelcomeStep,
 } from './definition';
 
-export type DefaultPreflightResult =
+type DefaultPreflightResult =
   { status: 'installed' } | { status: 'not_installed' | 'unreachable'; appName?: string };
 
 export interface DefaultJourneyPorts<Details, Capture> {
