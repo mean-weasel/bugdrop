@@ -168,6 +168,14 @@ describe('FlowConfig validation', () => {
     expect(() => validateAndFreezeFlowConfig(classification)).toThrow('classification');
   });
 
+  it('requires submitter mappings to reference text fields', () => {
+    const config = flowConfig();
+    config.evidence = { ...config.evidence, submitter: { name: 'detail.logs' } };
+    expect(() => validateAndFreezeFlowConfig(config)).toThrow(
+      'submitter name must reference a text'
+    );
+  });
+
   it('rejects answer conditions outside the referenced field domain', () => {
     const unknownChoice = flowConfig();
     unknownChoice.screens[2]!.when = { answer: 'triage.kind', equals: 'other' };

@@ -247,9 +247,9 @@ function validateEvidence(evidence: FlowConfig['evidence'], answers: Map<string,
     if (!evidence.submitter.name && !evidence.submitter.email)
       fail('evidence submitter must map name or email');
     if (evidence.submitter.name)
-      validateScalarAnswer(evidence.submitter.name, answers, 'submitter name');
+      validateTextAnswer(evidence.submitter.name, answers, 'submitter name');
     if (evidence.submitter.email)
-      validateScalarAnswer(evidence.submitter.email, answers, 'submitter email');
+      validateTextAnswer(evidence.submitter.email, answers, 'submitter email');
   }
 }
 function typedPath(
@@ -264,6 +264,11 @@ function typedPath(
 function validateScalarAnswer(path: string, answers: Map<string, FlowField>, label: string) {
   if (!PATH.test(path) || !answers.has(path) || answers.get(path)?.type === 'attachments')
     fail(`${label} references an unknown scalar answer: ${path}`);
+}
+function validateTextAnswer(path: string, answers: Map<string, FlowField>, label: string) {
+  const type = answers.get(path)?.type;
+  if (!PATH.test(path) || (type !== 'shortText' && type !== 'longText'))
+    fail(`${label} must reference a text field`);
 }
 function validateIssueTitleTemplate(template: string, answers: Map<string, FlowField>) {
   let cursor = 0;
