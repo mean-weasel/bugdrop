@@ -35,6 +35,11 @@ import { closeActiveVariantModal } from './variants/modal-coordinator';
 import { resolveAccentColor } from '../defaults';
 import type { BugDropPublicAPI } from './variants/public-types';
 import { createVariantManager, type VariantManager } from './variants/manager';
+import { runDefaultJourney } from './default-flow/runtime';
+import { normalizeDefaultDefinition } from './default-flow/definition';
+
+declare const __BUGDROP_ENABLE_TEST_HOOKS__: boolean;
+declare const __BUGDROP_DEFAULT_FLOW_RUNTIME__: 'fixed' | 'private';
 
 type FeedbackCategory = 'bug' | 'feature' | 'question';
 type CategoryLabelConfig = Partial<Record<FeedbackCategory, string | string[]>>;
@@ -1065,17 +1070,43 @@ async function openFeedbackFlow(
   // Mark modal as open
   _isModalOpen = true;
 
-  // Check if app is installed
-  const { status: installStatus, appName } = await checkInstallation(config);
-  if (installStatus === 'not_installed') {
-    showInstallPrompt(root, config, undefined, appName);
-    return;
-  }
-  if (installStatus === 'unreachable') {
-    showInstallPrompt(root, config, t().apiUnreachableMessage, appName);
-    return;
+  if (
+    __BUGDROP_DEFAULT_FLOW_RUNTIME__ === 'private' ||
+    (__BUGDROP_ENABLE_TEST_HOOKS__ && shouldUsePrivateDefaultJourney())
+  ) {
+    const outcome = await runPrivateDefaultJourney(root, config, opts);
+    if (outcome === 'preflight-blocked') return;
+  } else {
+    // Check if app is installed
+    const { status: installStatus, appName } = await checkInstallation(config);
+    if (installStatus === 'not_installed') {
+      showInstallPrompt(root, config, undefined, appName);
+      return;
+    }
+    if (installStatus === 'unreachable') {
+      showInstallPrompt(root, config, t().apiUnreachableMessage, appName);
+      return;
+    }
+
+    await runFixedDefaultJourney(root, config, opts);
   }
 
+  // Flow complete
+  _isModalOpen = false;
+}
+
+function shouldUsePrivateDefaultJourney(): boolean {
+  return (
+    (window as unknown as { __bugdropDefaultFlowRuntime?: unknown }).__bugdropDefaultFlowRuntime ===
+    'private'
+  );
+}
+
+async function runFixedDefaultJourney(
+  root: HTMLElement,
+  config: WidgetConfig,
+  opts?: { skipWelcome?: boolean }
+) {
   // Step 1: Welcome screen (conditional)
   const skipWelcome =
     opts?.skipWelcome ||
@@ -1131,9 +1162,113 @@ async function openFeedbackFlow(
     });
     break;
   }
+}
 
-  // Flow complete
-  _isModalOpen = false;
+async function runPrivateDefaultJourney(
+  root: HTMLElement,
+  config: WidgetConfig,
+  opts?: { skipWelcome?: boolean }
+) {
+  const definition = normalizeDefaultDefinition({
+    repo: config.repo,
+    apiUrl: config.apiUrl,
+    authTokenProvider: config.authTokenProvider,
+    welcome: config.welcome,
+    screenshotMode: config.screenshotMode,
+    skipWelcome: Boolean(opts?.skipWelcome),
+    hasSeenWelcome: hasSeenWelcome(config.repo),
+    showName: config.showName,
+    requireName: config.requireName,
+    showEmail: config.showEmail,
+    requireEmail: config.requireEmail,
+    sendConsoleLogs: config.sendConsoleLogs,
+    screenshotScale: config.screenshotScale,
+    elementContextMaxArea: config.elementContextMaxArea,
+    accentColor: config.accentColor,
+    categoryLabels: config.categoryLabels,
+    issueLinkVisibility: config.issueLinkVisibility,
+  });
+
+  return runDefaultJourney<
+    FeedbackFormResult,
+    Awaited<ReturnType<typeof runScreenshotCaptureFlow>>
+  >(definition, {
+    preflight: recipe =>
+      checkInstallation({
+        ...config,
+        repo: recipe.repo,
+        apiUrl: recipe.apiUrl,
+        authTokenProvider: recipe.authTokenProvider,
+      }),
+    showPreflightFailure: result =>
+      showInstallPrompt(
+        root,
+        config,
+        result.status === 'unreachable' ? t().apiUnreachableMessage : undefined,
+        result.appName
+      ),
+    showWelcome: () => showWelcomeScreen(root),
+    rememberWelcome: () => markWelcomeSeen(definition.steps[1].repo),
+    showDetails: (step, previous) =>
+      showFeedbackFormWithScreenshotOption(
+        root,
+        {
+          ...config,
+          repo: step.repo,
+          showName: step.showName,
+          requireName: step.requireName,
+          showEmail: step.showEmail,
+          requireEmail: step.requireEmail,
+          sendConsoleLogs: step.sendConsoleLogs,
+          screenshotMode: definition.steps[2].mode,
+        },
+        previous
+      ),
+    capture: async (step, details) => {
+      const captureConfig: WidgetConfig = {
+        ...config,
+        repo: step.repo,
+        screenshotMode: step.mode,
+        screenshotScale: step.screenshotScale,
+        elementContextMaxArea: step.elementContextMaxArea,
+        accentColor: step.accentColor,
+      };
+      const result = await runScreenshotCaptureFlow(
+        root,
+        captureConfig,
+        details.includeScreenshot,
+        () => rememberComplexScreenshotSkip(captureConfig, details)
+      );
+      return { ...result, returnToDetails: result.returnToForm };
+    },
+    submit: (recipe, details, capture) =>
+      submitFeedback(
+        root,
+        {
+          ...config,
+          repo: recipe.repo,
+          apiUrl: recipe.apiUrl,
+          authTokenProvider: recipe.authTokenProvider,
+          categoryLabels: recipe.categoryLabels as CategoryLabelConfig | undefined,
+          issueLinkVisibility: recipe.issueLinkVisibility,
+        },
+        {
+          title: details.title,
+          description: details.description,
+          category: details.category,
+          name: details.name,
+          email: details.email,
+          screenshot: capture.screenshot,
+          attachments: details.attachments,
+          elementSelector: capture.elementSelector,
+          fullElementSelector: capture.fullElementSelector,
+          selectedElementHighlightColor: capture.elementSelector
+            ? resolveAccentColor(config.accentColor)
+            : null,
+          sendConsoleLogs: details.sendConsoleLogs,
+        }
+      ),
+  });
 }
 
 async function checkInstallation(
