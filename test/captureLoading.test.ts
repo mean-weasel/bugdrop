@@ -35,6 +35,7 @@ afterEach(() => {
   vi.doUnmock('../src/widget/screenshot');
   vi.resetModules();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('capture loading timing', () => {
@@ -76,6 +77,27 @@ describe('capture loading timing', () => {
     await captureAreaWithLoading(root, new DOMRect(0, 0, 100, 100));
 
     expect(events).toEqual(['loading:append', 'capture:start']);
+  });
+
+  it('does not start capture when aborted during the loading paint', async () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    const capture = vi.fn(async () => successfulCapture);
+    const controller = new AbortController();
+    const root = document.createElement('div');
+    const { capturePromiseWithLoading } = await import('../src/widget/capture-loading');
+
+    const result = capturePromiseWithLoading(root, capture, { signal: controller.signal });
+    controller.abort();
+    frames.shift()?.(0);
+    await Promise.resolve();
+    frames.shift()?.(0);
+
+    await expect(result).resolves.toEqual({ kind: 'cancelled' });
+    expect(capture).not.toHaveBeenCalled();
   });
 
   it('returns to the picker from capture failures instead of retrying internally', async () => {

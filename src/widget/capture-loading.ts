@@ -67,6 +67,10 @@ export async function capturePromiseWithLoading(
     if (loadingModal) {
       await waitForLoadingPaint();
     }
+    if (opts?.signal?.aborted) {
+      loadingModal?.remove();
+      return { kind: 'cancelled' };
+    }
     const capturePromise =
       typeof captureOperation === 'function' ? captureOperation() : captureOperation;
     const screenshot = await captureUntilAborted(capturePromise, opts?.signal);

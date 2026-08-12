@@ -116,6 +116,20 @@ describe('flow manager and modal', () => {
         },
       })
     ).toThrow('attachment size');
+    expect(() =>
+      pngHandle.open({
+        initialAnswers: {
+          'detail.files': [
+            {
+              name: 'image.png',
+              type: 'image/png',
+              size: 1,
+              dataUrl: 'data:image/png;base64,A',
+            },
+          ],
+        },
+      })
+    ).toThrow('dataUrl');
     expect(preflight).not.toHaveBeenCalled();
     expect(document.body.childElementCount).toBe(0);
   });

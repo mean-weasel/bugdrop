@@ -272,9 +272,8 @@ function normalizeAttachments(field: AttachmentsField, raw: unknown): FlowAttach
     )
       fail('attachment dataUrl is invalid');
     const encoded = value.dataUrl.slice(value.dataUrl.indexOf(',') + 1);
-    const decodedSize =
-      Math.floor((encoded.length * 3) / 4) -
-      (encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0);
+    if (encoded.length % 4 !== 0) fail('attachment dataUrl is invalid');
+    const decodedSize = atob(encoded).length;
     if (decodedSize > (field.maxFileSize ?? 5 * 1024 * 1024)) fail('attachment size is invalid');
     return { name: value.name, type: value.type, size: value.size, dataUrl: value.dataUrl };
   });
