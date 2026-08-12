@@ -92,7 +92,7 @@ grep -Fq 'contents: read' <<< "$coverage_block" || fail 'coverage upload needs r
 grep -Fq 'id-token: write' <<< "$coverage_block" || fail 'coverage upload lacks OIDC permission'
 grep -Fq 'persist-credentials: false' <<< "$coverage_block" ||
   fail 'coverage checkout must not persist repository credentials'
-grep -Fq 'uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0' <<< "$coverage_block" ||
+grep -Fq 'uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1' <<< "$coverage_block" ||
   fail 'coverage artifact download must use the reviewed immutable Node 24 action'
 grep -Fq 'codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0' <<< "$coverage_block" ||
   fail 'Codecov action must use the reviewed immutable v7.0.0 commit'
