@@ -83,6 +83,33 @@ describe('flow legacy submission', () => {
     ).rejects.toThrow('Nope');
   });
 
+  it('accepts canonical GitHub Issue URLs when repository casing differs', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: true,
+              issueNumber: 37,
+              issueUrl: 'https://github.com/owner/repo/issues/37',
+              isPublic: true,
+            })
+          )
+      )
+    );
+
+    await expect(
+      submitFlow(
+        { repo: 'Owner/Repo', apiUrl: '/api' },
+        flowConfig(),
+        { 'triage.summary': 'Crash' },
+        {},
+        null
+      )
+    ).resolves.toMatchObject({ issueNumber: 37 });
+  });
+
   it.each([
     [0, 'https://github.com/owner/repo/issues/0'],
     [9, 'https://example.com/owner/repo/issues/9'],

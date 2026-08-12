@@ -101,7 +101,11 @@ export function createAttachmentsController(
     required: Boolean(field.required),
     element: scaffold.wrapper,
     async read(validate) {
-      await pending;
+      while (true) {
+        const currentRead = pending;
+        await currentRead;
+        if (currentRead === pending) break;
+      }
       return readFailed && validate ? { ok: false } : { ok: true, value: values };
     },
     setRequiredError(show) {

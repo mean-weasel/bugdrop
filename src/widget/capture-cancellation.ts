@@ -6,18 +6,14 @@ export function abortableCapture<T>(
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     let aborted = false;
-    let observer: MutationObserver | null = null;
     const cleanup = () => {
       signal.removeEventListener('abort', abort);
-      observer?.disconnect();
     };
     const abort = () => {
       if (aborted) return;
       aborted = true;
       cancelCaptureUi(root);
-      observer = new MutationObserver(() => cancelCaptureUi(root));
-      observer.observe(root, { childList: true, subtree: true });
-      observer.observe(document.body, { childList: true, subtree: true });
+      cleanup();
       resolve(cancelledValue);
     };
     signal.addEventListener('abort', abort, { once: true });

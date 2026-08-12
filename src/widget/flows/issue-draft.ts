@@ -53,7 +53,7 @@ function formatValue(
       .split('\n')
       .map(line => `> ${line}`)
       .join('\n');
-  if (format === 'code') return `\`${rendered.replaceAll('`', '\\`')}\``;
+  if (format === 'code') return formatInlineCode(rendered);
   if (format === 'stars' && typeof value === 'number' && 'answer' in section) {
     const field = findField(config, section.answer);
     const scale = field?.type === 'rating' ? (field.scale ?? 5) : 5;
@@ -65,6 +65,13 @@ function formatValue(
       return field.options.find(option => option.value === value)?.label ?? rendered;
   }
   return rendered;
+}
+
+function formatInlineCode(value: string): string {
+  const longestRun = Math.max(0, ...[...value.matchAll(/`+/g)].map(match => match[0].length));
+  const delimiter = '`'.repeat(longestRun + 1);
+  const padding = value.startsWith('`') || value.endsWith('`') ? ' ' : '';
+  return `${delimiter}${padding}${value}${padding}${delimiter}`;
 }
 
 function findField(config: Readonly<FlowConfig>, path: string) {

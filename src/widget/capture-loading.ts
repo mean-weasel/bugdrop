@@ -20,6 +20,7 @@ type CaptureLoadingOptions = {
   allowChooseAgain?: boolean;
   showLoading?: boolean;
   captureOptions?: CaptureScreenshotOptions;
+  signal?: AbortSignal;
 };
 type CaptureOperation = Promise<CapturePayload> | (() => Promise<CapturePayload>);
 
@@ -68,12 +69,14 @@ export async function capturePromiseWithLoading(
     }
     const capturePromise =
       typeof captureOperation === 'function' ? captureOperation() : captureOperation;
-    const screenshot = await capturePromise;
+    const screenshot = await captureUntilAborted(capturePromise, opts?.signal);
     loadingModal?.remove();
+    if (screenshot === null) return { kind: 'cancelled' };
     return normalizeCaptureResult(screenshot);
   } catch (error) {
-    console.warn('[BugDrop] Screenshot capture failed:', error);
     loadingModal?.remove();
+    if (opts?.signal?.aborted) return { kind: 'cancelled' };
+    console.warn('[BugDrop] Screenshot capture failed:', error);
     const allowSkip = opts?.allowSkip !== false;
     const allowChooseAgain = opts?.allowChooseAgain !== false;
 
@@ -122,6 +125,28 @@ export async function capturePromiseWithLoading(
       });
     });
   }
+}
+
+function captureUntilAborted(
+  capture: Promise<CapturePayload>,
+  signal: AbortSignal | undefined
+): Promise<CapturePayload | null> {
+  if (!signal) return capture;
+  if (signal.aborted) return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    const abort = () => resolve(null);
+    signal.addEventListener('abort', abort, { once: true });
+    capture.then(
+      value => {
+        signal.removeEventListener('abort', abort);
+        resolve(value);
+      },
+      error => {
+        signal.removeEventListener('abort', abort);
+        reject(error);
+      }
+    );
+  });
 }
 
 function waitForLoadingPaint(): Promise<void> {

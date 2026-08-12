@@ -88,7 +88,7 @@ async function runScreenshotCaptureFlowInternal(
   onComplexScreenshotSkipped: () => void,
   signal?: AbortSignal
 ): Promise<CaptureFlowResult> {
-  if (config.screenshotMode === 'auto') return captureAutomaticScreenshot(root, config);
+  if (config.screenshotMode === 'auto') return captureAutomaticScreenshot(root, config, signal);
 
   if (!includeScreenshot) return emptyCaptureResult();
 
@@ -142,7 +142,8 @@ async function runScreenshotCaptureFlowInternal(
 
 async function captureAutomaticScreenshot(
   root: HTMLElement,
-  config: CaptureFlowConfig
+  config: CaptureFlowConfig,
+  signal?: AbortSignal
 ): Promise<CaptureFlowResult> {
   if (isFullPageDisabled()) {
     return emptyCaptureResult();
@@ -150,6 +151,7 @@ async function captureAutomaticScreenshot(
 
   const result = await captureWithLoading(root, undefined, config.screenshotScale, {
     allowChooseAgain: false,
+    signal,
   });
   if (result.kind === 'cancelled') {
     return { ...emptyCaptureResult(), returnToForm: true };
@@ -181,9 +183,9 @@ async function captureChosenScreenshot(
     case 'skip':
       return emptyChosenCaptureResult('explicit-skip');
     case 'viewport':
-      return captureFromViewportChoice(root, screenshotChoice, screenshotRequired);
+      return captureFromViewportChoice(root, screenshotChoice, screenshotRequired, signal);
     case 'capture':
-      return captureFromFullPageChoice(root, config, screenshotRequired);
+      return captureFromFullPageChoice(root, config, screenshotRequired, signal);
     case 'element':
       return captureFromElementChoice(root, config, screenshotRequired, signal);
     case 'area':
@@ -196,11 +198,13 @@ async function captureChosenScreenshot(
 async function captureFromViewportChoice(
   root: HTMLElement,
   choice: Extract<ScreenshotChoice, { kind: 'viewport' }>,
-  screenshotRequired: boolean
+  screenshotRequired: boolean,
+  signal?: AbortSignal
 ): Promise<ChosenCaptureResult> {
   const result = await capturePromiseWithLoading(root, choice.capture, {
     allowSkip: !screenshotRequired,
     showLoading: false,
+    signal,
   });
   if (result.kind === 'cancelled') return { kind: 'returnToForm' };
   if (result.kind === 'choose-again') return { kind: 'chooseAgain' };
@@ -221,10 +225,12 @@ async function captureFromViewportChoice(
 async function captureFromFullPageChoice(
   root: HTMLElement,
   config: CaptureFlowConfig,
-  screenshotRequired: boolean
+  screenshotRequired: boolean,
+  signal?: AbortSignal
 ): Promise<ChosenCaptureResult> {
   const result = await captureWithLoading(root, undefined, config.screenshotScale, {
     allowSkip: !screenshotRequired,
+    signal,
   });
   if (result.kind === 'cancelled') return { kind: 'returnToForm' };
   if (result.kind === 'choose-again') return { kind: 'chooseAgain' };
@@ -271,6 +277,7 @@ async function captureFromElementChoice(
       },
       pixelRatio: DEFAULT_SELECTED_ELEMENT_SCREENSHOT_PIXEL_RATIO,
     },
+    signal,
   });
   if (result.kind === 'cancelled') return { kind: 'returnToForm' };
   if (result.kind === 'choose-again') return { kind: 'chooseAgain' };
@@ -306,6 +313,7 @@ async function captureFromAreaChoice(
 
   const result = await captureAreaWithLoading(root, rect, config.screenshotScale, {
     allowSkip: !screenshotRequired,
+    signal,
   });
   if (result.kind === 'cancelled') return { kind: 'returnToForm' };
   if (result.kind === 'choose-again') return { kind: 'chooseAgain' };

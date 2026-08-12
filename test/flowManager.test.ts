@@ -95,6 +95,27 @@ describe('flow manager and modal', () => {
         },
       })
     ).toThrow('disallowed attachment type');
+    const oneByte = flowConfig();
+    const oneByteAttachments = oneByte.forms[1]!.fields.find(field => field.id === 'files');
+    if (oneByteAttachments?.type === 'attachments') oneByteAttachments.maxFileSize = 1;
+    const oneByteHandle = createFlowManager(
+      { repo: 'owner/repo', apiUrl: '/api' },
+      { ...ports, preflight }
+    ).register(oneByte);
+    expect(() =>
+      oneByteHandle.open({
+        initialAnswers: {
+          'detail.files': [
+            {
+              name: 'document.pdf',
+              type: 'application/pdf',
+              size: 1,
+              dataUrl: 'data:application/pdf;base64,JVBERi0=',
+            },
+          ],
+        },
+      })
+    ).toThrow('attachment size');
     expect(preflight).not.toHaveBeenCalled();
     expect(document.body.childElementCount).toBe(0);
   });

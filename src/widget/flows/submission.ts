@@ -76,7 +76,7 @@ function isCanonicalIssueUrl(value: string, repo: string, issueNumber: number): 
     const url = new URL(value);
     return (
       url.origin === 'https://github.com' &&
-      url.pathname === `/${repo}/issues/${issueNumber}` &&
+      url.pathname.toLowerCase() === `/${repo}/issues/${issueNumber}`.toLowerCase() &&
       !url.search &&
       !url.hash
     );

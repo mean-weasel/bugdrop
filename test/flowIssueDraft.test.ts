@@ -45,4 +45,17 @@ describe('flow Issue mapping', () => {
     const draft = compileFlowIssueDraft(flowConfig(), { 'triage.summary': 'x'.repeat(500) }, {});
     expect(draft.title).toHaveLength(256);
   });
+
+  it('keeps embedded backticks inside configured code spans', () => {
+    const config = flowConfig();
+    config.issue.sections = [{ heading: 'Build', context: 'build', format: 'code' }];
+
+    expect(
+      compileFlowIssueDraft(
+        config,
+        { 'triage.summary': 'Build report' },
+        { build: 'build `alpha`' }
+      ).description
+    ).toBe('## Build\n\n`` build `alpha` ``');
+  });
 });

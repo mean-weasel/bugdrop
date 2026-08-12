@@ -116,6 +116,61 @@ describe('flow form screen', () => {
     vi.unstubAllGlobals();
   });
 
+  it('waits for a replacement selection made while collection is pending', async () => {
+    const readers: Array<{ file?: File; resolve(): void }> = [];
+    class ControlledReader {
+      result: string | ArrayBuffer | null = null;
+      private load: (() => void) | null = null;
+      addEventListener(type: string, listener: () => void) {
+        if (type === 'load') this.load = listener;
+      }
+      readAsDataURL(file: File) {
+        readers.push({
+          file,
+          resolve: () => {
+            this.result = `data:${file.type};base64,QQ==`;
+            this.load?.();
+          },
+        });
+      }
+    }
+    vi.stubGlobal('FileReader', ControlledReader);
+    const previous = {
+      name: 'previous.png',
+      type: 'image/png',
+      size: 1,
+      dataUrl: 'data:image/png;base64,QQ==',
+    };
+    const controller = createFlowFormScreen(form, 'instance', {
+      'details.agree': true,
+      'details.files': [previous],
+    });
+    const input = controller.element.querySelector<HTMLInputElement>('#instance-files')!;
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: [new File(['a'], 'a.png', { type: 'image/png' })],
+    });
+    input.dispatchEvent(new Event('change'));
+    let settled = false;
+    const collected = controller.collect().then(value => {
+      settled = true;
+      return value;
+    });
+    await Promise.resolve();
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: [new File(['b'], 'b.png', { type: 'image/png' })],
+    });
+    input.dispatchEvent(new Event('change'));
+    readers[0]!.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    readers[1]!.resolve();
+    await expect(collected).resolves.toMatchObject({ files: [{ name: 'b.png' }] });
+    vi.unstubAllGlobals();
+  });
+
   it('snapshots the last valid attachment after a read failure without accepting it forward', async () => {
     const previous = {
       name: 'previous.txt',
