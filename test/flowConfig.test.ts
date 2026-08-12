@@ -123,6 +123,15 @@ describe('FlowConfig validation', () => {
     ['rating scale', { id: 'summary', type: 'rating', label: 'Summary', scale: 6 }],
     ['rating icon', { id: 'summary', type: 'rating', label: 'Summary', icon: 'heart' }],
     [
+      'attachment accept type',
+      {
+        id: 'summary',
+        type: 'attachments',
+        label: 'Summary',
+        accept: ['application/zip'],
+      },
+    ],
+    [
       'choice display',
       {
         id: 'summary',

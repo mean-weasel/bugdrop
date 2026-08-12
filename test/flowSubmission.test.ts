@@ -17,6 +17,7 @@ describe('flow legacy submission', () => {
             issueNumber: 9,
             issueUrl: 'https://github.com/owner/repo/issues/9',
             isPublic: false,
+            labelMappingWarnings: ['Skipped an invalid label'],
           }),
           { status: 200 }
         )
@@ -24,7 +25,11 @@ describe('flow legacy submission', () => {
     vi.stubGlobal('fetch', fetchMock);
     vi.stubGlobal('crypto', { randomUUID: () => 'id' });
     await submitFlow(
-      { repo: 'owner/repo', apiUrl: '/api' },
+      {
+        repo: 'owner/repo',
+        apiUrl: '/api',
+        categoryLabels: { bug: ['defect', 'needs-triage'] },
+      },
       config,
       {
         'triage.summary': 'Crash',
@@ -45,12 +50,22 @@ describe('flow legacy submission', () => {
       repo: 'owner/repo',
       title: 'Crash',
       category: 'bug',
+      categoryLabels: { bug: ['defect', 'needs-triage'] },
       screenshot: 'data:image/png;base64,x',
       attachments: [{ name: 'trace.txt' }],
       submitter: { name: 'Ada' },
       metadata: { elementSelector: '#save' },
     });
     expect(body.kind).toBeUndefined();
+    await expect(
+      submitFlow(
+        { repo: 'owner/repo', apiUrl: '/api' },
+        config,
+        { 'triage.summary': 'Crash' },
+        {},
+        null
+      )
+    ).resolves.toMatchObject({ labelMappingWarnings: ['Skipped an invalid label'] });
   });
   it('keeps retryable failures explicit', async () => {
     vi.stubGlobal(

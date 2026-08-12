@@ -1,4 +1,4 @@
-import type { FlowAttachment } from './field-validation';
+import { isAllowedFlowAttachmentType, type FlowAttachment } from './field-validation';
 import type { AttachmentsField, CheckboxField } from './public-types';
 
 export interface ExtraFieldController {
@@ -179,6 +179,8 @@ async function readFiles(
 }
 
 async function readAttachment(file: File, maxSize: number): Promise<FlowAttachment> {
+  if (!isAllowedFlowAttachmentType(file.type))
+    throw new TypeError(`${file.name} has an unsupported file type.`);
   if (file.size > maxSize) throw new TypeError(`${file.name} is too large.`);
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();

@@ -171,4 +171,32 @@ test.describe('public modal FlowConfig V1', () => {
     await expect(host.getByRole('heading', { name: 'Thanks for your feedback!' })).toBeVisible();
     expect(submissions[0]).toMatchObject({ title: 'Idea title', description: '' });
   });
+
+  test('close tears down an in-progress screenshot chooser', async ({ page }) => {
+    await ready(page);
+    await register(page);
+    const host = page.locator('body > [data-bugdrop-flow="public-triage"]');
+    await host.getByRole('button', { name: 'Continue' }).click();
+    await host.getByLabel('Bug').click();
+    await host.getByLabel('Summary').fill('Close capture');
+    await host.getByRole('button', { name: 'Continue' }).click();
+    await host.getByRole('button', { name: 'Continue' }).click();
+    await host.getByRole('button', { name: 'Submit' }).click();
+    const chooser = page.locator('#bugdrop-host .bd-overlay');
+    await expect(chooser.getByRole('heading', { name: 'Capture Screenshot' })).toBeVisible();
+    await page.evaluate(() =>
+      (window as Window & { __publicFlow?: { close(): void } }).__publicFlow?.close()
+    );
+    await expect(host).toHaveCount(0);
+    await expect(chooser).toHaveCount(0);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as Window & { __publicFlow?: { result: Promise<unknown> } }).__publicFlow
+              ?.result
+        )
+      )
+      .toEqual({ status: 'closed' });
+  });
 });

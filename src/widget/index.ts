@@ -995,15 +995,17 @@ function exposeBugDropAPI(root: HTMLElement, config: WidgetConfig) {
           repo: config.repo,
           apiUrl: config.apiUrl,
           authTokenProvider: config.authTokenProvider,
+          categoryLabels: config.categoryLabels,
         },
         {
           preflight: () => checkInstallation(config),
-          capture: async (screen, includeScreenshot) => {
+          capture: async (screen, includeScreenshot, signal) => {
             const result = await runScreenshotCaptureFlow(
               root,
               { ...config, screenshotMode: screen.mode },
               includeScreenshot,
-              () => {}
+              () => {},
+              signal
             );
             return result;
           },

@@ -12,6 +12,7 @@ import {
   createScreenshotPrompt,
   createStatusSurface,
   createSuccessSurface,
+  deepActiveElement,
   firstFocusable,
   focusable,
   prepareDialog,
@@ -19,16 +20,15 @@ import {
 import type { FlowOpenOptions, FlowOutcome, OpenedFlow, ScreenshotScreen } from './public-types';
 import { FlowRuntime, type CaptureEvidence } from './runtime';
 import { createStyledFlowRoot } from './styles';
-
 export interface FlowModalPorts {
   preflight(): Promise<{ status: 'installed' | 'not_installed' | 'unreachable'; appName?: string }>;
   capture(
     screen: Readonly<ScreenshotScreen>,
-    include: boolean
+    include: boolean,
+    signal: AbortSignal
   ): Promise<CaptureEvidence & { returnToForm: boolean }>;
   submit(runtime: FlowRuntime): Promise<SubmissionResult>;
 }
-
 export function openFlowModal(
   definition: FlowDefinition,
   options: FlowOpenOptions | undefined,
@@ -38,7 +38,6 @@ export function openFlowModal(
   closeActiveVariantModal();
   return new FlowModalController(definition, normalized, ports).open();
 }
-
 class FlowModalController {
   private readonly instanceId: string;
   private readonly previousFocus: HTMLElement | null;
@@ -51,6 +50,8 @@ class FlowModalController {
   private closed = false;
   private busy = false;
   private routePreviewVersion = 0;
+  private preflightVersion = 0;
+  private captureAbortController: AbortController | null = null;
 
   constructor(
     private readonly definition: FlowDefinition,
@@ -87,9 +88,10 @@ class FlowModalController {
   }
 
   private async preflight(): Promise<void> {
+    const version = ++this.preflightVersion;
     try {
       const preflight = await this.ports.preflight();
-      if (this.closed) return;
+      if (this.closed || version !== this.preflightVersion) return;
       if (preflight.status === 'installed') this.render();
       else {
         const message =
@@ -99,7 +101,7 @@ class FlowModalController {
         this.renderError(message, () => void this.preflight());
       }
     } catch {
-      if (!this.closed)
+      if (!this.closed && version === this.preflightVersion)
         this.renderError(
           'BugDrop could not reach the feedback service.',
           () => void this.preflight()
@@ -188,8 +190,10 @@ class FlowModalController {
       Boolean(surface.querySelector<HTMLInputElement>('[data-screenshot]')?.checked);
     this.busy = true;
     this.state.host.hidden = true;
+    const abortController = new AbortController();
+    this.captureAbortController = abortController;
     try {
-      const capture = await this.ports.capture(screen, include);
+      const capture = await this.ports.capture(screen, include, abortController.signal);
       if (this.closed) return;
       if (capture.returnToForm) this.runtime.back();
       else {
@@ -201,6 +205,7 @@ class FlowModalController {
         }
       }
     } finally {
+      if (this.captureAbortController === abortController) this.captureAbortController = null;
       this.busy = false;
       this.state.host.hidden = false;
     }
@@ -249,6 +254,9 @@ class FlowModalController {
   private close(settleClosed = true): void {
     if (this.closed) return;
     this.closed = true;
+    this.preflightVersion += 1;
+    this.captureAbortController?.abort();
+    this.captureAbortController = null;
     if (settleClosed) this.settle({ status: 'closed' });
     this.disposeForm();
     this.state.dispose();
@@ -296,13 +304,6 @@ class FlowModalController {
   private onBackdrop(event: PointerEvent): void {
     if (event.target === this.state.overlay) this.close();
   }
-}
-
-function deepActiveElement(): HTMLElement | null {
-  let active: Element | null = document.activeElement;
-  while (active instanceof HTMLElement && active.shadowRoot?.activeElement)
-    active = active.shadowRoot.activeElement;
-  return active instanceof HTMLElement ? active : null;
 }
 
 export function createBusyOpenedFlow(flowId: string): OpenedFlow {

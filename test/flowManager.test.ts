@@ -102,6 +102,35 @@ describe('flow manager and modal', () => {
     expect(host.shadowRoot?.querySelector('.bdv-title')?.textContent).toBe('Help us improve');
     opened.close();
   });
+  it('ignores a stale preflight failure after a newer retry succeeds', async () => {
+    const resolvers: Array<(value: { status: 'unreachable' | 'installed' }) => void> = [];
+    const preflight = vi.fn(
+      () =>
+        new Promise<{ status: 'unreachable' | 'installed' }>(resolve => {
+          resolvers.push(resolve);
+        })
+    );
+    const opened = createFlowManager(
+      { repo: 'owner/repo', apiUrl: '/api' },
+      { ...ports, preflight }
+    )
+      .register(flowConfig())
+      .open();
+    resolvers[0]!({ status: 'unreachable' });
+    await Promise.resolve();
+    const host = document.querySelector<HTMLElement>('[data-bugdrop-flow="product-triage"]')!;
+    const retry = host.shadowRoot?.querySelector<HTMLButtonElement>('.bdv-submit');
+    retry?.click();
+    retry?.click();
+    expect(preflight).toHaveBeenCalledTimes(3);
+    resolvers[2]!({ status: 'installed' });
+    await Promise.resolve();
+    expect(host.shadowRoot?.querySelector('.bdv-title')?.textContent).toBe('Help us improve');
+    resolvers[1]!({ status: 'unreachable' });
+    await Promise.resolve();
+    expect(host.shadowRoot?.querySelector('.bdv-title')?.textContent).toBe('Help us improve');
+    opened.close();
+  });
   it('opens accessibly, restores focus and closes idempotently', async () => {
     const trigger = document.createElement('button');
     document.body.appendChild(trigger);

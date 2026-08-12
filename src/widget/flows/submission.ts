@@ -10,6 +10,7 @@ export interface FlowTransportConfig {
   repo: string;
   apiUrl: string;
   authTokenProvider?: BugDropAuthTokenProvider;
+  categoryLabels?: Partial<Record<'bug' | 'feature' | 'question', string | string[]>>;
 }
 
 export async function submitFlow(
@@ -39,6 +40,7 @@ export async function submitFlow(
       title: issue.title,
       description: issue.description,
       category: issue.category,
+      categoryLabels: transport.categoryLabels,
       screenshot: capture?.screenshot ?? null,
       attachments: attachmentsPath ? (answers[attachmentsPath] ?? []) : [],
       consoleLogs: logsPath && answers[logsPath] === true ? getConsoleLogSnapshot() : undefined,
@@ -62,6 +64,10 @@ export async function submitFlow(
     issueNumber: result.issueNumber as number,
     issueUrl: result.issueUrl,
     isPublic: result.isPublic,
+    ...(Array.isArray(result.labelMappingWarnings) &&
+    result.labelMappingWarnings.every(value => typeof value === 'string')
+      ? { labelMappingWarnings: result.labelMappingWarnings as string[] }
+      : {}),
   };
 }
 

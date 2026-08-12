@@ -133,6 +133,13 @@ export function firstFocusable(root: HTMLElement): HTMLElement | null {
   );
 }
 
+export function deepActiveElement(): HTMLElement | null {
+  let active: Element | null = document.activeElement;
+  while (active instanceof HTMLElement && active.shadowRoot?.activeElement)
+    active = active.shadowRoot.activeElement;
+  return active instanceof HTMLElement ? active : null;
+}
+
 export function focusable(root: HTMLElement): HTMLElement[] {
   return Array.from(
     root.querySelectorAll<HTMLElement>(

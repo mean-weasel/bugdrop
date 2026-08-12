@@ -55,13 +55,25 @@ describe('flow form screen', () => {
     const controller = createFlowFormScreen(fileForm, 'instance', { 'details.agree': true });
     const input = controller.element.querySelector<HTMLInputElement>('#instance-files')!;
     Object.defineProperty(input, 'files', {
-      value: [new File(['too large'], 'large.txt', { type: 'text/plain' })],
+      value: [new File(['too large'], 'large.png', { type: 'image/png' })],
     });
     input.dispatchEvent(new Event('change'));
     await expect(controller.collect()).resolves.toBeNull();
     expect(input.getAttribute('aria-invalid')).toBe('true');
     expect(controller.element.textContent).toContain('too large');
     vi.restoreAllMocks();
+  });
+
+  it('rejects unsupported selected attachment types before reading them', async () => {
+    const controller = createFlowFormScreen(form, 'instance', { 'details.agree': true });
+    const input = controller.element.querySelector<HTMLInputElement>('#instance-files')!;
+    Object.defineProperty(input, 'files', {
+      value: [new File(['archive'], 'archive.zip', { type: 'application/zip' })],
+    });
+    input.dispatchEvent(new Event('change'));
+    await expect(controller.collect()).resolves.toBeNull();
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(controller.element.textContent).toContain('unsupported file type');
   });
 
   it('snapshots the last valid attachment after a read failure without accepting it forward', async () => {
@@ -83,7 +95,7 @@ describe('flow form screen', () => {
     });
     const input = controller.element.querySelector<HTMLInputElement>('#instance-files')!;
     Object.defineProperty(input, 'files', {
-      value: [new File(['too large'], 'large.txt', { type: 'text/plain' })],
+      value: [new File(['too large'], 'large.png', { type: 'image/png' })],
     });
     input.dispatchEvent(new Event('change'));
 

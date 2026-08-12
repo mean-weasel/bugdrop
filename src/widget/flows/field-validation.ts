@@ -25,6 +25,10 @@ const ALLOWED_ATTACHMENT_TYPES = new Set([
   'video/quicktime',
 ]);
 
+export function isAllowedFlowAttachmentType(value: string): boolean {
+  return ALLOWED_ATTACHMENT_TYPES.has(value);
+}
+
 export interface NormalizedFlowOpenOptions {
   context: Readonly<Record<string, FlowScalar>>;
   initialAnswers: Record<string, unknown>;
@@ -236,7 +240,13 @@ function validateAttachmentsField(field: AttachmentsField): void {
     (!Array.isArray(field.accept) ||
       field.accept.length === 0 ||
       field.accept.length > 20 ||
-      field.accept.some(value => typeof value !== 'string' || !value.trim() || value.length > 120))
+      field.accept.some(
+        value =>
+          typeof value !== 'string' ||
+          !value.trim() ||
+          value.length > 120 ||
+          !isAllowedFlowAttachmentType(value)
+      ))
   )
     fail(`field ${field.id} accept is invalid`);
 }
@@ -248,7 +258,7 @@ function normalizeAttachments(field: AttachmentsField, raw: unknown): FlowAttach
     if (!isObject(value)) fail(`initial answer ${field.id} has an invalid attachment`);
     assertOnlyKeys(value, new Set(['name', 'type', 'size', 'dataUrl']), 'attachment');
     requiredCopy(value.name, 'attachment name', 500);
-    if (typeof value.type !== 'string' || !ALLOWED_ATTACHMENT_TYPES.has(value.type))
+    if (typeof value.type !== 'string' || !isAllowedFlowAttachmentType(value.type))
       fail('attachment type is invalid');
     if (!boundedInteger(value.size, 0, field.maxFileSize ?? 5 * 1024 * 1024))
       fail('attachment size is invalid');
