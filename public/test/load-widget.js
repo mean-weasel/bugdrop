@@ -13,6 +13,20 @@
     });
   }
 
+  function loadRequiredScript(src) {
+    return new Promise(function (resolve, reject) {
+      var script = document.createElement('script');
+      script.src = src;
+      script.onload = function () {
+        resolve();
+      };
+      script.onerror = function () {
+        reject(new Error('Failed to load required script: ' + src));
+      };
+      document.head.appendChild(script);
+    });
+  }
+
   function loadOptionalScript(src) {
     return fetch(src)
       .then(function (response) {
@@ -66,9 +80,26 @@
     });
   }
 
+  function loadLocalQaStore() {
+    var params = new URLSearchParams(window.location.search);
+    var isLocalHost =
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1' ||
+      window.location.hostname.endsWith('.localhost');
+
+    if (params.get('localQa') !== '1' || !isLocalHost) {
+      return Promise.resolve();
+    }
+
+    return loadRequiredScript('/test/local-submissions.js');
+  }
+
   window.loadBugDropTestWidget = function loadBugDropTestWidget(options) {
     var opts = options || {};
-    return loadScript('/test/config.js')
+    return loadLocalQaStore()
+      .then(function () {
+        return loadScript('/test/config.js');
+      })
       .then(function () {
         return loadOptionalScript('/test/local-config.js');
       })

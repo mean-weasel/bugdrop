@@ -33,6 +33,7 @@ const VALUE_OPTIONS = new Set([
   'tool-identity',
   'source-digest',
   'development-id',
+  'default-flow-runtime',
 ]);
 
 function usage() {
@@ -46,6 +47,7 @@ Common options:
   --source-dir PATH           Candidate checkout (default: repository root)
   --output-dir PATH           Clean output tree (default: <source>/public)
   --development-id ID         Visible identity for development output
+  --default-flow-runtime ID   Internal default controller: fixed (default) or private
 
 Release options:
   --version MAJOR.MINOR.PATCH  Required planned stable version
@@ -150,13 +152,14 @@ function repositoryFromRemote(remote) {
   return match?.[1];
 }
 
-async function bundleCandidate({ sourceDir, version, enableTestHooks }) {
+async function bundleCandidate({ sourceDir, version, enableTestHooks, defaultFlowRuntime }) {
   const entry = join(sourceDir, 'src/widget/index.ts');
   const result = await build({
     absWorkingDir: sourceDir,
     bundle: true,
     define: {
       __BUGDROP_ENABLE_TEST_HOOKS__: enableTestHooks ? 'true' : 'false',
+      __BUGDROP_DEFAULT_FLOW_RUNTIME__: JSON.stringify(defaultFlowRuntime),
       __BUGDROP_VERSION__: JSON.stringify(version),
     },
     entryPoints: [entry],
@@ -208,6 +211,15 @@ async function main() {
     option(options, 'output-dir', 'BUGDROP_OUTPUT_DIR', join(sourceDir, 'public'))
   );
   const enableTestHooks = process.env.BUGDROP_TEST_HOOKS === '1';
+  const defaultFlowRuntime = option(
+    options,
+    'default-flow-runtime',
+    'BUGDROP_DEFAULT_FLOW_RUNTIME',
+    'fixed'
+  );
+  if (defaultFlowRuntime !== 'fixed' && defaultFlowRuntime !== 'private') {
+    throw new Error('Unsupported default flow runtime: expected fixed or private');
+  }
 
   if (mode === 'development') {
     const developmentId = option(options, 'development-id', 'BUGDROP_DEVELOPMENT_ID', 'local');
@@ -215,6 +227,7 @@ async function main() {
       sourceDir,
       version: `development:${developmentId}`,
       enableTestHooks,
+      defaultFlowRuntime,
     });
     await createDevelopmentStaticPackage({
       bundleBytes,
@@ -249,7 +262,12 @@ async function main() {
     option(options, 'request-plan', 'BUGDROP_REQUEST_PLAN')
   );
   const retentionMode = retention.mode ?? (retention.retainedReleases ? undefined : 'disabled');
-  const bundleBytes = await bundleCandidate({ sourceDir, version, enableTestHooks: false });
+  const bundleBytes = await bundleCandidate({
+    sourceDir,
+    version,
+    enableTestHooks: false,
+    defaultFlowRuntime,
+  });
   const exactName = `widget.v${version}.js`;
   const result = await createReleaseStaticPackage({
     bundleBytes,

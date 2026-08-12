@@ -380,7 +380,7 @@ test.describe('Widget Loading', () => {
   test('widget test fixtures use shared local config loader', async () => {
     const fixtureDir = join(process.cwd(), 'public', 'test');
     const fixtureNames = (await readdir(fixtureDir)).filter(name => name.endsWith('.html'));
-    const nonWidgetFixtures = new Set(['pull-tab-mock.html']);
+    const nonWidgetFixtures = new Set(['pull-tab-mock.html', 'submissions.html']);
 
     for (const fixtureName of fixtureNames) {
       const source = await readFile(join(fixtureDir, fixtureName), 'utf8');

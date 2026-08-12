@@ -217,4 +217,57 @@ describe('rendered variant manager', () => {
     await Promise.resolve();
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it('submits headlessly through the normalized definition without changing the envelope', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            success: true,
+            issueNumber: 42,
+            issueUrl: 'https://github.com/owner/repo/issues/42',
+            isPublic: false,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const handle = createVariantManager({
+      repo: 'owner/repo',
+      apiUrl: 'https://example.test/api',
+    }).register(reviewConfig);
+
+    await expect(
+      handle.submit(
+        { rating: 4, message: 'Private definition' },
+        { context: { surface: 'unit' }, submissionId: 'definition-proof' }
+      )
+    ).resolves.toEqual({
+      issueNumber: 42,
+      issueUrl: 'https://github.com/owner/repo/issues/42',
+      isPublic: false,
+    });
+
+    const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(Object.keys(request).sort()).toEqual([
+      'issue',
+      'kind',
+      'metadata',
+      'repo',
+      'schemaVersion',
+      'submissionId',
+      'variantId',
+    ]);
+    expect(request).toMatchObject({
+      kind: 'bugdrop.variant-submission',
+      schemaVersion: 1,
+      repo: 'owner/repo',
+      variantId: 'export-review',
+      submissionId: 'definition-proof',
+      issue: {
+        title: 'Review 4/5',
+        sections: [],
+      },
+    });
+  });
 });
