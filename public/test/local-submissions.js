@@ -137,31 +137,57 @@
   }
 
   function relabelLocalIssueLink(issueUrl, localUrl) {
-    var attempts = 0;
-    var timer = window.setInterval(function () {
-      attempts += 1;
-      var root = document.querySelector('#bugdrop-host');
-      var legacyLink = root && root.shadowRoot && root.shadowRoot.querySelector('.bd-issue-link');
-      var variantLinks = Array.from(document.querySelectorAll('[data-bugdrop-owned]'))
-        .map(function (host) {
-          return host.shadowRoot && host.shadowRoot.querySelector('.bdv-success-link');
-        })
-        .filter(Boolean);
-      var link = [legacyLink].concat(variantLinks).find(function (candidate) {
-        return candidate && candidate.href === issueUrl;
+    var observedRoots = [];
+    var observer;
+    var timeout;
+
+    function rewriteLink(link) {
+      if (!link || link.href !== issueUrl) return false;
+      link.href = localUrl;
+      Array.from(link.childNodes).forEach(function (node) {
+        if (node.nodeType === Node.TEXT_NODE) node.remove();
       });
-      if (link) {
-        link.href = localUrl;
-        Array.from(link.childNodes).forEach(function (node) {
-          if (node.nodeType === Node.TEXT_NODE) node.remove();
-        });
-        link.appendChild(document.createTextNode(' View local submission'));
-        link.setAttribute('aria-label', 'View local submission');
-        window.clearInterval(timer);
-      } else if (attempts >= 100) {
-        window.clearInterval(timer);
+      link.appendChild(document.createTextNode(' View local submission'));
+      link.setAttribute('aria-label', 'View local submission');
+      return true;
+    }
+
+    function observeRoot(root) {
+      if (!root || observedRoots.indexOf(root) !== -1) return;
+      observedRoots.push(root);
+      observer.observe(root, {
+        attributes: true,
+        attributeFilter: ['href'],
+        childList: true,
+        subtree: true,
+      });
+    }
+
+    function scan() {
+      var root = document.querySelector('#bugdrop-host');
+      var hosts = [root].concat(Array.from(document.querySelectorAll('[data-bugdrop-owned]')));
+      var links = [];
+      hosts.forEach(function (host) {
+        if (!host || !host.shadowRoot) return;
+        observeRoot(host.shadowRoot);
+        links = links.concat(
+          Array.from(host.shadowRoot.querySelectorAll('.bd-issue-link, .bdv-success-link'))
+        );
+      });
+      if (links.some(rewriteLink)) {
+        observer.disconnect();
+        window.clearTimeout(timeout);
+        return true;
       }
-    }, 50);
+      return false;
+    }
+
+    observer = new MutationObserver(scan);
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    if (scan()) return;
+    timeout = window.setTimeout(function () {
+      observer.disconnect();
+    }, 5000);
   }
 
   window.BugDropLocalSubmissions = {

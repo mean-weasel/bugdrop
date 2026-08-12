@@ -187,14 +187,56 @@ test('local QA variants submit headlessly and through inline and modal presentat
   });
 
   const inline = page.locator('#local-inline-slot > [data-bugdrop-owned]');
+  await page.evaluate(() => {
+    const host = document.querySelector('#local-inline-slot > [data-bugdrop-owned]');
+    if (!host?.shadowRoot) throw new Error('Expected an open inline variant shadow root');
+    const state = {
+      activationHref: null as string | null,
+      attempted: false,
+      mutationTypes: [] as string[],
+    };
+    (window as Window & { localLinkRace?: typeof state }).localLinkRace = state;
+    const observer = new MutationObserver(records => {
+      state.mutationTypes.push(...records.map(record => record.type));
+      const link = host.shadowRoot?.querySelector<HTMLAnchorElement>('.bdv-success-link');
+      if (!link?.hasAttribute('href') || state.attempted) return;
+      state.attempted = true;
+      window.setTimeout(() => {
+        state.activationHref = link.href;
+        link.click();
+        observer.disconnect();
+      }, 0);
+    });
+    observer.observe(host.shadowRoot, {
+      attributes: true,
+      attributeFilter: ['href'],
+      childList: true,
+      subtree: true,
+    });
+  });
   await inline.getByRole('textbox', { name: 'Answer' }).fill('inline answer');
+  const inlineViewerPromise = page.waitForEvent('popup');
   await inline.getByRole('button', { name: 'Send inline' }).click();
   await expect(inline.getByRole('heading', { name: 'Thanks for your feedback!' })).toBeVisible();
   const inlineLink = inline.getByRole('link', { name: 'View local submission' });
   await expect(inlineLink).toHaveAttribute('href', /\/test\/submissions\.html\?id=\d+$/);
+  const linkRace = await page.evaluate(
+    () => (window as Window & { localLinkRace?: unknown }).localLinkRace
+  );
+  expect(linkRace).toMatchObject({
+    activationHref: expect.stringMatching(/\/test\/submissions\.html\?id=\d+$/),
+    attempted: true,
+    mutationTypes: expect.arrayContaining(['childList', 'attributes']),
+  });
 
-  const [inlineViewer] = await Promise.all([page.waitForEvent('popup'), inlineLink.click()]);
+  const inlineViewer = await inlineViewerPromise;
   await inlineViewer.waitForLoadState('domcontentloaded');
+  const inlineViewerHostname = new URL(inlineViewer.url()).hostname;
+  expect(
+    inlineViewerHostname === 'localhost' ||
+      inlineViewerHostname === '127.0.0.1' ||
+      inlineViewerHostname.endsWith('.localhost')
+  ).toBe(true);
   await expect(inlineViewer.locator('#raw-payload')).toContainText('"variantId": "local-inline"');
   await inlineViewer.close();
 
