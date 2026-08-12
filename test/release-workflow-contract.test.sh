@@ -351,7 +351,7 @@ for literal in \
   'node controller/scripts/release/attestation.mjs stage' \
   "test \"\$(jq -er '.subjects | length' attestation-subjects.json)\" = '6'" \
   'attestation-subjects.sha256' \
-  'uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1' \
+  'uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2' \
   'subject-checksums: ${{ runner.temp }}/attestation-subjects.sha256' \
   'attestation.intoto.jsonl' \
   'node controller/scripts/release/attestation.mjs verify' \
