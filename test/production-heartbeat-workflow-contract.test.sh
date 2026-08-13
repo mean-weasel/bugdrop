@@ -291,6 +291,61 @@ require '[ "$SUMMARIZE_OUTCOME" != success ]'
 require '[ "$ARTIFACT_PREPARE_OUTCOME" = success ]'
 require '[ "$ARTIFACT_PREPARE_OUTCOME" != success ]'
 
+incident_script=$(mktemp)
+incident_capture=$(mktemp)
+incident_output=$(mktemp)
+trap 'rm -f -- "$incident_script" "$incident_capture" "$incident_output"' EXIT
+awk '
+  /name: Reconcile one stable incident Issue/ { step = 1 }
+  step && /run: \|/ { capture = 1; next }
+  capture && /^  conclusion:/ { exit }
+  capture { sub(/^          /, ""); print }
+' "$workflow" > "$incident_script"
+test -s "$incident_script" || fail 'native incident selector could not be extracted'
+
+node() {
+  printf '%s\n' "$*" > "$INCIDENT_CAPTURE"
+}
+export -f node
+
+run_incident_contract() {
+  local expected_outcome=$1
+  local expected_reason=$2
+  local evidence_outcome=$3
+  local evidence_reason=$4
+  local heartbeat_ok=$5
+  local summarize=$6
+  local cleanup=$7
+  local sweep=$8
+  local artifact_prepare=$9
+  local artifact=${10}
+  : > "$incident_capture"
+  : > "$incident_output"
+  INCIDENT_CAPTURE="$incident_capture" EVIDENCE_OUTCOME="$evidence_outcome" \
+    EVIDENCE_REASON="$evidence_reason" HEARTBEAT_OK="$heartbeat_ok" \
+    SUMMARIZE_OUTCOME="$summarize" CLEANUP_OUTCOME="$cleanup" SWEEP_OUTCOME="$sweep" \
+    ARTIFACT_PREPARE_OUTCOME="$artifact_prepare" ARTIFACT_OUTCOME="$artifact" \
+    GITHUB_OUTPUT="$incident_output" bash -euo pipefail "$incident_script" ||
+    fail 'native incident selector execution failed'
+  grep -Fxq "scripts/github-heartbeat-incident.mjs $expected_outcome --reason-code $expected_reason" "$incident_capture" ||
+    fail "native incident selected the wrong result for $evidence_outcome/$expected_reason"
+  grep -Fxq "transition=$expected_outcome" "$incident_output" ||
+    fail 'native incident transition output did not match selection'
+}
+
+run_incident_contract failure issue_absent delivery_failed issue_absent false success failure failure failure failure
+run_incident_contract recovery issue_verified verified issue_verified true success success success success success
+run_incident_contract inconclusive cleanup_failed verified issue_verified false success failure failure failure failure
+run_incident_contract inconclusive sweep_failed verified issue_verified false success success failure failure failure
+run_incident_contract inconclusive artifact_failed verified issue_verified false success success success failure success
+run_incident_contract inconclusive artifact_failed verified issue_verified false success success success success failure
+run_incident_contract inconclusive classification_failed verified issue_verified false success success success success success
+run_incident_contract inconclusive classification_failed verified issue_verified false failure success success success success
+
+unset -f node
+rm -f -- "$incident_script" "$incident_capture" "$incident_output"
+trap - EXIT
+
 sender_block=$(awk '
   /name: Send sanitized production heartbeat outcome/ { capture = 1 }
   capture { print }

@@ -392,6 +392,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           HEARTBEAT_OK: ${{ needs.heartbeat.outputs.heartbeat_ok }}
           SUMMARIZE_OUTCOME: ${{ needs.heartbeat.outputs.summarize_outcome }}
+          CLEANUP_OUTCOME: ${{ needs.heartbeat.outputs.cleanup_outcome }}
+          SWEEP_OUTCOME: ${{ needs.heartbeat.outputs.sweep_outcome }}
           ARTIFACT_PREPARE_OUTCOME: ${{ needs.heartbeat.outputs.artifact_prepare_outcome }}
           ARTIFACT_OUTCOME: ${{ needs.heartbeat.outputs.artifact_outcome }}
           EVIDENCE_OUTCOME: ${{ needs.heartbeat.outputs.evidence_outcome }}
@@ -405,7 +407,15 @@ jobs:
           elif [ "$EVIDENCE_OUTCOME" = verified ] && [ "$HEARTBEAT_OK" = true ] && [ "$SUMMARIZE_OUTCOME" = success ] && [ "$ARTIFACT_PREPARE_OUTCOME" = success ] && [ "$ARTIFACT_OUTCOME" = success ]; then
             outcome=recovery
           elif [ "$EVIDENCE_OUTCOME" = verified ]; then
-            reason=classification_failed
+            if [ "$CLEANUP_OUTCOME" != success ]; then
+              reason=cleanup_failed
+            elif [ "$SWEEP_OUTCOME" != success ]; then
+              reason=sweep_failed
+            elif [ "$ARTIFACT_PREPARE_OUTCOME" != success ] || [ "$ARTIFACT_OUTCOME" != success ]; then
+              reason=artifact_failed
+            else
+              reason=classification_failed
+            fi
           fi
           node scripts/github-heartbeat-incident.mjs "$outcome" \
             --reason-code "$reason" > /dev/null
