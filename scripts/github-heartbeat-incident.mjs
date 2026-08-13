@@ -97,8 +97,7 @@ export async function transitionHeartbeatIncident({
   }
 
   if ((outcome === 'failure' || outcome === 'inconclusive') && incident.state === 'closed') {
-    const transitionBody =
-      outcome === 'inconclusive' || !isConfirmedFailureIncident(incident) ? body : undefined;
+    const transitionBody = !isConfirmedFailureIncident(incident) ? body : undefined;
     incident = await setIssueState({
       fetchImpl,
       token,

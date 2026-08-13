@@ -195,6 +195,31 @@ describe('heartbeat incident lifecycle', () => {
     });
   });
 
+  it('reopens a closed confirmed failure without replacing its body for inconclusive evidence', async () => {
+    const closed = incident('closed');
+    const reopened = incident('open');
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response([closed]))
+      .mockResolvedValueOnce(response(reopened))
+      .mockResolvedValueOnce(response([]))
+      .mockResolvedValueOnce(response({ id: 103 }));
+
+    await expect(
+      transitionHeartbeatIncident({
+        fetchImpl,
+        token: TOKEN,
+        outcome: 'inconclusive',
+        reasonCode: 'github_network',
+      })
+    ).resolves.toMatchObject({ action: 'reopened', state: 'open' });
+
+    expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body))).toEqual({ state: 'open' });
+    expect(JSON.parse(String(fetchImpl.mock.calls[3][1]?.body))).toEqual({
+      body: 'Production heartbeat inconclusive. Classification: github_network.',
+    });
+  });
+
   it('promotes an open inconclusive incident to confirmed failure before commenting', async () => {
     const confirmedBody = 'Production heartbeat failure. Classification: issue_absent.';
     const fetchImpl = vi

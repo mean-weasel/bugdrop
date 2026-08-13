@@ -635,17 +635,22 @@ async function waitForStableSingleton({ consistency, ...listOptions }) {
 
 async function waitForStableEvidenceMatches({ consistency, ...listOptions }) {
   let previousSignature;
+  let lastMatches = [];
+  let sawNonempty = false;
   for (let attempt = 1; attempt <= consistency.attempts; attempt += 1) {
     const matches = await listMatchingIssues(listOptions);
+    lastMatches = matches;
+    if (matches.length > 0) sawNonempty = true;
     const signature = matches
       .map(candidate => candidate.number)
       .filter(Number.isInteger)
       .sort((left, right) => left - right)
       .join(',');
-    if (signature === previousSignature) return matches;
+    if (signature && signature === previousSignature) return matches;
     previousSignature = signature;
     await waitBeforeNextAttempt({ attempt, consistency });
   }
+  if (!sawNonempty) return lastMatches;
   throw new Error('Authoritative marker discovery did not stabilize within the retry bound');
 }
 

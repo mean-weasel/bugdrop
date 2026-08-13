@@ -110,7 +110,9 @@ require "' \"\$diagnostics_path\" > /dev/null"
 require 'cp "$diagnostics_path" "$artifact_path/diagnostics.json"'
 require_absent 'cp -R playwright-report'
 require_absent 'cp -R test-results'
-require 'name: production-heartbeat-diagnostics'
+require 'name: production-heartbeat-diagnostics-${{ github.run_attempt }}'
+require_absent 'name: production-heartbeat-diagnostics$'
+require_absent 'overwrite: true'
 require '${{ runner.temp }}/production-heartbeat-artifact/'
 require 'if-no-files-found: error'
 require_absent 'if-no-files-found: ignore'
@@ -153,9 +155,162 @@ for required in \
   'HEARTBEAT_OUTCOME: ${{ steps.classify.outputs.outcome }}' \
   'HEARTBEAT_REASON_CODE: ${{ steps.classify.outputs.reason_code }}' \
   'HEARTBEAT_OBSERVED_AT: ${{ steps.classify.outputs.observed_at }}' \
+  'EVIDENCE_OUTCOME: ${{ needs.heartbeat.outputs.evidence_outcome }}' \
+  'EVIDENCE_REASON: ${{ needs.heartbeat.outputs.evidence_reason }}' \
+  'EVIDENCE_OBSERVED_AT: ${{ needs.heartbeat.outputs.evidence_observed_at }}' \
+  'if [ "${{ steps.checkout.outcome }}" = success ] && \' \
+  '[ "${{ steps.classify.outcome }}" = success ] && \' \
+  '[ -n "$HEARTBEAT_OUTCOME" ] && [ -n "$HEARTBEAT_REASON_CODE" ] && \' \
   'node scripts/production-heartbeat-outcome.mjs send'; do
   grep -Fq -- "$required" <<< "$sender_block" || fail "sender step missing: $required"
 done
+for required in \
+  'schemaVersion: 1' \
+  "evidenceOutcome === 'verified' && evidenceReason === 'issue_verified'" \
+  "evidenceOutcome === 'delivery_failed'" \
+  "['issue_absent', 'issue_duplicate', 'issue_contract_invalid'].includes(evidenceReason)" \
+  "outcome: 'inconclusive'" \
+  "reasonCode: 'setup_failed'" \
+  "if (!secret || !/^\\d+:\\d+$/.test(heartbeatId || ''))" \
+  "redirect: 'manual'" \
+  "'X-BugDrop-Heartbeat-Id': heartbeatId" \
+  'const delays = [1_000, 2_000]' \
+  'for (let attempt = 0; attempt < 3; attempt += 1)' \
+  'if (![500, 502, 503, 504].includes(response.status) || attempt === 2) break' \
+  "response.headers.get('cache-control')?.toLowerCase() !== 'no-store'" \
+  "keys !== 'accepted,duplicate,effect,observedAt,outcome,schemaVersion'"; do
+  grep -Fq -- "$required" <<< "$sender_block" || fail "checkout-independent sender missing: $required"
+done
+
+fallback_script=$(mktemp)
+fallback_harness=$(mktemp)
+fallback_error=$(mktemp)
+trap 'rm -f -- "$fallback_script" "$fallback_harness" "$fallback_error"' EXIT
+awk '
+  /node --input-type=module <<'"'"'NODE'"'"'/ { capture = 1; next }
+  capture && /^          NODE$/ { exit }
+  capture { sub(/^          /, ""); print }
+' "$workflow" > "$fallback_script"
+test -s "$fallback_script" || fail 'checkout-independent fallback script could not be extracted'
+
+{
+  cat <<'NODE'
+const attempts = [];
+globalThis.setTimeout = callback => (queueMicrotask(callback), 0);
+globalThis.fetch = async (endpoint, request) => {
+  attempts.push({ endpoint, request });
+  if (attempts.length === 1) throw new Error(`network ${process.env.MONITOR_HEARTBEAT_SECRET}`);
+  if (attempts.length === 2) return new Response(null, { status: 503 });
+  const report = JSON.parse(request.body);
+  if (
+    endpoint !== 'https://bugdrop.dev/api/monitor/heartbeat' ||
+    request.method !== 'POST' ||
+    request.redirect !== 'manual' ||
+    request.headers.Authorization !== `Bearer ${process.env.MONITOR_HEARTBEAT_SECRET}` ||
+    request.headers['Content-Type'] !== 'application/json' ||
+    request.headers['X-BugDrop-Heartbeat-Id'] !== process.env.HEARTBEAT_ID ||
+    Object.keys(report).sort().join(',') !== 'observedAt,outcome,reasonCode,schemaVersion' ||
+    report.schemaVersion !== 1 ||
+    report.outcome !== process.env.EXPECTED_OUTCOME ||
+    report.reasonCode !== process.env.EXPECTED_REASON ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(report.observedAt) ||
+    attempts.some(attempt => attempt.request.body !== request.body)
+  ) throw new Error('fallback request contract mismatch');
+  return Response.json(
+    { schemaVersion: 1, accepted: true, duplicate: false, outcome: report.outcome, effect: 'recorded_only', observedAt: report.observedAt },
+    { headers: { 'cache-control': 'no-store' } }
+  );
+};
+process.on('beforeExit', () => {
+  if (attempts.length !== 3) throw new Error(`expected three attempts, received ${attempts.length}`);
+});
+NODE
+  cat "$fallback_script"
+} > "$fallback_harness"
+
+run_fallback_success() {
+  local evidence_outcome=$1
+  local evidence_reason=$2
+  local evidence_observed_at=$3
+  local expected_outcome=$4
+  local expected_reason=$5
+  MONITOR_HEARTBEAT_SECRET='fallback-secret-redaction-sentinel' \
+    HEARTBEAT_ID='123:2' EVIDENCE_OUTCOME="$evidence_outcome" EVIDENCE_REASON="$evidence_reason" \
+    EVIDENCE_OBSERVED_AT="$evidence_observed_at" EXPECTED_OUTCOME="$expected_outcome" \
+    EXPECTED_REASON="$expected_reason" node "$fallback_harness" 2> "$fallback_error" ||
+    fail 'checkout-independent fallback did not satisfy its executable request contract'
+  test ! -s "$fallback_error" || fail 'successful checkout fallback emitted diagnostics'
+}
+
+run_fallback_success delivery_failed issue_absent '2026-08-12T12:34:56.789Z' delivery_failed issue_absent
+run_fallback_success verified issue_verified '2026-08-12T12:34:56.789Z' verified issue_verified
+run_fallback_success delivery_failed issue_absent invalid inconclusive setup_failed
+run_fallback_success __proto__ issue_verified '2026-08-12T12:34:56.789Z' inconclusive setup_failed
+
+run_fallback_rejection() {
+  local response_expression=$1
+  local expected_attempts=$2
+  {
+    cat <<NODE
+let attempts = 0;
+globalThis.setTimeout = callback => (queueMicrotask(callback), 0);
+globalThis.fetch = async () => {
+  attempts += 1;
+  return $response_expression;
+};
+process.on('beforeExit', () => {
+  if (attempts !== $expected_attempts) throw new Error(\`expected $expected_attempts attempts, received \${attempts}\`);
+});
+NODE
+    cat "$fallback_script"
+  } > "$fallback_harness"
+  MONITOR_HEARTBEAT_SECRET='fallback-secret-redaction-sentinel' \
+    HEARTBEAT_ID='123:2' node "$fallback_harness" 2> "$fallback_error" &&
+    fail 'checkout-independent fallback unexpectedly accepted an invalid response'
+  grep -Fxq '[production-heartbeat-outcome] operation_failed' "$fallback_error" ||
+    fail 'checkout-independent fallback rejection was not generic'
+  if grep -Fq 'fallback-secret-redaction-sentinel' "$fallback_error"; then
+    fail 'checkout-independent fallback rejection leaked its monitoring secret'
+  fi
+}
+
+run_fallback_rejection "new Response(null, { status: 302, headers: { location: 'https://example.invalid' } })" 1
+run_fallback_rejection "new Response(null, { status: 400 })" 1
+run_fallback_rejection "Response.json({ schemaVersion: 1 }, { headers: { 'cache-control': 'no-store' } })" 1
+run_fallback_rejection "Response.json({ schemaVersion: 1, accepted: true, duplicate: false, outcome: 'inconclusive', effect: 'recorded_only', observedAt: new Date().toISOString() }, { headers: { 'cache-control': 'max-age=60' } })" 1
+
+{
+  cat <<'NODE'
+let attempts = 0;
+globalThis.setTimeout = callback => (queueMicrotask(callback), 0);
+globalThis.fetch = async () => {
+  attempts += 1;
+  throw new Error(`network ${process.env.MONITOR_HEARTBEAT_SECRET}`);
+};
+process.on('beforeExit', () => {
+  if (attempts !== 3) throw new Error(`expected three attempts, received ${attempts}`);
+});
+NODE
+  cat "$fallback_script"
+} > "$fallback_harness"
+MONITOR_HEARTBEAT_SECRET='fallback-secret-redaction-sentinel' \
+  HEARTBEAT_ID='123:2' node "$fallback_harness" 2> "$fallback_error" &&
+  fail 'checkout-independent fallback unexpectedly accepted three network failures'
+grep -Fxq '[production-heartbeat-outcome] operation_failed' "$fallback_error" ||
+  fail 'checkout-independent fallback error was not generic'
+if grep -Fq 'fallback-secret-redaction-sentinel' "$fallback_error"; then
+  fail 'checkout-independent fallback leaked its monitoring secret'
+fi
+
+MONITOR_HEARTBEAT_SECRET='' HEARTBEAT_ID='123:2' node "$fallback_script" 2> "$fallback_error" &&
+  fail 'checkout-independent fallback accepted a missing secret'
+grep -Fxq '[production-heartbeat-outcome] operation_failed' "$fallback_error" ||
+  fail 'missing-secret fallback rejection was not generic'
+MONITOR_HEARTBEAT_SECRET='fallback-secret-redaction-sentinel' HEARTBEAT_ID='invalid' \
+  node "$fallback_script" 2> "$fallback_error" &&
+  fail 'checkout-independent fallback accepted an invalid heartbeat ID'
+grep -Fxq '[production-heartbeat-outcome] operation_failed' "$fallback_error" ||
+  fail 'invalid-ID fallback rejection was not generic'
 [[ $(grep -Fc 'MONITOR_HEARTBEAT_SECRET: ${{ secrets.MONITOR_HEARTBEAT_SECRET }}' "$workflow") -eq 1 ]] ||
   fail 'monitoring secret must exist only in the final sender step'
 require_absent 'curl --fail --silent --show-error --max-time 10'

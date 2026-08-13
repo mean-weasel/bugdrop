@@ -316,7 +316,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: production-heartbeat-diagnostics
+          name: production-heartbeat-diagnostics-${{ github.run_attempt }}
           path: ${{ runner.temp }}/production-heartbeat-artifact/
           if-no-files-found: error
           retention-days: 7
@@ -427,4 +427,103 @@ jobs:
           HEARTBEAT_OUTCOME: ${{ steps.classify.outputs.outcome }}
           HEARTBEAT_REASON_CODE: ${{ steps.classify.outputs.reason_code }}
           HEARTBEAT_OBSERVED_AT: ${{ steps.classify.outputs.observed_at }}
-        run: node scripts/production-heartbeat-outcome.mjs send
+          EVIDENCE_OUTCOME: ${{ needs.heartbeat.outputs.evidence_outcome }}
+          EVIDENCE_REASON: ${{ needs.heartbeat.outputs.evidence_reason }}
+          EVIDENCE_OBSERVED_AT: ${{ needs.heartbeat.outputs.evidence_observed_at }}
+        run: |
+          if [ "${{ steps.checkout.outcome }}" = success ] && \
+             [ "${{ steps.classify.outcome }}" = success ] && \
+             [ -n "$HEARTBEAT_OUTCOME" ] && [ -n "$HEARTBEAT_REASON_CODE" ] && \
+             [ -n "$HEARTBEAT_OBSERVED_AT" ]; then
+            node scripts/production-heartbeat-outcome.mjs send
+            exit
+          fi
+          node --input-type=module <<'NODE'
+          const secret = process.env.MONITOR_HEARTBEAT_SECRET;
+          const heartbeatId = process.env.HEARTBEAT_ID;
+          if (!secret || !/^\d+:\d+$/.test(heartbeatId || '')) {
+            process.stderr.write('[production-heartbeat-outcome] operation_failed\n');
+            process.exit(1);
+          }
+          const canonicalTime = value => {
+            if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value || '')) return null;
+            const parsed = new Date(value);
+            return Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value ? null : value;
+          };
+          const evidenceOutcome = process.env.EVIDENCE_OUTCOME;
+          const evidenceReason = process.env.EVIDENCE_REASON;
+          const evidenceTime = canonicalTime(process.env.EVIDENCE_OBSERVED_AT);
+          const authoritativeEvidence =
+            (evidenceOutcome === 'verified' && evidenceReason === 'issue_verified') ||
+            (evidenceOutcome === 'delivery_failed' &&
+              ['issue_absent', 'issue_duplicate', 'issue_contract_invalid'].includes(evidenceReason));
+          const report =
+            evidenceTime && authoritativeEvidence
+              ? {
+                  schemaVersion: 1,
+                  outcome: evidenceOutcome,
+                  reasonCode: evidenceReason,
+                  observedAt: evidenceTime,
+                }
+              : {
+                  schemaVersion: 1,
+                  outcome: 'inconclusive',
+                  reasonCode: 'setup_failed',
+                  observedAt: new Date().toISOString(),
+                };
+          const body = JSON.stringify(report);
+          const request = {
+            method: 'POST',
+            redirect: 'manual',
+            headers: {
+              Authorization: `Bearer ${secret}`,
+              'Content-Type': 'application/json',
+              'X-BugDrop-Heartbeat-Id': heartbeatId,
+            },
+            body,
+          };
+          const delays = [1_000, 2_000];
+          const sleep = delay => new Promise(resolve => setTimeout(resolve, delay));
+          const validEffect = effect =>
+            effect === 'recorded_only' ||
+            (report.outcome === 'verified' && effect === 'verified') ||
+            (report.outcome === 'delivery_failed' && effect === 'degraded');
+          const main = async () => {
+            let response;
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              try {
+                response = await fetch('https://bugdrop.dev/api/monitor/heartbeat', {
+                  ...request,
+                  signal: AbortSignal.timeout(10_000),
+                });
+              } catch {
+                if (attempt === 2) throw new Error('heartbeat_receiver_network');
+                await sleep(delays[attempt]);
+                continue;
+              }
+              if (![500, 502, 503, 504].includes(response.status) || attempt === 2) break;
+              await sleep(delays[attempt]);
+            }
+            if (response.status !== 200) throw new Error('heartbeat_receiver_http');
+            if (response.headers.get('cache-control')?.toLowerCase() !== 'no-store') {
+              throw new Error('heartbeat_receiver_cache_invalid');
+            }
+            const responseBody = await response.json();
+            const keys = Object.keys(responseBody || {}).sort().join(',');
+            if (
+              keys !== 'accepted,duplicate,effect,observedAt,outcome,schemaVersion' ||
+              responseBody.schemaVersion !== 1 ||
+              responseBody.accepted !== true ||
+              typeof responseBody.duplicate !== 'boolean' ||
+              responseBody.outcome !== report.outcome ||
+              responseBody.observedAt !== report.observedAt ||
+              !validEffect(responseBody.effect)
+            ) {
+              throw new Error('heartbeat_receiver_response_invalid');
+            }
+          };
+          main().catch(() => {
+            process.stderr.write('[production-heartbeat-outcome] operation_failed\n');
+            process.exitCode = 1;
+          });
+          NODE

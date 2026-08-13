@@ -550,6 +550,71 @@ describe('sanitized authoritative delivery evidence', () => {
     });
   });
 
+  it('waits through the complete empty-read window before declaring Issue absence', async () => {
+    let requests = 0;
+    const fetchImpl = (async () => {
+      requests += 1;
+      return jsonResponse([]);
+    }) as typeof fetch;
+
+    await expect(
+      observe(fetchImpl, { consistencyAttempts: 6, sleepImpl: async () => {} })
+    ).resolves.toMatchObject({
+      outcome: 'delivery_failed',
+      reasonCode: 'issue_absent',
+    });
+    expect(requests).toBe(6);
+  });
+
+  it('does not declare absence when an Issue appears after repeated empty reads', async () => {
+    const candidate = issue();
+    const listResponses = [[], [], [candidate], [candidate], [candidate], [candidate]];
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      if (!String(input).includes('/issues?')) return jsonResponse(candidate);
+      return jsonResponse(listResponses.shift() ?? [candidate]);
+    });
+
+    await expect(
+      observe(fetchImpl, { consistencyAttempts: 6, sleepImpl: async () => {} })
+    ).resolves.toMatchObject({
+      outcome: 'verified',
+      reasonCode: 'issue_verified',
+    });
+    expect(listResponses).toEqual([]);
+  });
+
+  it('keeps nonempty-then-empty evidence inconclusive through the complete window', async () => {
+    const listResponses = [[issue({ number: 43 })], [], [], [], [], []];
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(listResponses.shift() ?? []));
+
+    await expect(
+      observe(fetchImpl, { consistencyAttempts: 6, sleepImpl: async () => {} })
+    ).resolves.toMatchObject({
+      outcome: 'inconclusive',
+      reasonCode: 'classification_failed',
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(6);
+    expect(listResponses).toEqual([]);
+  });
+
+  it('keeps fluctuating nonempty evidence inconclusive through the complete window', async () => {
+    const candidates = [issue(), issue({ number: 43 })];
+    let index = 0;
+    const fetchImpl = vi.fn<typeof fetch>(async () => {
+      const candidate = candidates[index % candidates.length];
+      index += 1;
+      return jsonResponse([candidate]);
+    });
+
+    await expect(
+      observe(fetchImpl, { consistencyAttempts: 6, sleepImpl: async () => {} })
+    ).resolves.toMatchObject({
+      outcome: 'inconclusive',
+      reasonCode: 'classification_failed',
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(6);
+  });
+
   it('keeps missing attempts/results and ambiguous GitHub failures inconclusive', async () => {
     await expect(observe(issueFetch([]), { attempted: false })).resolves.toMatchObject({
       outcome: 'inconclusive',
