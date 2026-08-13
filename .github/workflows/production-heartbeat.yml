@@ -255,6 +255,7 @@ jobs:
           VENUE: ${{ steps.venue.outcome }}
           CANARY: ${{ steps.canary.outcome }}
           VERIFY: ${{ steps.verify.outcome }}
+          EVIDENCE: ${{ steps.evidence.outcome }}
           CLEANUP: ${{ steps.cleanup.outcome }}
           SWEEP: ${{ steps.sweep.outcome }}
           CONTROLLED: ${{ steps.controlled.outcome }}
@@ -264,6 +265,41 @@ jobs:
             if [ "$outcome" != success ]; then heartbeat_ok=false; fi
           done
           if [ "$CONTROLLED" = failure ]; then heartbeat_ok=false; fi
+          evidence_verified=false
+          evidence_outputs=
+          if [ "$EVIDENCE" = success ] && [ -s "$BUGDROP_CANARY_EVIDENCE_FILE" ]; then
+            if evidence_candidate_outputs=$(jq -er '
+              select(
+                type == "object" and
+                (keys == ["observedAt", "outcome", "reasonCode", "schemaVersion"]) and
+                .schemaVersion == 1 and
+                (.observedAt | type == "string") and
+                (
+                  (.outcome == "verified" and .reasonCode == "issue_verified") or
+                  (.outcome == "delivery_failed" and (.reasonCode == "issue_absent" or .reasonCode == "issue_duplicate" or .reasonCode == "issue_contract_invalid")) or
+                  (.outcome == "inconclusive" and (.reasonCode as $reason | ["setup_failed", "identity_failed", "venue_failed", "browser_inconclusive", "github_network", "github_5xx", "github_rate_limited", "github_auth_failed", "cleanup_failed", "sweep_failed", "artifact_failed", "incident_failed", "classification_failed"] | index($reason)))
+                )
+              )
+              | "evidence_outcome=\(.outcome)\nevidence_reason=\(.reasonCode)\nevidence_observed_at=\(.observedAt)"
+            ' "$BUGDROP_CANARY_EVIDENCE_FILE") &&
+              node -e '
+                const { readFileSync } = require("node:fs");
+                const value = JSON.parse(readFileSync(process.argv[1], "utf8")).observedAt;
+                const parsed = new Date(value);
+                if (
+                  typeof value !== "string" ||
+                  !/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/.test(value) ||
+                  Number.isNaN(parsed.getTime()) ||
+                  parsed.toISOString() !== value
+                ) process.exit(1);
+              ' "$BUGDROP_CANARY_EVIDENCE_FILE"; then
+              evidence_outputs=$evidence_candidate_outputs
+              if jq -e '.outcome == "verified" and .reasonCode == "issue_verified"' "$BUGDROP_CANARY_EVIDENCE_FILE" > /dev/null; then
+                evidence_verified=true
+              fi
+            fi
+          fi
+          if [ "$evidence_verified" != true ]; then heartbeat_ok=false; fi
           diagnostics_path="$RUNNER_TEMP/production-heartbeat-diagnostics.json"
           diagnostics_tmp="$RUNNER_TEMP/production-heartbeat-diagnostics.tmp"
           trap 'rm -f -- "$diagnostics_tmp"' EXIT
@@ -279,11 +315,12 @@ jobs:
             --arg venue "$VENUE" \
             --arg canary "$CANARY" \
             --arg verify "$VERIFY" \
+            --arg evidence "$EVIDENCE" \
             --arg cleanup "$CLEANUP" \
             --arg sweep "$SWEEP" \
             --arg controlled "$CONTROLLED" \
             --arg heartbeatOk "$heartbeat_ok" \
-            '{schemaVersion: $schemaVersion, stages: {checkout: $checkout, node: $node, install: $install, config: $config, browser: $browser, identity: $identity, preflight: $preflight, venue: $venue, canary: $canary, verify: $verify, cleanup: $cleanup, sweep: $sweep, controlled: $controlled}, heartbeatOk: ($heartbeatOk == "true")}' \
+            '{schemaVersion: $schemaVersion, stages: {checkout: $checkout, node: $node, install: $install, config: $config, browser: $browser, identity: $identity, preflight: $preflight, venue: $venue, canary: $canary, verify: $verify, evidence: $evidence, cleanup: $cleanup, sweep: $sweep, controlled: $controlled}, heartbeatOk: ($heartbeatOk == "true")}' \
             > "$diagnostics_tmp"
           test -s "$diagnostics_tmp"
           jq -e '
@@ -292,14 +329,14 @@ jobs:
             .schemaVersion == 1 and
             (.heartbeatOk | type == "boolean") and
             (.stages | type == "object") and
-            (.stages | keys == ["browser", "canary", "checkout", "cleanup", "config", "controlled", "identity", "install", "node", "preflight", "sweep", "venue", "verify"]) and
+            (.stages | keys == ["browser", "canary", "checkout", "cleanup", "config", "controlled", "evidence", "identity", "install", "node", "preflight", "sweep", "venue", "verify"]) and
             ([.stages[] | select(. != "success" and . != "failure" and . != "skipped" and . != "cancelled")] | length == 0)
           ' "$diagnostics_tmp" > /dev/null
           mv "$diagnostics_tmp" "$diagnostics_path"
           trap - EXIT
           echo "heartbeat_ok=$heartbeat_ok" >> "$GITHUB_OUTPUT"
-          if [ -s "$BUGDROP_CANARY_EVIDENCE_FILE" ]; then
-            jq -er '"evidence_outcome=\(.outcome)\nevidence_reason=\(.reasonCode)\nevidence_observed_at=\(.observedAt)"' "$BUGDROP_CANARY_EVIDENCE_FILE" >> "$GITHUB_OUTPUT"
+          if [ -n "$evidence_outputs" ]; then
+            printf '%s\n' "$evidence_outputs" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Prepare heartbeat diagnostics artifact
@@ -317,7 +354,7 @@ jobs:
             .schemaVersion == 1 and
             (.heartbeatOk | type == "boolean") and
             (.stages | type == "object") and
-            (.stages | keys == ["browser", "canary", "checkout", "cleanup", "config", "controlled", "identity", "install", "node", "preflight", "sweep", "venue", "verify"]) and
+            (.stages | keys == ["browser", "canary", "checkout", "cleanup", "config", "controlled", "evidence", "identity", "install", "node", "preflight", "sweep", "venue", "verify"]) and
             ([.stages[] | select(. != "success" and . != "failure" and . != "skipped" and . != "cancelled")] | length == 0)
           ' "$diagnostics_path" > /dev/null
           cp "$diagnostics_path" "$artifact_path/diagnostics.json"

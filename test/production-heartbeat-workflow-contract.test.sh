@@ -185,6 +185,11 @@ require_absent '--arg runId'
 require_absent '--arg runAttempt'
 require '--arg config "$CONFIG"'
 require '"config"'
+require 'EVIDENCE: ${{ steps.evidence.outcome }}'
+require '--arg evidence "$EVIDENCE"'
+require '"evidence"'
+require 'if [ "$evidence_verified" != true ]; then heartbeat_ok=false; fi'
+require 'parsed.toISOString() !== value'
 
 summary_block=$(awk '
   /name: Summarize heartbeat stages/ { capture = 1 }
@@ -196,6 +201,87 @@ for forbidden in BUGDROP_CANARY_GITHUB_TOKEN GITHUB_TOKEN VERCEL_AUTOMATION_BYPA
     fail "token-free diagnostics summary contains credential input: $forbidden"
   fi
 done
+
+summary_script=$(mktemp)
+summary_workspace=$(mktemp -d)
+summary_output=$(mktemp)
+summary_evidence="$summary_workspace/evidence.json"
+trap 'rm -f -- "$summary_script" "$summary_output" "$summary_workspace"/*; rmdir "$summary_workspace"' EXIT
+awk '
+  /name: Summarize heartbeat stages/ { step = 1 }
+  step && /run: \|/ { capture = 1; next }
+  capture && /^      - name:/ { exit }
+  capture { sub(/^          /, ""); print }
+' "$workflow" > "$summary_script"
+test -s "$summary_script" || fail 'heartbeat summary script could not be extracted'
+
+run_summary_contract() {
+  local evidence_step=$1
+  local evidence_payload=$2
+  local expected_heartbeat_ok=$3
+  local expected_outcome=${4:-}
+  rm -f -- "$summary_evidence" "$summary_workspace/production-heartbeat-diagnostics.json"
+  : > "$summary_output"
+  if [ "$evidence_payload" != missing ]; then
+    printf '%s\n' "$evidence_payload" > "$summary_evidence"
+  fi
+  CHECKOUT=success NODE=success INSTALL=success CONFIG=success BROWSER=success IDENTITY=success \
+    PREFLIGHT=success VENUE=success CANARY=success VERIFY=success EVIDENCE="$evidence_step" \
+    CLEANUP=success SWEEP=success CONTROLLED=skipped RUNNER_TEMP="$summary_workspace" \
+    BUGDROP_CANARY_EVIDENCE_FILE="$summary_evidence" GITHUB_OUTPUT="$summary_output" \
+    bash -euo pipefail "$summary_script" || fail 'heartbeat summary contract execution failed'
+  grep -Fxq "heartbeat_ok=$expected_heartbeat_ok" "$summary_output" ||
+    fail "evidence $evidence_step/$expected_outcome produced the wrong aggregate"
+  if [ -n "$expected_outcome" ]; then
+    grep -Fxq "evidence_outcome=$expected_outcome" "$summary_output" ||
+      fail "valid $expected_outcome evidence was not preserved for reporting"
+  elif grep -Fq 'evidence_outcome=' "$summary_output"; then
+    fail 'missing or malformed evidence was published'
+  fi
+}
+
+run_summary_contract success \
+  '{"schemaVersion":1,"outcome":"verified","reasonCode":"issue_verified","observedAt":"2024-02-29T12:34:56.789Z"}' \
+  true verified
+run_summary_contract success \
+  '{"schemaVersion":1,"outcome":"delivery_failed","reasonCode":"issue_absent","observedAt":"2026-08-12T12:34:56.789Z"}' \
+  false delivery_failed
+run_summary_contract success \
+  '{"schemaVersion":1,"outcome":"inconclusive","reasonCode":"github_network","observedAt":"2026-08-12T12:34:56.789Z"}' \
+  false inconclusive
+run_summary_contract success missing false
+run_summary_contract success '{"schemaVersion":1,"outcome":"verified"}' false
+run_summary_contract success \
+  '{"schemaVersion":1,"outcome":"verified","reasonCode":"issue_verified","observedAt":"2026-99-99T99:99:99.999Z"}' \
+  false
+run_summary_contract success \
+  '{"schemaVersion":1,"outcome":"verified","reasonCode":"issue_verified","observedAt":"2026-08-12T12:34:56.789Z\n"}' \
+  false
+run_summary_contract success \
+  '{"schemaVersion":1,"outcome":"verified","reasonCode":"issue_verified","observedAt":"2026-02-29T12:34:56.789Z"}' \
+  false
+run_summary_contract success \
+  '{"schemaVersion":1,"outcome":"verified","reasonCode":"issue_verified","observedAt":"2026-08-12T24:00:00.000Z"}' \
+  false
+run_summary_contract success \
+  '{"schemaVersion":1,"outcome":"verified","reasonCode":"issue_verified","observedAt":"2026-08-12T23:59:60.000Z"}' \
+  false
+run_summary_contract success \
+  '{"schemaVersion":1,"outcome":"verified","reasonCode":"issue_verified","observedAt":"2026-08-12T12:34:56.789+00:00"}' \
+  false
+run_summary_contract success \
+  '{"schemaVersion":1,"outcome":"verified","reasonCode":"issue_verified","observedAt":"2026-08-12T12:34:56.7890Z"}' \
+  false
+run_summary_contract success \
+  '{"schemaVersion":1,"outcome":"verified","reasonCode":"issue_verified","observedAt":"2026-08-12T12:34:56.789z"}' \
+  false
+run_summary_contract failure \
+  '{"schemaVersion":1,"outcome":"verified","reasonCode":"issue_verified","observedAt":"2026-08-12T12:34:56.789Z"}' \
+  false
+
+rm -f -- "$summary_script" "$summary_output" "$summary_workspace"/*
+rmdir "$summary_workspace"
+trap - EXIT
 [[ $(grep -Fc 'ARTIFACT_PREPARE_OUTCOME: ${{ needs.heartbeat.outputs.artifact_prepare_outcome }}' "$workflow") -eq 3 ]] ||
   fail 'artifact preparation must feed incident selection, classification, and final conclusion'
 [[ $(grep -Fc 'SUMMARIZE_OUTCOME: ${{ needs.heartbeat.outputs.summarize_outcome }}' "$workflow") -eq 2 ]] ||

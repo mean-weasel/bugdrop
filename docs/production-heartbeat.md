@@ -27,8 +27,9 @@ configured fork from accidentally exercising the canonical BugDrop service.
   private key as the repository Actions secret
   `BUGDROP_HEARTBEAT_MONITOR_PRIVATE_KEY`.
 - Configure `VERCEL_AUTOMATION_BYPASS_SECRET` only if the fixed production venue requires it.
-- Configure `MONITOR_HEARTBEAT_SECRET` only after the compatible receiver is deployed. The workflow
-  exposes it exclusively to the final best-effort outcome sender step.
+- For the canonical installation, configure `MONITOR_HEARTBEAT_SECRET` only after the compatible
+  receiver at `https://bugdrop.dev/api/monitor/heartbeat` is deployed. The workflow exposes the
+  secret exclusively to the final best-effort outcome sender step.
 - Confirm production health reports `environment=production` and a full lowercase 40-character
   `buildSha` before authorization.
 - Leave `GITHUB_TOKEN` at declared job permissions. Only the incident job receives `issues: write`,
@@ -70,6 +71,12 @@ Before configuration:
    that installation boundary.
 7. Confirm the self-hosted repository permits the GitHub-maintained Actions used by the workflow.
    Private repositories consume the account's applicable GitHub Actions allowance.
+8. Replace and review both canonical receiver endpoints before configuring
+   `MONITOR_HEARTBEAT_SECRET`: the normal sender defaults to
+   `https://bugdrop.dev/api/monitor/heartbeat`, and the checkout-independent fallback embeds the same
+   canonical endpoint. The checked-in workflow does not wire a receiver URL variable, so setting a
+   self-hosted receiver secret without both code changes would send it to the canonical BugDrop
+   receiver instead of the self-hosted receiver.
 
 Set these repository variables under **Settings > Secrets and variables > Actions > Variables**:
 
@@ -135,9 +142,11 @@ production-only lock never cancels active work. If a run is interrupted, the nex
 begins with a production-prefix preflight and ends with another production sweep. Preview uses a
 different prefix, marker namespace, workflow owner, and lock.
 
-The conclusion fails unless transaction stages, marker cleanup, prefix sweep, artifact handling, and
-incident reconciliation succeed. Before upload, the summary writes a fixed-schema, token-free JSON
-file containing only normalized stage outcomes and the aggregate boolean. It writes to a
+The conclusion fails unless transaction stages, authoritative verified evidence, marker cleanup,
+prefix sweep, artifact handling, and incident reconciliation succeed. Valid delivery-failure and
+inconclusive evidence still flows to incident reconciliation and the receiver before the final step
+reports failure. Before upload, the summary writes a fixed-schema, token-free JSON file containing
+only normalized stage outcomes and the aggregate boolean. It writes to a
 run-specific temporary file, validates the exact schema and allowed outcome values, then atomically
 renames it before publishing summary outputs. Artifact staging independently requires non-empty,
 schema-valid diagnostics and never copies Playwright results, markers, Issue data, or browser
