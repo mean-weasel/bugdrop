@@ -42,6 +42,12 @@ rejects duplicates and pull requests, and checks the structured section, exact s
 title, labels, author, attribution, system information, and absence of screenshots. Cleanup always
 rediscovers by marker; it never depends on the browser result file.
 
+GitHub reads use three total attempts with one- and two-second backoffs, only for network failures
+and HTTP 500, 502, 503, or 504. Rate limits, authentication failures, other 4xx responses, and
+malformed successful JSON fail immediately with sanitized diagnostic categories. Marker discovery
+retains `state=all` for stable history; prefix preflight/final sweeps request only open Issues.
+Pagination retries the same URL and appends a page only after a valid response.
+
 ## Credential and rotation
 
 `BUGDROP_CANARY_GITHUB_TOKEN` must be a fine-grained token restricted to
@@ -49,10 +55,33 @@ rediscovers by marker; it never depends on the browser result file.
 verify, cleanup, final sweep, and scheduled janitor step environments. It must never be placed at
 workflow/job scope, passed to Playwright or the Worker, or copied into logs and artifacts.
 
+That credential belongs to the merge-queue/preview canary only. The production heartbeat uses the
+separate monitoring-only GitHub App: its numeric App ID is stored in
+`BUGDROP_HEARTBEAT_MONITOR_APP_ID`, its private key in
+`BUGDROP_HEARTBEAT_MONITOR_PRIVATE_KEY`, and its installation is limited to
+`mean-weasel/bugdrop-widget-test` with metadata read and Issues write. A pinned token-mint action
+creates a short-lived installation token, masks it, and exposes it only through the action step's
+`token` output. Exactly the five production server-side GitHub API helpers consume that output; it is
+not promoted to job or workflow outputs and never reaches Playwright, a browser page, runtime code,
+logs, or artifacts. The default post step attempts DELETE revocation at completion and warns if that
+request fails; short-lived expiry bounds the fallback, so revocation is best-effort rather than
+guaranteed. The monitoring App is not the production BugDrop App.
+
 The repository owner is responsible for rotation. Record the expiry in the repository's private
 credential inventory, rotate before expiry, and validate replacement access with nonmutating Issue
 list/get calls. If policy requires a write exercise, use a separately approved temporary Issue and
 close/reopen it outside the canary. Never print or retrieve the secret value during rotation.
+
+For the monitoring App, record the App owner, exact installation repository, and private-key
+rotation owner. Add and validate a replacement private key through the Actions secret, then revoke
+the superseded key; do not download, log, or retain local key copies beyond the controlled transfer.
+
+Production rollout remains in `manual` mode on App-authentication failure. Keep the unbound legacy
+`BUGDROP_CANARY_GITHUB_TOKEN` secret until an authorized App-backed run, cleanup, rollback proof, and
+Judge approval complete. Roll back by reverting the App integration to reviewed head
+`808f0fbd58a7951627ffb08e02ae203e5a316132`, which restores the prior PAT bindings; never bind or run
+the App token and PAT concurrently. Credential deletion is not part of rollback, and PAT retirement
+requires separate approval after staged success.
 
 An unavailable, expired, or unapproved token fails preflight before deployment/submission. If it
 expires after Issue creation, cleanup fails visibly and the required status bridge remains red.
@@ -63,6 +92,11 @@ Same-run cleanup has two independent passes while holding the lock:
 
 1. close every Issue matching the exact run marker;
 2. close every open Issue with the reserved `[BugDrop CI canary]` prefix and prove zero remain.
+
+Closing a synthetic Issue is never generically retried. An ambiguous network/selected-5xx first
+PATCH, or a 2xx response that does not confirm closure, is followed by bounded exact GET readback.
+Only stable proof that the Issue remains open permits one identical second PATCH, followed by final
+bounded GET proof. Deterministic failures and rate limits stop immediately.
 
 Hard cancellation can skip both passes. The next merge group performs a locked prefix preflight
 before deploying, and the daily scheduled live workflow performs the same prefix sweep under the

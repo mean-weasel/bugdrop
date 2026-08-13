@@ -40,6 +40,15 @@ node "$checker" "$fixture_root" > /dev/null
 write_workflow a1948c3f048ba23858d222213b7c278aabede763 v4.1.1 uses actions/attest
 node "$checker" "$fixture_root" > /dev/null
 
+write_workflow fee1f7d63c2ff003460e3d139729b119787bc349 v2.2.2 uses actions/create-github-app-token
+node "$checker" "$fixture_root" > /dev/null
+
+write_workflow eee1f7d63c2ff003460e3d139729b119787bc349 v2.2.2 uses actions/create-github-app-token
+expect_failure 'is not approved as v2.2.2'
+
+write_workflow fee1f7d63c2ff003460e3d139729b119787bc349 v1.9.9 uses actions/create-github-app-token
+expect_failure 'below the Node 24-ready v2 floor'
+
 write_workflow b1948c3f048ba23858d222213b7c278aabede763 v4.1.1 uses actions/attest
 expect_failure 'is not approved as v4.1.1'
 

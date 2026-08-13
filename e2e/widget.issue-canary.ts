@@ -19,6 +19,7 @@ type CanaryEnvironment = {
   expectedWidgetSha256: string;
   expectedWorkerSha: string;
   marker: string;
+  postEvidenceFile: string;
   resultFile: string;
   profile: {
     dialogTitle: string;
@@ -97,6 +98,12 @@ export async function runIssueCanary(page: Page): Promise<void> {
     expect(payload).not.toHaveProperty('screenshot');
     expect(payload).not.toHaveProperty('fields');
     await route.continue();
+    await mkdir(dirname(environment.postEvidenceFile), { recursive: true });
+    await writeFile(environment.postEvidenceFile, 'validated_feedback_post\n', {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    });
   });
 
   const feedbackResponsePromise = page.waitForResponse(response => {
@@ -169,6 +176,8 @@ function requireCanaryEnvironment(): CanaryEnvironment {
   const expectedWorkerSha = requireEnvironment('EXPECTED_WORKER_SHA');
   const marker = requireEnvironment('BUGDROP_CANARY_MARKER');
   const resultFile = requireEnvironment('BUGDROP_CANARY_RESULT_FILE');
+  const postEvidenceFile =
+    process.env.BUGDROP_CANARY_POST_EVIDENCE_FILE?.trim() || `${resultFile}.post-evidence`;
   const profile = resolveBrowserCanaryProfile({
     profile: profileName,
     repo: getCanaryProfile(profileName, process.env).repo,
@@ -193,6 +202,7 @@ function requireCanaryEnvironment(): CanaryEnvironment {
     expectedWidgetSha256,
     expectedWorkerSha,
     marker,
+    postEvidenceFile,
     resultFile,
     profile,
   };

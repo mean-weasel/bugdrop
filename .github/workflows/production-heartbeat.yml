@@ -35,7 +35,20 @@ jobs:
       contents: read
     outputs:
       heartbeat_ok: ${{ steps.summarize.outputs.heartbeat_ok }}
-      details: ${{ steps.summarize.outputs.details }}
+      evidence_outcome: ${{ steps.summarize.outputs.evidence_outcome }}
+      evidence_reason: ${{ steps.summarize.outputs.evidence_reason }}
+      evidence_observed_at: ${{ steps.summarize.outputs.evidence_observed_at }}
+      checkout_outcome: ${{ steps.checkout.outcome }}
+      node_outcome: ${{ steps.node.outcome }}
+      install_outcome: ${{ steps.install.outcome }}
+      config_outcome: ${{ steps.config.outcome }}
+      browser_outcome: ${{ steps.browser.outcome }}
+      identity_outcome: ${{ steps.identity.outcome }}
+      preflight_outcome: ${{ steps.preflight.outcome }}
+      venue_outcome: ${{ steps.venue.outcome }}
+      canary_outcome: ${{ steps.canary.outcome }}
+      cleanup_outcome: ${{ steps.cleanup.outcome }}
+      sweep_outcome: ${{ steps.sweep.outcome }}
       summarize_outcome: ${{ steps.summarize.outcome }}
       artifact_prepare_outcome: ${{ steps.prepare-artifact.outcome }}
       artifact_outcome: ${{ steps.artifact.outcome }}
@@ -104,7 +117,21 @@ jobs:
           echo "BUGDROP_CANARY_MARKER=bugdrop-production-heartbeat:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${worker_sha}" >> "$GITHUB_ENV"
           echo "BUGDROP_CANARY_RESULT_FILE=$RUNNER_TEMP/production-heartbeat-result.json" >> "$GITHUB_ENV"
           echo "BUGDROP_CANARY_ATTEMPT_FILE=$RUNNER_TEMP/production-heartbeat-attempt" >> "$GITHUB_ENV"
+          echo "BUGDROP_CANARY_POST_EVIDENCE_FILE=$RUNNER_TEMP/production-heartbeat-post-evidence" >> "$GITHUB_ENV"
+          echo "BUGDROP_CANARY_EVIDENCE_FILE=$RUNNER_TEMP/production-heartbeat-evidence.json" >> "$GITHUB_ENV"
           echo "LIVE_TARGET=production" >> "$GITHUB_ENV"
+
+      - name: Mint monitoring-only GitHub App token
+        id: heartbeat-monitor-token
+        if: always() && steps.checkout.outcome == 'success'
+        continue-on-error: true
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.BUGDROP_HEARTBEAT_MONITOR_APP_ID }}
+          private-key: ${{ secrets.BUGDROP_HEARTBEAT_MONITOR_PRIVATE_KEY }}
+          owner: mean-weasel
+          repositories: bugdrop-widget-test
+          permission-issues: write
 
       - name: Preflight production heartbeat cleanup
         id: preflight
@@ -114,9 +141,9 @@ jobs:
           node scripts/github-issue-canary.mjs preflight
           --profile production
           --repo "$BUGDROP_CANARY_REPO"
-          --prefix "[BugDrop production heartbeat]"
+          --prefix "[BugDrop production heartbeat]" > /dev/null
         env:
-          BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
+          BUGDROP_CANARY_GITHUB_TOKEN: ${{ steps.heartbeat-monitor-token.outputs.token }}
 
       - name: Verify fixed production venue
         id: venue
@@ -155,9 +182,27 @@ jobs:
           --repo "$BUGDROP_CANARY_REPO"
           --marker "$BUGDROP_CANARY_MARKER"
           --expected-sha "$EXPECTED_WORKER_SHA"
-          --result-file "$BUGDROP_CANARY_RESULT_FILE"
+          --result-file "$BUGDROP_CANARY_RESULT_FILE" > /dev/null
         env:
-          BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
+          BUGDROP_CANARY_GITHUB_TOKEN: ${{ steps.heartbeat-monitor-token.outputs.token }}
+
+      - name: Classify sanitized authoritative delivery evidence
+        id: evidence
+        if: always() && steps.identity.outcome == 'success'
+        continue-on-error: true
+        run: >-
+          node scripts/github-issue-canary.mjs evidence
+          --profile production
+          --repo "$BUGDROP_CANARY_REPO"
+          --marker "$BUGDROP_CANARY_MARKER"
+          --expected-sha "$EXPECTED_WORKER_SHA"
+          --result-file "$BUGDROP_CANARY_RESULT_FILE"
+          --attempt-file "$BUGDROP_CANARY_ATTEMPT_FILE"
+          --post-evidence-file "$BUGDROP_CANARY_POST_EVIDENCE_FILE"
+          --evidence-file "$BUGDROP_CANARY_EVIDENCE_FILE"
+          > /dev/null
+        env:
+          BUGDROP_CANARY_GITHUB_TOKEN: ${{ steps.heartbeat-monitor-token.outputs.token }}
 
       - name: Cleanup current production marker
         id: cleanup
@@ -171,9 +216,9 @@ jobs:
           node scripts/github-issue-canary.mjs cleanup \
             --profile production \
             --repo "$BUGDROP_CANARY_REPO" \
-            --marker "$BUGDROP_CANARY_MARKER"
+            --marker "$BUGDROP_CANARY_MARKER" > /dev/null
         env:
-          BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
+          BUGDROP_CANARY_GITHUB_TOKEN: ${{ steps.heartbeat-monitor-token.outputs.token }}
 
       - name: Final production-prefix sweep
         id: sweep
@@ -183,9 +228,9 @@ jobs:
           node scripts/github-issue-canary.mjs sweep
           --profile production
           --repo "$BUGDROP_CANARY_REPO"
-          --prefix "[BugDrop production heartbeat]"
+          --prefix "[BugDrop production heartbeat]" > /dev/null
         env:
-          BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
+          BUGDROP_CANARY_GITHUB_TOKEN: ${{ steps.heartbeat-monitor-token.outputs.token }}
 
       - name: Controlled post-cleanup failure
         id: controlled
@@ -210,23 +255,56 @@ jobs:
           VENUE: ${{ steps.venue.outcome }}
           CANARY: ${{ steps.canary.outcome }}
           VERIFY: ${{ steps.verify.outcome }}
+          EVIDENCE: ${{ steps.evidence.outcome }}
           CLEANUP: ${{ steps.cleanup.outcome }}
           SWEEP: ${{ steps.sweep.outcome }}
           CONTROLLED: ${{ steps.controlled.outcome }}
         run: |
-          details="checkout=$CHECKOUT,node=$NODE,install=$INSTALL,config=$CONFIG,browser=$BROWSER,identity=$IDENTITY,preflight=$PREFLIGHT,venue=$VENUE,canary=$CANARY,verify=$VERIFY,cleanup=$CLEANUP,sweep=$SWEEP,controlled=$CONTROLLED"
           heartbeat_ok=true
           for outcome in "$CHECKOUT" "$NODE" "$INSTALL" "$CONFIG" "$BROWSER" "$IDENTITY" "$PREFLIGHT" "$VENUE" "$CANARY" "$VERIFY" "$CLEANUP" "$SWEEP"; do
             if [ "$outcome" != success ]; then heartbeat_ok=false; fi
           done
           if [ "$CONTROLLED" = failure ]; then heartbeat_ok=false; fi
+          evidence_verified=false
+          evidence_outputs=
+          if [ "$EVIDENCE" = success ] && [ -s "$BUGDROP_CANARY_EVIDENCE_FILE" ]; then
+            if evidence_candidate_outputs=$(jq -er '
+              select(
+                type == "object" and
+                (keys == ["observedAt", "outcome", "reasonCode", "schemaVersion"]) and
+                .schemaVersion == 1 and
+                (.observedAt | type == "string") and
+                (
+                  (.outcome == "verified" and .reasonCode == "issue_verified") or
+                  (.outcome == "delivery_failed" and (.reasonCode == "issue_absent" or .reasonCode == "issue_duplicate" or .reasonCode == "issue_contract_invalid")) or
+                  (.outcome == "inconclusive" and (.reasonCode as $reason | ["setup_failed", "identity_failed", "venue_failed", "browser_inconclusive", "github_network", "github_5xx", "github_rate_limited", "github_auth_failed", "cleanup_failed", "sweep_failed", "artifact_failed", "incident_failed", "classification_failed"] | index($reason)))
+                )
+              )
+              | "evidence_outcome=\(.outcome)\nevidence_reason=\(.reasonCode)\nevidence_observed_at=\(.observedAt)"
+            ' "$BUGDROP_CANARY_EVIDENCE_FILE") &&
+              node -e '
+                const { readFileSync } = require("node:fs");
+                const value = JSON.parse(readFileSync(process.argv[1], "utf8")).observedAt;
+                const parsed = new Date(value);
+                if (
+                  typeof value !== "string" ||
+                  !/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/.test(value) ||
+                  Number.isNaN(parsed.getTime()) ||
+                  parsed.toISOString() !== value
+                ) process.exit(1);
+              ' "$BUGDROP_CANARY_EVIDENCE_FILE"; then
+              evidence_outputs=$evidence_candidate_outputs
+              if jq -e '.outcome == "verified" and .reasonCode == "issue_verified"' "$BUGDROP_CANARY_EVIDENCE_FILE" > /dev/null; then
+                evidence_verified=true
+              fi
+            fi
+          fi
+          if [ "$evidence_verified" != true ]; then heartbeat_ok=false; fi
           diagnostics_path="$RUNNER_TEMP/production-heartbeat-diagnostics.json"
-          diagnostics_tmp="$RUNNER_TEMP/production-heartbeat-diagnostics-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tmp"
+          diagnostics_tmp="$RUNNER_TEMP/production-heartbeat-diagnostics.tmp"
           trap 'rm -f -- "$diagnostics_tmp"' EXIT
           jq -n \
             --argjson schemaVersion 1 \
-            --arg runId "$GITHUB_RUN_ID" \
-            --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
             --arg checkout "$CHECKOUT" \
             --arg node "$NODE" \
             --arg install "$INSTALL" \
@@ -237,28 +315,29 @@ jobs:
             --arg venue "$VENUE" \
             --arg canary "$CANARY" \
             --arg verify "$VERIFY" \
+            --arg evidence "$EVIDENCE" \
             --arg cleanup "$CLEANUP" \
             --arg sweep "$SWEEP" \
             --arg controlled "$CONTROLLED" \
             --arg heartbeatOk "$heartbeat_ok" \
-            '{schemaVersion: $schemaVersion, runId: $runId, runAttempt: $runAttempt, stages: {checkout: $checkout, node: $node, install: $install, config: $config, browser: $browser, identity: $identity, preflight: $preflight, venue: $venue, canary: $canary, verify: $verify, cleanup: $cleanup, sweep: $sweep, controlled: $controlled}, heartbeatOk: ($heartbeatOk == "true")}' \
+            '{schemaVersion: $schemaVersion, stages: {checkout: $checkout, node: $node, install: $install, config: $config, browser: $browser, identity: $identity, preflight: $preflight, venue: $venue, canary: $canary, verify: $verify, evidence: $evidence, cleanup: $cleanup, sweep: $sweep, controlled: $controlled}, heartbeatOk: ($heartbeatOk == "true")}' \
             > "$diagnostics_tmp"
           test -s "$diagnostics_tmp"
           jq -e '
             type == "object" and
-            (keys == ["heartbeatOk", "runAttempt", "runId", "schemaVersion", "stages"]) and
+            (keys == ["heartbeatOk", "schemaVersion", "stages"]) and
             .schemaVersion == 1 and
-            (.runId | type == "string" and length > 0) and
-            (.runAttempt | type == "string" and length > 0) and
             (.heartbeatOk | type == "boolean") and
             (.stages | type == "object") and
-            (.stages | keys == ["browser", "canary", "checkout", "cleanup", "config", "controlled", "identity", "install", "node", "preflight", "sweep", "venue", "verify"]) and
+            (.stages | keys == ["browser", "canary", "checkout", "cleanup", "config", "controlled", "evidence", "identity", "install", "node", "preflight", "sweep", "venue", "verify"]) and
             ([.stages[] | select(. != "success" and . != "failure" and . != "skipped" and . != "cancelled")] | length == 0)
           ' "$diagnostics_tmp" > /dev/null
           mv "$diagnostics_tmp" "$diagnostics_path"
           trap - EXIT
           echo "heartbeat_ok=$heartbeat_ok" >> "$GITHUB_OUTPUT"
-          echo "details=$details" >> "$GITHUB_OUTPUT"
+          if [ -n "$evidence_outputs" ]; then
+            printf '%s\n' "$evidence_outputs" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Prepare heartbeat diagnostics artifact
         id: prepare-artifact
@@ -266,23 +345,19 @@ jobs:
         continue-on-error: true
         run: |
           diagnostics_path="$RUNNER_TEMP/production-heartbeat-diagnostics.json"
-          artifact_path="$RUNNER_TEMP/production-heartbeat-artifact-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          artifact_path="$RUNNER_TEMP/production-heartbeat-artifact"
           mkdir -p "$artifact_path"
           test -s "$diagnostics_path"
           jq -e '
             type == "object" and
-            (keys == ["heartbeatOk", "runAttempt", "runId", "schemaVersion", "stages"]) and
+            (keys == ["heartbeatOk", "schemaVersion", "stages"]) and
             .schemaVersion == 1 and
-            (.runId | type == "string" and length > 0) and
-            (.runAttempt | type == "string" and length > 0) and
             (.heartbeatOk | type == "boolean") and
             (.stages | type == "object") and
-            (.stages | keys == ["browser", "canary", "checkout", "cleanup", "config", "controlled", "identity", "install", "node", "preflight", "sweep", "venue", "verify"]) and
+            (.stages | keys == ["browser", "canary", "checkout", "cleanup", "config", "controlled", "evidence", "identity", "install", "node", "preflight", "sweep", "venue", "verify"]) and
             ([.stages[] | select(. != "success" and . != "failure" and . != "skipped" and . != "cancelled")] | length == 0)
           ' "$diagnostics_path" > /dev/null
           cp "$diagnostics_path" "$artifact_path/diagnostics.json"
-          if [ -d playwright-report ]; then cp -R playwright-report "$artifact_path/"; fi
-          if [ -d test-results ]; then cp -R test-results "$artifact_path/"; fi
 
       - name: Upload heartbeat diagnostics
         id: artifact
@@ -290,8 +365,8 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: production-heartbeat-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/production-heartbeat-artifact-${{ github.run_id }}-${{ github.run_attempt }}/
+          name: production-heartbeat-diagnostics-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/production-heartbeat-artifact/
           if-no-files-found: error
           retention-days: 7
 
@@ -304,28 +379,47 @@ jobs:
     permissions:
       contents: read
       issues: write
+    outputs:
+      transition: ${{ steps.reconcile.outputs.transition }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Reconcile one stable incident Issue
+        id: reconcile
         env:
           GITHUB_TOKEN: ${{ github.token }}
           HEARTBEAT_OK: ${{ needs.heartbeat.outputs.heartbeat_ok }}
           SUMMARIZE_OUTCOME: ${{ needs.heartbeat.outputs.summarize_outcome }}
+          CLEANUP_OUTCOME: ${{ needs.heartbeat.outputs.cleanup_outcome }}
+          SWEEP_OUTCOME: ${{ needs.heartbeat.outputs.sweep_outcome }}
           ARTIFACT_PREPARE_OUTCOME: ${{ needs.heartbeat.outputs.artifact_prepare_outcome }}
           ARTIFACT_OUTCOME: ${{ needs.heartbeat.outputs.artifact_outcome }}
-          DETAILS: ${{ needs.heartbeat.outputs.details }}
+          EVIDENCE_OUTCOME: ${{ needs.heartbeat.outputs.evidence_outcome }}
+          EVIDENCE_REASON: ${{ needs.heartbeat.outputs.evidence_reason }}
           BUGDROP_HEARTBEAT_INCIDENT_REPO: ${{ github.repository }}
         run: |
-          outcome=failure
-          if [ "$HEARTBEAT_OK" = true ] && [ "$SUMMARIZE_OUTCOME" = success ] && [ "$ARTIFACT_PREPARE_OUTCOME" = success ] && [ "$ARTIFACT_OUTCOME" = success ]; then
+          outcome=inconclusive
+          reason="${EVIDENCE_REASON:-classification_failed}"
+          if [ "$EVIDENCE_OUTCOME" = delivery_failed ]; then
+            outcome=failure
+          elif [ "$EVIDENCE_OUTCOME" = verified ] && [ "$HEARTBEAT_OK" = true ] && [ "$SUMMARIZE_OUTCOME" = success ] && [ "$ARTIFACT_PREPARE_OUTCOME" = success ] && [ "$ARTIFACT_OUTCOME" = success ]; then
             outcome=recovery
+          elif [ "$EVIDENCE_OUTCOME" = verified ]; then
+            if [ "$CLEANUP_OUTCOME" != success ]; then
+              reason=cleanup_failed
+            elif [ "$SWEEP_OUTCOME" != success ]; then
+              reason=sweep_failed
+            elif [ "$ARTIFACT_PREPARE_OUTCOME" != success ] || [ "$ARTIFACT_OUTCOME" != success ]; then
+              reason=artifact_failed
+            else
+              reason=classification_failed
+            fi
           fi
           node scripts/github-heartbeat-incident.mjs "$outcome" \
-            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            --details "$DETAILS,summarize=$SUMMARIZE_OUTCOME,artifact_prepare=$ARTIFACT_PREPARE_OUTCOME,artifact=$ARTIFACT_OUTCOME"
+            --reason-code "$reason" > /dev/null
+          echo "transition=$outcome" >> "$GITHUB_OUTPUT"
 
   conclusion:
     name: Production Heartbeat Conclusion
@@ -335,6 +429,37 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Check out outcome sender
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        continue-on-error: true
+        with:
+          persist-credentials: false
+
+      - name: Classify final sanitized outcome
+        id: classify
+        if: always()
+        continue-on-error: true
+        env:
+          EVIDENCE_OUTCOME: ${{ needs.heartbeat.outputs.evidence_outcome }}
+          EVIDENCE_REASON: ${{ needs.heartbeat.outputs.evidence_reason }}
+          EVIDENCE_OBSERVED_AT: ${{ needs.heartbeat.outputs.evidence_observed_at }}
+          STAGE_CHECKOUT: ${{ needs.heartbeat.outputs.checkout_outcome }}
+          STAGE_NODE: ${{ needs.heartbeat.outputs.node_outcome }}
+          STAGE_INSTALL: ${{ needs.heartbeat.outputs.install_outcome }}
+          STAGE_CONFIG: ${{ needs.heartbeat.outputs.config_outcome }}
+          STAGE_BROWSER: ${{ needs.heartbeat.outputs.browser_outcome }}
+          STAGE_IDENTITY: ${{ needs.heartbeat.outputs.identity_outcome }}
+          STAGE_PREFLIGHT: ${{ needs.heartbeat.outputs.preflight_outcome }}
+          STAGE_VENUE: ${{ needs.heartbeat.outputs.venue_outcome }}
+          STAGE_CANARY: ${{ needs.heartbeat.outputs.canary_outcome }}
+          STAGE_CLEANUP: ${{ needs.heartbeat.outputs.cleanup_outcome }}
+          STAGE_SWEEP: ${{ needs.heartbeat.outputs.sweep_outcome }}
+          ARTIFACT_PREPARE_OUTCOME: ${{ needs.heartbeat.outputs.artifact_prepare_outcome }}
+          ARTIFACT_OUTCOME: ${{ needs.heartbeat.outputs.artifact_outcome }}
+          INCIDENT_OUTCOME: ${{ needs.incident.result }}
+        run: node scripts/production-heartbeat-outcome.mjs classify
+
       - name: Fail closed on every required outcome
         env:
           HEARTBEAT_JOB: ${{ needs.heartbeat.result }}
@@ -352,14 +477,132 @@ jobs:
             exit 1
           fi
 
-      - name: Check in successful production heartbeat
+      - name: Send sanitized production heartbeat outcome
+        if: always()
         continue-on-error: true
         env:
           MONITOR_HEARTBEAT_SECRET: ${{ secrets.MONITOR_HEARTBEAT_SECRET }}
+          HEARTBEAT_ID: ${{ github.run_id }}:${{ github.run_attempt }}
+          HEARTBEAT_OUTCOME: ${{ steps.classify.outputs.outcome }}
+          HEARTBEAT_REASON_CODE: ${{ steps.classify.outputs.reason_code }}
+          HEARTBEAT_OBSERVED_AT: ${{ steps.classify.outputs.observed_at }}
+          EVIDENCE_OUTCOME: ${{ needs.heartbeat.outputs.evidence_outcome }}
+          EVIDENCE_REASON: ${{ needs.heartbeat.outputs.evidence_reason }}
+          EVIDENCE_OBSERVED_AT: ${{ needs.heartbeat.outputs.evidence_observed_at }}
         run: |
-          curl --fail --silent --show-error --max-time 10 \
-            --retry 2 --retry-all-errors \
-            --request POST \
-            --header "Authorization: Bearer $MONITOR_HEARTBEAT_SECRET" \
-            --header "X-BugDrop-Heartbeat-Id: ${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}" \
-            https://bugdrop.dev/api/monitor/heartbeat
+          if [ "${{ steps.checkout.outcome }}" = success ] && \
+             [ "${{ steps.classify.outcome }}" = success ] && \
+             [ -n "$HEARTBEAT_OUTCOME" ] && [ -n "$HEARTBEAT_REASON_CODE" ] && \
+             [ -n "$HEARTBEAT_OBSERVED_AT" ]; then
+            node scripts/production-heartbeat-outcome.mjs send
+            exit
+          fi
+          node --input-type=module <<'NODE'
+          const secret = process.env.MONITOR_HEARTBEAT_SECRET;
+          const heartbeatId = process.env.HEARTBEAT_ID;
+          if (!secret || !/^\d+:\d+$/.test(heartbeatId || '')) {
+            process.stderr.write('[production-heartbeat-outcome] operation_failed\n');
+            process.exit(1);
+          }
+          const canonicalTime = value => {
+            if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value || '')) return null;
+            const parsed = new Date(value);
+            return Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value ? null : value;
+          };
+          const evidenceOutcome = process.env.EVIDENCE_OUTCOME;
+          const evidenceReason = process.env.EVIDENCE_REASON;
+          const evidenceTime = canonicalTime(process.env.EVIDENCE_OBSERVED_AT);
+          const authoritativeEvidence =
+            (evidenceOutcome === 'verified' && evidenceReason === 'issue_verified') ||
+            (evidenceOutcome === 'delivery_failed' &&
+              ['issue_absent', 'issue_duplicate', 'issue_contract_invalid'].includes(evidenceReason));
+          const report =
+            evidenceTime && authoritativeEvidence
+              ? {
+                  schemaVersion: 1,
+                  outcome: evidenceOutcome,
+                  reasonCode: evidenceReason,
+                  observedAt: evidenceTime,
+                }
+              : {
+                  schemaVersion: 1,
+                  outcome: 'inconclusive',
+                  reasonCode: 'setup_failed',
+                  observedAt: new Date().toISOString(),
+                };
+          const body = JSON.stringify(report);
+          const request = {
+            method: 'POST',
+            redirect: 'manual',
+            headers: {
+              Authorization: `Bearer ${secret}`,
+              'Content-Type': 'application/json',
+              'X-BugDrop-Heartbeat-Id': heartbeatId,
+            },
+            body,
+          };
+          const delays = [1_000, 2_000];
+          const sleep = delay => new Promise(resolve => setTimeout(resolve, delay));
+          const validEffect = effect =>
+            effect === 'recorded_only' ||
+            (report.outcome === 'verified' && effect === 'verified') ||
+            (report.outcome === 'delivery_failed' && effect === 'degraded');
+          const main = async () => {
+            let response;
+            let responseText;
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              try {
+                response = await fetch('https://bugdrop.dev/api/monitor/heartbeat', {
+                  ...request,
+                  signal: AbortSignal.timeout(10_000),
+                });
+              } catch {
+                if (attempt === 2) throw new Error('heartbeat_receiver_network');
+                await sleep(delays[attempt]);
+                continue;
+              }
+              if ([500, 502, 503, 504].includes(response.status) && attempt < 2) {
+                await sleep(delays[attempt]);
+                continue;
+              }
+              if (
+                response.status !== 200 ||
+                response.headers.get('cache-control')?.toLowerCase() !== 'no-store'
+              ) break;
+              try {
+                responseText = await response.text();
+              } catch {
+                if (attempt === 2) throw new Error('heartbeat_receiver_network');
+                await sleep(delays[attempt]);
+                continue;
+              }
+              break;
+            }
+            if (response.status !== 200) throw new Error('heartbeat_receiver_http');
+            if (response.headers.get('cache-control')?.toLowerCase() !== 'no-store') {
+              throw new Error('heartbeat_receiver_cache_invalid');
+            }
+            let responseBody;
+            try {
+              responseBody = JSON.parse(responseText);
+            } catch {
+              throw new Error('heartbeat_receiver_response_invalid');
+            }
+            const keys = Object.keys(responseBody || {}).sort().join(',');
+            if (
+              keys !== 'accepted,duplicate,effect,observedAt,outcome,schemaVersion' ||
+              responseBody.schemaVersion !== 1 ||
+              responseBody.accepted !== true ||
+              typeof responseBody.duplicate !== 'boolean' ||
+              responseBody.outcome !== report.outcome ||
+              responseBody.observedAt !== report.observedAt ||
+              !validEffect(responseBody.effect)
+            ) {
+              throw new Error('heartbeat_receiver_response_invalid');
+            }
+          };
+          main().catch(() => {
+            process.stderr.write('[production-heartbeat-outcome] operation_failed\n');
+            process.exitCode = 1;
+          });
+          NODE

@@ -4,6 +4,7 @@ import {
   canaryTitle,
   closeMatchingIssues,
   listMatchingIssues,
+  observeCanaryDelivery,
   runCli,
   verifyCanaryIssue,
 } from '../scripts/github-issue-canary.mjs';
@@ -61,6 +62,17 @@ function jsonResponse(value: unknown, init: ResponseInit = {}): Response {
   });
 }
 
+function terminatedResponse(status = 200): Response {
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.error(new TypeError('terminated'));
+      },
+    }),
+    { status }
+  );
+}
+
 function result(overrides: Record<string, unknown> = {}) {
   return {
     marker: MARKER,
@@ -91,6 +103,93 @@ function issueFetch(
 }
 
 describe('GitHub Issue canary discovery and verification', () => {
+  it('retries GET network and selected 5xx failures with 1s/2s delays', async () => {
+    const retrySleepImpl = vi.fn(async () => {});
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error(`network ${TOKEN}`))
+      .mockResolvedValueOnce(new Response(`upstream ${TOKEN}`, { status: 503 }))
+      .mockResolvedValueOnce(jsonResponse([issue()]));
+
+    await expect(
+      listMatchingIssues({ fetchImpl, repo: REPO, token: TOKEN, marker: MARKER, retrySleepImpl })
+    ).resolves.toHaveLength(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(retrySleepImpl.mock.calls).toEqual([[1_000], [2_000]]);
+    expect(fetchImpl.mock.calls.map(call => String(call[0]))).toEqual([
+      String(fetchImpl.mock.calls[0][0]),
+      String(fetchImpl.mock.calls[0][0]),
+      String(fetchImpl.mock.calls[0][0]),
+    ]);
+  });
+
+  it('retries a terminated GET response body on the same URL', async () => {
+    const retrySleepImpl = vi.fn(async () => {});
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(terminatedResponse())
+      .mockResolvedValueOnce(jsonResponse([issue()]));
+
+    await expect(
+      listMatchingIssues({ fetchImpl, repo: REPO, token: TOKEN, marker: MARKER, retrySleepImpl })
+    ).resolves.toHaveLength(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(String(fetchImpl.mock.calls[1][0])).toBe(String(fetchImpl.mock.calls[0][0]));
+    expect(retrySleepImpl.mock.calls).toEqual([[1_000]]);
+  });
+
+  it('classifies a terminated 401 response from status without retrying its body', async () => {
+    const retrySleepImpl = vi.fn(async () => {});
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(terminatedResponse(401));
+
+    await expect(
+      listMatchingIssues({ fetchImpl, repo: REPO, token: TOKEN, marker: MARKER, retrySleepImpl })
+    ).rejects.toThrow('github_auth');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(retrySleepImpl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['github_rate_limited', new Response(`quota ${TOKEN}`, { status: 429 })],
+    ['github_auth', new Response(`auth ${TOKEN}`, { status: 401 })],
+    ['github_request_failed', new Response(`missing ${TOKEN}`, { status: 404 })],
+    ['github_response_invalid', new Response(`not-json ${TOKEN}`, { status: 200 })],
+  ])('does not retry deterministic GET failure %s', async (category, failedResponse) => {
+    const retrySleepImpl = vi.fn(async () => {});
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(failedResponse);
+    await expect(
+      listMatchingIssues({ fetchImpl, repo: REPO, token: TOKEN, marker: MARKER, retrySleepImpl })
+    ).rejects.toThrow(category);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(retrySleepImpl).not.toHaveBeenCalled();
+  });
+
+  it('retries the same page URL and appends a page only after valid success', async () => {
+    const retrySleepImpl = vi.fn(async () => {});
+    const first = issue({ number: 41 });
+    const second = issue({ number: 42 });
+    const pageTwo = `https://api.github.com/repos/mean-weasel/bugdrop-widget-test/issues?state=all&per_page=100&page=2`;
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse([first], { headers: { Link: `<${pageTwo}>; rel="next"` } })
+      )
+      .mockResolvedValueOnce(new Response('temporary', { status: 502 }))
+      .mockResolvedValueOnce(jsonResponse([second]));
+
+    const matches = await listMatchingIssues({
+      fetchImpl,
+      repo: REPO,
+      token: TOKEN,
+      marker: MARKER,
+      retrySleepImpl,
+    });
+    expect(matches.map(candidate => candidate.number)).toEqual([41, 42]);
+    expect(String(fetchImpl.mock.calls[1][0])).toBe(pageTwo);
+    expect(String(fetchImpl.mock.calls[2][0])).toBe(pageTwo);
+    expect(retrySleepImpl.mock.calls).toEqual([[1_000]]);
+  });
+
   it('paginates state=all, filters PRs, and discovers a body-only marker', async () => {
     const matching = issue({ number: 42, title: 'unexpected title' });
     const pullRequest = issue({
@@ -444,6 +543,177 @@ describe('GitHub Issue canary discovery and verification', () => {
   });
 });
 
+describe('sanitized authoritative delivery evidence', () => {
+  const observe = (fetchImpl: typeof fetch, overrides: Record<string, unknown> = {}) =>
+    observeCanaryDelivery({
+      fetchImpl,
+      repo: REPO,
+      token: TOKEN,
+      marker: MARKER,
+      expectedSha: SHA,
+      result: result(),
+      attempted: true,
+      feedbackPostObserved: true,
+      consistencyAttempts: 2,
+      consistencyDelayMs: 0,
+      sleepImpl: noWait,
+      observedAt: new Date('2026-08-12T12:34:56.789Z'),
+      ...overrides,
+    });
+
+  it('reports verified from stable singleton and exact contract reads without identifiers', async () => {
+    await expect(observe(issueFetch([issue()]))).resolves.toEqual({
+      schemaVersion: 1,
+      outcome: 'verified',
+      reasonCode: 'issue_verified',
+      observedAt: '2026-08-12T12:34:56.789Z',
+    });
+  });
+
+  it('reports only authoritative absent, duplicate, and contract-invalid categories', async () => {
+    await expect(observe(issueFetch([]))).resolves.toMatchObject({
+      outcome: 'delivery_failed',
+      reasonCode: 'issue_absent',
+    });
+    await expect(observe(issueFetch([issue(), issue({ number: 43 })]))).resolves.toMatchObject({
+      outcome: 'delivery_failed',
+      reasonCode: 'issue_duplicate',
+    });
+    await expect(
+      observe(issueFetch([issue({ labels: [{ name: 'bug' }] })]))
+    ).resolves.toMatchObject({
+      outcome: 'delivery_failed',
+      reasonCode: 'issue_contract_invalid',
+    });
+  });
+
+  it('waits through the complete empty-read window before declaring Issue absence', async () => {
+    let requests = 0;
+    const fetchImpl = (async () => {
+      requests += 1;
+      return jsonResponse([]);
+    }) as typeof fetch;
+
+    await expect(
+      observe(fetchImpl, { consistencyAttempts: 6, sleepImpl: async () => {} })
+    ).resolves.toMatchObject({
+      outcome: 'delivery_failed',
+      reasonCode: 'issue_absent',
+    });
+    expect(requests).toBe(6);
+  });
+
+  it('does not declare absence when an Issue appears after repeated empty reads', async () => {
+    const candidate = issue();
+    const listResponses = [[], [], [candidate], [candidate], [candidate], [candidate]];
+    const fetchImpl = vi.fn<typeof fetch>(async input => {
+      if (!String(input).includes('/issues?')) return jsonResponse(candidate);
+      return jsonResponse(listResponses.shift() ?? [candidate]);
+    });
+
+    await expect(
+      observe(fetchImpl, { consistencyAttempts: 6, sleepImpl: async () => {} })
+    ).resolves.toMatchObject({
+      outcome: 'verified',
+      reasonCode: 'issue_verified',
+    });
+    expect(listResponses).toEqual([]);
+  });
+
+  it('keeps nonempty-then-empty evidence inconclusive through the complete window', async () => {
+    const listResponses = [[issue({ number: 43 })], [], [], [], [], []];
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse(listResponses.shift() ?? []));
+
+    await expect(
+      observe(fetchImpl, { consistencyAttempts: 6, sleepImpl: async () => {} })
+    ).resolves.toMatchObject({
+      outcome: 'inconclusive',
+      reasonCode: 'classification_failed',
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(6);
+    expect(listResponses).toEqual([]);
+  });
+
+  it('keeps fluctuating nonempty evidence inconclusive through the complete window', async () => {
+    const candidates = [issue(), issue({ number: 43 })];
+    let index = 0;
+    const fetchImpl = vi.fn<typeof fetch>(async () => {
+      const candidate = candidates[index % candidates.length];
+      index += 1;
+      return jsonResponse([candidate]);
+    });
+
+    await expect(
+      observe(fetchImpl, { consistencyAttempts: 6, sleepImpl: async () => {} })
+    ).resolves.toMatchObject({
+      outcome: 'inconclusive',
+      reasonCode: 'classification_failed',
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(6);
+  });
+
+  it('keeps missing attempts/results and ambiguous GitHub failures inconclusive', async () => {
+    await expect(observe(issueFetch([]), { attempted: false })).resolves.toMatchObject({
+      outcome: 'inconclusive',
+      reasonCode: 'browser_inconclusive',
+    });
+    await expect(observe(issueFetch([issue()]), { result: undefined })).resolves.toMatchObject({
+      outcome: 'inconclusive',
+      reasonCode: 'browser_inconclusive',
+    });
+    await expect(
+      observe(issueFetch([]), { result: undefined, feedbackPostObserved: false })
+    ).resolves.toMatchObject({
+      outcome: 'inconclusive',
+      reasonCode: 'browser_inconclusive',
+    });
+    await expect(
+      observe(issueFetch([]), { result: undefined, feedbackPostObserved: true })
+    ).resolves.toMatchObject({
+      outcome: 'inconclusive',
+      reasonCode: 'browser_inconclusive',
+    });
+    await expect(
+      observe(issueFetch([]), {
+        result: result({ workerSha: 'b'.repeat(40) }),
+        feedbackPostObserved: true,
+      })
+    ).resolves.toMatchObject({
+      outcome: 'inconclusive',
+      reasonCode: 'browser_inconclusive',
+    });
+    await expect(observe(issueFetch([]), { feedbackPostObserved: false })).resolves.toMatchObject({
+      outcome: 'inconclusive',
+      reasonCode: 'browser_inconclusive',
+    });
+    await expect(
+      observe(vi.fn<typeof fetch>().mockRejectedValue(new Error(`network ${TOKEN}`)), {
+        retrySleepImpl: noWait,
+      })
+    ).resolves.toMatchObject({ outcome: 'inconclusive', reasonCode: 'github_network' });
+    await expect(
+      observe(
+        vi
+          .fn<typeof fetch>()
+          .mockImplementation(async () => new Response(`upstream ${TOKEN}`, { status: 503 })),
+        { retrySleepImpl: noWait }
+      )
+    ).resolves.toMatchObject({ outcome: 'inconclusive', reasonCode: 'github_5xx' });
+    await expect(
+      observe(vi.fn<typeof fetch>().mockResolvedValue(new Response('quota', { status: 429 })))
+    ).resolves.toMatchObject({ outcome: 'inconclusive', reasonCode: 'github_rate_limited' });
+    await expect(
+      observe(vi.fn<typeof fetch>().mockResolvedValue(new Response('auth', { status: 401 })))
+    ).resolves.toMatchObject({ outcome: 'inconclusive', reasonCode: 'github_auth_failed' });
+    await expect(
+      observe(vi.fn<typeof fetch>().mockResolvedValue(new Response('bad json', { status: 200 })))
+    ).resolves.toMatchObject({ outcome: 'inconclusive', reasonCode: 'classification_failed' });
+    await expect(
+      observe(vi.fn<typeof fetch>().mockResolvedValue(new Response('missing', { status: 404 })))
+    ).resolves.toMatchObject({ outcome: 'inconclusive', reasonCode: 'classification_failed' });
+  });
+});
+
 describe('GitHub Issue canary cleanup', () => {
   it('closes every duplicate marker match and proves none remain open', async () => {
     const issues = [issue(), issue({ number: 43 })];
@@ -620,6 +890,55 @@ describe('GitHub Issue canary cleanup', () => {
     expect(listCount).toBe(3);
   });
 
+  it('reconciles an accepted close whose response body terminates without repeating the PATCH', async () => {
+    const candidate = issue();
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input).includes('/issues?')) return jsonResponse([candidate]);
+      if (init?.method === 'PATCH') {
+        candidate.state = 'closed';
+        return terminatedResponse();
+      }
+      return jsonResponse(candidate);
+    });
+
+    await expect(
+      closeMatchingIssues({
+        fetchImpl,
+        repo: REPO,
+        token: TOKEN,
+        marker: MARKER,
+        sleepImpl: noWait,
+      })
+    ).resolves.toMatchObject({ closedNumbers: [42], openNumbers: [] });
+    expect(fetchImpl.mock.calls.filter(call => call[1]?.method === 'PATCH')).toHaveLength(1);
+  });
+
+  it('reconciles an accepted close with malformed JSON by exact readback without repeating it', async () => {
+    const candidate = issue();
+    let exactGetCount = 0;
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input).includes('/issues?')) return jsonResponse([candidate]);
+      if (init?.method === 'PATCH') {
+        candidate.state = 'closed';
+        return new Response('not-json', { status: 200 });
+      }
+      exactGetCount += 1;
+      return jsonResponse(candidate);
+    });
+
+    await expect(
+      closeMatchingIssues({
+        fetchImpl,
+        repo: REPO,
+        token: TOKEN,
+        marker: MARKER,
+        sleepImpl: noWait,
+      })
+    ).resolves.toMatchObject({ closedNumbers: [42], openNumbers: [] });
+    expect(fetchImpl.mock.calls.filter(call => call[1]?.method === 'PATCH')).toHaveLength(1);
+    expect(exactGetCount).toBe(1);
+  });
+
   it('retries an ambiguous close once only after readback proves the Issue is still open', async () => {
     const candidate = issue();
     let patchCount = 0;
@@ -705,6 +1024,37 @@ describe('GitHub Issue canary cleanup', () => {
     expect(cleanup.matchedNumbers).toEqual([42]);
     expect(human.state).toBe('open');
     expect(pullRequest.state).toBe('open');
+    expect(
+      fetchImpl.mock.calls
+        .filter(call => String(call[0]).includes('/issues?'))
+        .every(call => String(call[0]).includes('state=open'))
+    ).toBe(true);
+  });
+
+  it('does not retry a deterministic close failure or expose its body', async () => {
+    const candidate = issue();
+    let message = '';
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input).includes('/issues?')) return jsonResponse([candidate]);
+      if (init?.method === 'PATCH') return new Response(`forbidden ${TOKEN}`, { status: 422 });
+      return jsonResponse(candidate);
+    });
+    try {
+      await closeMatchingIssues({
+        fetchImpl,
+        repo: REPO,
+        token: TOKEN,
+        marker: MARKER,
+        sleepImpl: noWait,
+        retrySleepImpl: noWait,
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(fetchImpl.mock.calls.filter(call => call[1]?.method === 'PATCH')).toHaveLength(1);
+    expect(message).toContain('github_request_failed');
+    expect(message).not.toContain(TOKEN);
+    expect(message).not.toContain('forbidden');
   });
 
   it('redacts the token from API errors and never calls the Issues create endpoint', async () => {
