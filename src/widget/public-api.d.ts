@@ -22,6 +22,24 @@ export type {
   VariantTheme,
 } from './variants/public-types';
 
+export type {
+  AttachmentsField,
+  CheckboxField,
+  FlowCondition,
+  FlowConfig,
+  FlowField,
+  FlowForm,
+  FlowHandle,
+  FlowIssueSection,
+  FlowOpenOptions,
+  FlowOutcome,
+  FlowScreen,
+  FormScreen,
+  MessageScreen,
+  OpenedFlow,
+  ScreenshotScreen,
+} from './flows/public-types';
+
 import type { BugDropPublicAPI } from './variants/public-types';
 
 declare global {

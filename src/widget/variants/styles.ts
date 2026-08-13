@@ -201,8 +201,10 @@ const VARIANT_CSS = `
   .bdv-cancel:disabled { cursor: wait; opacity: .65; }
   .bdv-overlay {
     display: grid;
-    min-height: 100%;
-    place-items: center;
+    height: 100%;
+    min-height: 0;
+    align-items: safe center;
+    justify-items: center;
     overflow: auto;
     padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
       max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));

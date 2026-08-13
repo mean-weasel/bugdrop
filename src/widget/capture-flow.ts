@@ -1,3 +1,4 @@
+/* eslint-disable max-lines */
 import { createAreaPicker } from './area-picker';
 import { showAnnotationStep } from './annotation-flow';
 import {
@@ -11,6 +12,14 @@ import { getElementSelector, getFullElementSelector } from './selector-metadata'
 import { getRedactionCount, isFullPageDisabled } from './screenshot';
 import { showScreenshotOptions, type ScreenshotChoice } from './screenshot-options';
 import { DEFAULT_SELECTED_ELEMENT_SCREENSHOT_PIXEL_RATIO } from '../defaults';
+import { abortableCapture } from './capture-cancellation';
+import {
+  assertNever,
+  emptyCaptureResult,
+  emptyElementMetadata,
+  shouldRememberComplexScreenshotSkip,
+} from './capture-flow-result';
+import { getCapturePickerStyle } from './capture-flow-style';
 
 export interface CaptureFlowConfig {
   screenshotMode: 'optional' | 'auto' | 'required';
@@ -56,15 +65,37 @@ export async function runScreenshotCaptureFlow(
   root: HTMLElement,
   config: CaptureFlowConfig,
   includeScreenshot: boolean,
-  onComplexScreenshotSkipped: () => void
+  onComplexScreenshotSkipped: () => void,
+  signal?: AbortSignal
 ): Promise<CaptureFlowResult> {
-  if (config.screenshotMode === 'auto') return captureAutomaticScreenshot(root, config);
+  if (signal?.aborted) return { ...emptyCaptureResult(), returnToForm: true };
+  const operation = runScreenshotCaptureFlowInternal(
+    root,
+    config,
+    includeScreenshot,
+    onComplexScreenshotSkipped,
+    signal
+  );
+  return signal
+    ? abortableCapture(root, operation, signal, { ...emptyCaptureResult(), returnToForm: true })
+    : operation;
+}
+
+async function runScreenshotCaptureFlowInternal(
+  root: HTMLElement,
+  config: CaptureFlowConfig,
+  includeScreenshot: boolean,
+  onComplexScreenshotSkipped: () => void,
+  signal?: AbortSignal
+): Promise<CaptureFlowResult> {
+  if (config.screenshotMode === 'auto') return captureAutomaticScreenshot(root, config, signal);
 
   if (!includeScreenshot) return emptyCaptureResult();
 
   const screenshotRequired = config.screenshotMode === 'required';
   while (true) {
-    const result = await captureChosenScreenshot(root, config, screenshotRequired);
+    const result = await captureChosenScreenshot(root, config, screenshotRequired, signal);
+    if (signal?.aborted) return { ...emptyCaptureResult(), returnToForm: true };
     if (result.kind === 'returnToForm') {
       return { ...emptyCaptureResult(), returnToForm: true };
     }
@@ -93,6 +124,7 @@ export async function runScreenshotCaptureFlow(
         ...(result.elementSelector ? { selectedElementCapture: true } : {}),
       }
     );
+    if (signal?.aborted) return { ...emptyCaptureResult(), returnToForm: true };
 
     if (annotatedScreenshot === 'retake') continue;
     if (annotatedScreenshot === 'cancel') {
@@ -110,7 +142,8 @@ export async function runScreenshotCaptureFlow(
 
 async function captureAutomaticScreenshot(
   root: HTMLElement,
-  config: CaptureFlowConfig
+  config: CaptureFlowConfig,
+  signal?: AbortSignal
 ): Promise<CaptureFlowResult> {
   if (isFullPageDisabled()) {
     return emptyCaptureResult();
@@ -118,6 +151,7 @@ async function captureAutomaticScreenshot(
 
   const result = await captureWithLoading(root, undefined, config.screenshotScale, {
     allowChooseAgain: false,
+    signal,
   });
   if (result.kind === 'cancelled') {
     return { ...emptyCaptureResult(), returnToForm: true };
@@ -131,14 +165,13 @@ async function captureAutomaticScreenshot(
   };
 }
 
-export function shouldRememberComplexScreenshotSkip(reason: EmptyCaptureReason): boolean {
-  return reason === 'explicit-skip' || reason === 'capture-failure-skip';
-}
+export { shouldRememberComplexScreenshotSkip } from './capture-flow-result';
 
 async function captureChosenScreenshot(
   root: HTMLElement,
   config: CaptureFlowConfig,
-  screenshotRequired: boolean
+  screenshotRequired: boolean,
+  signal?: AbortSignal
 ): Promise<ChosenCaptureResult> {
   const screenshotChoice = await showScreenshotOptions(root, {
     allowSkip: !screenshotRequired,
@@ -150,13 +183,13 @@ async function captureChosenScreenshot(
     case 'skip':
       return emptyChosenCaptureResult('explicit-skip');
     case 'viewport':
-      return captureFromViewportChoice(root, screenshotChoice, screenshotRequired);
+      return captureFromViewportChoice(root, screenshotChoice, screenshotRequired, signal);
     case 'capture':
-      return captureFromFullPageChoice(root, config, screenshotRequired);
+      return captureFromFullPageChoice(root, config, screenshotRequired, signal);
     case 'element':
-      return captureFromElementChoice(root, config, screenshotRequired);
+      return captureFromElementChoice(root, config, screenshotRequired, signal);
     case 'area':
-      return captureFromAreaChoice(root, config, screenshotRequired);
+      return captureFromAreaChoice(root, config, screenshotRequired, signal);
     default:
       return assertNever(screenshotChoice);
   }
@@ -165,11 +198,13 @@ async function captureChosenScreenshot(
 async function captureFromViewportChoice(
   root: HTMLElement,
   choice: Extract<ScreenshotChoice, { kind: 'viewport' }>,
-  screenshotRequired: boolean
+  screenshotRequired: boolean,
+  signal?: AbortSignal
 ): Promise<ChosenCaptureResult> {
   const result = await capturePromiseWithLoading(root, choice.capture, {
     allowSkip: !screenshotRequired,
     showLoading: false,
+    signal,
   });
   if (result.kind === 'cancelled') return { kind: 'returnToForm' };
   if (result.kind === 'choose-again') return { kind: 'chooseAgain' };
@@ -190,10 +225,12 @@ async function captureFromViewportChoice(
 async function captureFromFullPageChoice(
   root: HTMLElement,
   config: CaptureFlowConfig,
-  screenshotRequired: boolean
+  screenshotRequired: boolean,
+  signal?: AbortSignal
 ): Promise<ChosenCaptureResult> {
   const result = await captureWithLoading(root, undefined, config.screenshotScale, {
     allowSkip: !screenshotRequired,
+    signal,
   });
   if (result.kind === 'cancelled') return { kind: 'returnToForm' };
   if (result.kind === 'choose-again') return { kind: 'chooseAgain' };
@@ -214,9 +251,10 @@ async function captureFromFullPageChoice(
 async function captureFromElementChoice(
   root: HTMLElement,
   config: CaptureFlowConfig,
-  screenshotRequired: boolean
+  screenshotRequired: boolean,
+  signal?: AbortSignal
 ): Promise<ChosenCaptureResult> {
-  const element = await createElementPicker(getPickerStyle(config));
+  const element = await createElementPicker(getCapturePickerStyle(config), signal);
   if (!element) {
     return emptyChosenCaptureResult('selection-cancelled');
   }
@@ -239,6 +277,7 @@ async function captureFromElementChoice(
       },
       pixelRatio: DEFAULT_SELECTED_ELEMENT_SCREENSHOT_PIXEL_RATIO,
     },
+    signal,
   });
   if (result.kind === 'cancelled') return { kind: 'returnToForm' };
   if (result.kind === 'choose-again') return { kind: 'chooseAgain' };
@@ -258,17 +297,23 @@ async function captureFromElementChoice(
 async function captureFromAreaChoice(
   root: HTMLElement,
   config: CaptureFlowConfig,
-  screenshotRequired: boolean
+  screenshotRequired: boolean,
+  signal?: AbortSignal
 ): Promise<ChosenCaptureResult> {
-  const rect = await createAreaPicker(getPickerStyle(config), {
-    redactionsAvailable: getRedactionCount() > 0,
-  });
+  const rect = await createAreaPicker(
+    getCapturePickerStyle(config),
+    {
+      redactionsAvailable: getRedactionCount() > 0,
+    },
+    signal
+  );
   if (!rect) {
     return emptyChosenCaptureResult('selection-cancelled');
   }
 
   const result = await captureAreaWithLoading(root, rect, config.screenshotScale, {
     allowSkip: !screenshotRequired,
+    signal,
   });
   if (result.kind === 'cancelled') return { kind: 'returnToForm' };
   if (result.kind === 'choose-again') return { kind: 'chooseAgain' };
@@ -286,38 +331,9 @@ async function captureFromAreaChoice(
   };
 }
 
-function getPickerStyle(config: CaptureFlowConfig) {
-  return {
-    accentColor: config.accentColor,
-    font: config.font,
-    radius: config.radius,
-    borderWidth: config.borderWidth,
-    bgColor: config.bgColor,
-    textColor: config.textColor,
-    borderColor: config.borderColor,
-    theme: config.theme,
-  };
-}
-
-function emptyCaptureResult(): CaptureFlowResult {
-  return {
-    screenshot: null,
-    ...emptyElementMetadata(),
-    returnToForm: false,
-  };
-}
-
 function emptyChosenCaptureResult(
   reason: EmptyCaptureReason,
   metadata: ElementMetadata = emptyElementMetadata()
 ): ChosenCaptureResult {
   return { kind: 'empty', reason, ...metadata };
-}
-
-function emptyElementMetadata(): ElementMetadata {
-  return { elementSelector: null, fullElementSelector: null };
-}
-
-function assertNever(value: never): never {
-  throw new Error(`Unhandled screenshot choice: ${JSON.stringify(value)}`);
 }

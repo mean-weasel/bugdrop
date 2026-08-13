@@ -124,16 +124,24 @@ function removePickerListeners(listeners: PickerListeners): void {
   document.removeEventListener('mousemove', listeners.onMouseMove, true);
 }
 
-export function createElementPicker(style?: PickerStyle): Promise<Element | null> {
+export function createElementPicker(
+  style?: PickerStyle,
+  signal?: AbortSignal
+): Promise<Element | null> {
   return new Promise(resolve => {
     // Small delay to ensure any modal has been removed from the DOM
     setTimeout(() => {
-      startPicker(resolve, style);
+      if (signal?.aborted) resolve(null);
+      else startPicker(resolve, style, signal);
     }, 50);
   });
 }
 
-function startPicker(resolve: (element: Element | null) => void, style?: PickerStyle): void {
+function startPicker(
+  resolve: (element: Element | null) => void,
+  style?: PickerStyle,
+  signal?: AbortSignal
+): void {
   const { accent, fontFamily, radius, bw, tooltipBg, tooltipText, tooltipBorder } =
     resolvePickerStyle(style);
 
@@ -204,6 +212,8 @@ function startPicker(resolve: (element: Element | null) => void, style?: PickerS
     cleanup(keepClickBlocker);
     resolve(element);
   }
+
+  const onAbort = () => finish(null);
 
   function onPointerDown(e: PointerEvent) {
     if (activePointerId !== null || !e.isPrimary) return;
@@ -302,6 +312,7 @@ function startPicker(resolve: (element: Element | null) => void, style?: PickerS
     document.removeEventListener('keydown', onKeyDown);
     removePagePointerBlockers();
     cancelButton?.removeEventListener('click', onCancelClick);
+    signal?.removeEventListener('abort', onAbort);
     overlay.remove();
     highlight.remove();
     tooltip.remove();
@@ -336,6 +347,7 @@ function startPicker(resolve: (element: Element | null) => void, style?: PickerS
   document.addEventListener('click', onClick, true);
   document.addEventListener('keydown', onKeyDown);
   cancelButton?.addEventListener('click', onCancelClick);
+  signal?.addEventListener('abort', onAbort, { once: true });
 }
 
 function createCancelButton(accent: string): HTMLButtonElement {

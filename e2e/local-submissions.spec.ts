@@ -15,11 +15,47 @@ function watchForProhibitedRequests(page: import('@playwright/test').Page): stri
     const isGitHub = url.hostname === 'github.com' || url.hostname === 'api.github.com';
     const isFeedbackApi =
       url.pathname.endsWith('/feedback') || url.pathname.includes('/api/check/');
-    if (!isLocal && (isGitHub || isFeedbackApi)) {
-      prohibitedRequests.push(request.url());
-    }
+    if (!isLocal && (isGitHub || isFeedbackApi)) prohibitedRequests.push(request.url());
   });
   return prohibitedRequests;
+}
+
+function watchContextHttpRequests(context: import('@playwright/test').BrowserContext): string[] {
+  const prohibitedRequests: string[] = [];
+  context.on('request', request => {
+    const url = new URL(request.url());
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+    const isLocal =
+      url.hostname === 'localhost' ||
+      url.hostname === '127.0.0.1' ||
+      url.hostname.endsWith('.localhost');
+    if (!isLocal) prohibitedRequests.push(request.url());
+  });
+  return prohibitedRequests;
+}
+
+async function readRawPayload(viewer: import('@playwright/test').Page) {
+  const rawPayload = viewer.locator('#raw-payload');
+  let parsedPayload: Record<string, unknown> | undefined;
+
+  await expect
+    .poll(async () => {
+      const textContent = await rawPayload.textContent();
+      try {
+        const candidate: unknown = JSON.parse(textContent ?? '');
+        if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate)) {
+          return false;
+        }
+        parsedPayload = candidate as Record<string, unknown>;
+        return true;
+      } catch {
+        return false;
+      }
+    })
+    .toBe(true);
+
+  if (!parsedPayload) throw new Error('Expected viewer-rendered raw payload JSON');
+  return parsedPayload;
 }
 
 test('local QA fails closed when the submissions helper cannot load', async ({ page }) => {
@@ -264,4 +300,221 @@ test('local QA variants submit headlessly and through inline and modal presentat
     '"submissionId": "local-headless-submission"'
   );
   expect(prohibitedRequests).toEqual([]);
+});
+
+test('public flows submit and can be inspected through isolated local feedback storage', async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  const prohibitedRequests = watchContextHttpRequests(page.context());
+  await page.goto(
+    'http://bugdrop.localhost:8787/test/welcome-disabled?localQa=1&showIssueLink=always&font=inherit'
+  );
+  expect(new URL(page.url()).hostname).toBe('bugdrop.localhost');
+  expect(new URL(page.url()).pathname).toBe('/test/welcome-disabled');
+  await page.waitForFunction(() => Boolean(window.BugDrop?.registerFlow));
+  expect(prohibitedRequests).toEqual([]);
+  await page.evaluate(async () => {
+    const localStore = (window as Window & { BugDropLocalSubmissions?: { clear(): Promise<void> } })
+      .BugDropLocalSubmissions;
+    if (!localStore) throw new Error('Expected isolated local submission storage');
+    await localStore.clear();
+  });
+
+  await page.evaluate(() => {
+    window
+      .BugDrop!.registerFlow({
+        configVersion: 1,
+        id: 'local-default-shaped-flow',
+        presentation: { kind: 'modal' },
+        forms: [
+          {
+            id: 'details',
+            title: 'Tell us what happened',
+            fields: [
+              { id: 'summary', type: 'shortText', label: 'Title', required: true },
+              { id: 'description', type: 'longText', label: 'Description' },
+              { id: 'attachments', type: 'attachments', label: 'Attachments' },
+              { id: 'send-logs', type: 'checkbox', label: 'Include console logs' },
+              { id: 'name', type: 'shortText', label: 'Name' },
+              { id: 'email', type: 'shortText', label: 'Email' },
+            ],
+          },
+        ],
+        screens: [
+          { id: 'welcome', type: 'message', title: 'Share feedback' },
+          { id: 'details-screen', type: 'form', form: 'details' },
+          { id: 'screenshot', type: 'screenshot', mode: 'optional' },
+        ],
+        issue: {
+          classification: 'bug',
+          title: '{{details.summary}}',
+          sections: [
+            {
+              heading: 'Description',
+              answer: 'details.description',
+              omitWhenEmpty: true,
+            },
+          ],
+        },
+        evidence: {
+          attachments: 'details.attachments',
+          sendConsoleLogs: 'details.send-logs',
+          submitter: { name: 'details.name', email: 'details.email' },
+        },
+      })
+      .open();
+  });
+
+  const defaultFlow = page.locator('body > [data-bugdrop-flow="local-default-shaped-flow"]');
+  await expect(defaultFlow.getByRole('heading', { name: 'Share feedback' })).toBeVisible();
+  await defaultFlow.getByRole('button', { name: 'Continue' }).click();
+  await defaultFlow.getByLabel('Title').fill('Default-shaped local feedback');
+  await defaultFlow.getByLabel('Description').fill('Stored through the legacy feedback recipe.');
+  await defaultFlow.getByLabel('Name').fill('Local Flow Tester');
+  await defaultFlow.getByLabel('Include console logs').check();
+  await page.evaluate(() => console.info('default-shaped flow local audit'));
+  await defaultFlow.getByRole('button', { name: 'Continue' }).click();
+  await defaultFlow.getByLabel('Include a screenshot', { exact: true }).uncheck();
+  await defaultFlow.getByRole('button', { name: 'Submit' }).click();
+  await expect(
+    defaultFlow.getByRole('heading', { name: 'Thanks for your feedback!' })
+  ).toBeVisible();
+  const defaultLink = defaultFlow.getByRole('link', { name: 'View local submission' });
+  await expect(defaultLink).toHaveAttribute('href', /\/test\/submissions\.html\?id=\d+$/);
+  const [defaultViewer] = await Promise.all([page.waitForEvent('popup'), defaultLink.click()]);
+  await defaultViewer.waitForLoadState('domcontentloaded');
+  expect(new URL(defaultViewer.url()).hostname).toBe('bugdrop.localhost');
+  const defaultPayload = await readRawPayload(defaultViewer);
+  expect(defaultPayload).toMatchObject({
+    repo: 'mean-weasel/bugdrop-widget-test',
+    title: 'Default-shaped local feedback',
+    description: '## Description\n\nStored through the legacy feedback recipe.',
+    category: 'bug',
+    screenshot: null,
+    attachments: [],
+    submitter: { name: 'Local Flow Tester' },
+    metadata: { url: 'http://bugdrop.localhost:8787/test/welcome-disabled' },
+  });
+  expect(defaultPayload.consoleLogs).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ level: 'info', message: 'default-shaped flow local audit' }),
+    ])
+  );
+  expect(defaultPayload.kind).toBeUndefined();
+  expect(prohibitedRequests).toEqual([]);
+  await defaultViewer.close();
+  await defaultFlow.getByRole('button', { name: 'Done' }).click();
+
+  await page.evaluate(() => {
+    window
+      .BugDrop!.registerFlow({
+        configVersion: 1,
+        id: 'local-product-triage-flow',
+        presentation: { kind: 'modal' },
+        forms: [
+          {
+            id: 'triage',
+            title: 'Classify your feedback',
+            fields: [
+              {
+                id: 'kind',
+                type: 'singleChoice',
+                label: 'Type',
+                required: true,
+                options: [
+                  { value: 'bug', label: 'Bug' },
+                  { value: 'idea', label: 'Idea' },
+                ],
+              },
+              { id: 'rating', type: 'rating', label: 'Experience', required: true },
+              { id: 'summary', type: 'shortText', label: 'Summary', required: true },
+            ],
+          },
+          {
+            id: 'detail',
+            title: 'Add diagnostic detail',
+            fields: [{ id: 'steps', type: 'longText', label: 'Steps to reproduce' }],
+          },
+        ],
+        screens: [
+          { id: 'intro', type: 'message', title: 'Help us prioritize' },
+          { id: 'triage-screen', type: 'form', form: 'triage' },
+          {
+            id: 'detail-screen',
+            type: 'form',
+            form: 'detail',
+            when: {
+              any: [
+                { answer: 'triage.kind', equals: 'bug' },
+                { answer: 'triage.rating', equals: 1 },
+              ],
+            },
+          },
+          {
+            id: 'screenshot',
+            type: 'screenshot',
+            mode: 'optional',
+            when: {
+              any: [
+                { answer: 'triage.kind', equals: 'bug' },
+                { answer: 'triage.rating', equals: 1 },
+              ],
+            },
+          },
+        ],
+        issue: {
+          classification: 'bug',
+          title: '{{triage.summary}}',
+          sections: [
+            { heading: 'Type', answer: 'triage.kind', format: 'choice' },
+            { heading: 'Experience', answer: 'triage.rating', format: 'stars' },
+            { heading: 'Steps', answer: 'detail.steps', omitWhenEmpty: true },
+          ],
+        },
+      })
+      .open();
+  });
+
+  const triageFlow = page.locator('body > [data-bugdrop-flow="local-product-triage-flow"]');
+  await triageFlow.getByRole('button', { name: 'Continue' }).click();
+  await triageFlow.getByLabel('Bug').click();
+  await triageFlow.getByRole('radio', { name: '1 star' }).click();
+  await triageFlow.getByLabel('Summary').fill('Initial bug report');
+  await triageFlow.getByRole('button', { name: 'Continue' }).click();
+  await triageFlow.getByLabel('Steps to reproduce').fill('Hidden stale diagnostic detail');
+  await triageFlow.getByRole('button', { name: 'Continue' }).click();
+  await triageFlow.getByRole('button', { name: 'Back' }).click();
+  await expect(triageFlow.getByLabel('Steps to reproduce')).toHaveValue(
+    'Hidden stale diagnostic detail'
+  );
+  await triageFlow.getByRole('button', { name: 'Back' }).click();
+  await expect(triageFlow.getByLabel('Summary')).toHaveValue('Initial bug report');
+  await triageFlow.getByLabel('Idea').click();
+  await triageFlow.getByRole('radio', { name: '5 stars' }).click();
+  await triageFlow.getByLabel('Summary').fill('A different product idea');
+  await expect(triageFlow.getByRole('button', { name: 'Submit' })).toBeVisible();
+  await triageFlow.getByRole('button', { name: 'Submit' }).click();
+  await expect(
+    triageFlow.getByRole('heading', { name: 'Thanks for your feedback!' })
+  ).toBeVisible();
+  const triageLink = triageFlow.getByRole('link', { name: 'View local submission' });
+  await expect(triageLink).toHaveAttribute('href', /\/test\/submissions\.html\?id=\d+$/);
+  const [triageViewer] = await Promise.all([page.waitForEvent('popup'), triageLink.click()]);
+  await triageViewer.waitForLoadState('domcontentloaded');
+  expect(new URL(triageViewer.url()).hostname).toBe('bugdrop.localhost');
+  const triagePayload = await readRawPayload(triageViewer);
+  expect(triagePayload).toMatchObject({
+    repo: 'mean-weasel/bugdrop-widget-test',
+    title: 'A different product idea',
+    description: '## Type\n\nIdea\n\n## Experience\n\n★★★★★ (5/5)',
+    category: 'bug',
+    screenshot: null,
+    attachments: [],
+    metadata: { url: 'http://bugdrop.localhost:8787/test/welcome-disabled' },
+  });
+  expect(triagePayload.description).not.toContain('Hidden stale diagnostic detail');
+  expect(triagePayload.kind).toBeUndefined();
+  expect(prohibitedRequests).toEqual([]);
+  await triageViewer.close();
 });

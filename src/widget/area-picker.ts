@@ -7,11 +7,13 @@ type ResolvedAreaPickerStyle = ReturnType<typeof resolvePickerStyle>;
 
 export function createAreaPicker(
   style?: PickerStyle,
-  opts?: { redactionsAvailable?: boolean }
+  opts?: { redactionsAvailable?: boolean },
+  signal?: AbortSignal
 ): Promise<DOMRect | null> {
   return new Promise(resolve => {
     setTimeout(() => {
-      startAreaPicker(resolve, style, opts);
+      if (signal?.aborted) resolve(null);
+      else startAreaPicker(resolve, style, opts, signal);
     }, 50);
   });
 }
@@ -19,7 +21,8 @@ export function createAreaPicker(
 function startAreaPicker(
   resolve: (rect: DOMRect | null) => void,
   style?: PickerStyle,
-  opts?: { redactionsAvailable?: boolean }
+  opts?: { redactionsAvailable?: boolean },
+  signal?: AbortSignal
 ): void {
   const { accent, fontFamily, radius, bw, tooltipBg, tooltipText, tooltipBorder } =
     resolvePickerStyle(style);
@@ -129,6 +132,11 @@ function startAreaPicker(
     resolve(null);
   }
 
+  const onAbort = () => {
+    cleanup();
+    resolve(null);
+  };
+
   function cleanup() {
     overlay.removeEventListener('pointerdown', onPointerDown);
     document.removeEventListener('pointermove', onPointerMove);
@@ -136,6 +144,7 @@ function startAreaPicker(
     document.removeEventListener('pointercancel', onPointerCancel);
     document.removeEventListener('keydown', onKeyDown);
     cancelButton?.removeEventListener('click', onCancelClick);
+    signal?.removeEventListener('abort', onAbort);
     overlay.remove();
     selectionBorder.remove();
     tooltip.remove();
@@ -147,6 +156,7 @@ function startAreaPicker(
   document.addEventListener('pointercancel', onPointerCancel);
   document.addEventListener('keydown', onKeyDown);
   cancelButton?.addEventListener('click', onCancelClick);
+  signal?.addEventListener('abort', onAbort, { once: true });
 }
 
 function createOverlay(): HTMLDivElement {

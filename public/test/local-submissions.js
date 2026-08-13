@@ -227,11 +227,7 @@
       var id = await create(payload);
       var localUrl = window.location.origin + '/test/submissions.html?id=' + id;
       var issueUrl = localUrl;
-      if (
-        payload &&
-        payload.kind === 'bugdrop.variant-submission' &&
-        typeof payload.repo === 'string'
-      ) {
+      if (payload && typeof payload.repo === 'string') {
         issueUrl = 'https://github.com/' + payload.repo + '/issues/' + id;
       }
       relabelLocalIssueLink(issueUrl, localUrl);
