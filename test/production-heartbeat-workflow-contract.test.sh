@@ -71,9 +71,71 @@ require 'npx playwright test e2e/widget.issue-canary.spec.ts --project=chromium-
 
 [[ $(grep -Fc -- '--profile production' "$workflow") -eq 5 ]] ||
   fail 'exactly five production GitHub operations must select the production profile'
-[[ $(grep -Fc 'BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}' "$workflow") -eq 5 ]] ||
-  fail 'the canary token must exist only on preflight, verify, evidence, cleanup, and sweep'
+require 'uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349'
+require 'app-id: ${{ vars.BUGDROP_HEARTBEAT_MONITOR_APP_ID }}'
+require_absent 'client-id:'
+require_absent 'BUGDROP_HEARTBEAT_MONITOR_CLIENT_ID'
+require 'private-key: ${{ secrets.BUGDROP_HEARTBEAT_MONITOR_PRIVATE_KEY }}'
+require 'owner: mean-weasel'
+require 'repositories: bugdrop-widget-test'
+require 'permission-issues: write'
+require_absent 'skip-token-revoke:'
+require_absent 'BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}'
+[[ $(grep -Fc 'BUGDROP_CANARY_GITHUB_TOKEN: ${{ steps.heartbeat-monitor-token.outputs.token }}' "$workflow") -eq 5 ]] ||
+  fail 'the installation token must exist only on preflight, verify, evidence, cleanup, and sweep'
 require_absent 'BUGDROP_CANARY_GITHUB_TOKEN: ${{ github.token }}'
+
+token_step=$(awk '
+  /name: Mint monitoring-only GitHub App token/ { capture = 1 }
+  capture && /name: Preflight production heartbeat cleanup/ { exit }
+  capture { print }
+' "$workflow")
+for required in \
+  'id: heartbeat-monitor-token' \
+  "if: always() && steps.checkout.outcome == 'success'" \
+  'uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349' \
+  'app-id: ${{ vars.BUGDROP_HEARTBEAT_MONITOR_APP_ID }}' \
+  'private-key: ${{ secrets.BUGDROP_HEARTBEAT_MONITOR_PRIVATE_KEY }}' \
+  'owner: mean-weasel' \
+  'repositories: bugdrop-widget-test' \
+  'permission-issues: write'; do
+  grep -Fq -- "$required" <<< "$token_step" || fail "monitor token step missing: $required"
+done
+[[ $(grep -Fc 'BUGDROP_HEARTBEAT_MONITOR_PRIVATE_KEY' "$workflow") -eq 1 ]] ||
+  fail 'the monitoring App private key must appear only in the token-mint action'
+[[ $(grep -Fc 'BUGDROP_HEARTBEAT_MONITOR_APP_ID' "$workflow") -eq 1 ]] ||
+  fail 'the monitoring App identifier must appear only in the token-mint action'
+for forbidden in 'client-id:' 'BUGDROP_HEARTBEAT_MONITOR_CLIENT_ID' 'permission-contents:' 'permission-actions:' 'skip-token-revoke: true'; do
+  if grep -Fq -- "$forbidden" <<< "$token_step"; then
+    fail "monitor token step broadens scope: $forbidden"
+  fi
+done
+
+for helper in \
+  'Preflight production heartbeat cleanup' \
+  'Verify production canary independently' \
+  'Classify sanitized authoritative delivery evidence' \
+  'Cleanup current production marker' \
+  'Final production-prefix sweep'; do
+  helper_block=$(awk -v helper="$helper" '
+    $0 ~ "name: " helper { capture = 1 }
+    capture && $0 ~ /^      - name:/ && $0 !~ "name: " helper { exit }
+    capture { print }
+  ' "$workflow")
+  grep -Fq 'BUGDROP_CANARY_GITHUB_TOKEN: ${{ steps.heartbeat-monitor-token.outputs.token }}' <<< "$helper_block" ||
+    fail "$helper does not consume the installation token"
+done
+
+playwright_block=$(awk '
+  /name: Run one production Issue canary/ { capture = 1 }
+  capture && /name: Verify production canary independently/ { exit }
+  capture { print }
+' "$workflow")
+for forbidden in heartbeat-monitor-token BUGDROP_CANARY_GITHUB_TOKEN BUGDROP_HEARTBEAT_MONITOR_PRIVATE_KEY; do
+  if grep -Fq "$forbidden" <<< "$playwright_block"; then
+    fail "Playwright received monitoring App credential material: $forbidden"
+  fi
+done
 
 for step in \
   'Cleanup current production marker' \

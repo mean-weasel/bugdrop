@@ -20,8 +20,12 @@ configured fork from accidentally exercising the canonical BugDrop service.
 - Protect the `production` GitHub environment with required reviewers for release jobs. The heartbeat
   deliberately does not enter that approval-gated environment, because scheduled monitoring must run
   unattended; it uses only the narrowly scoped repository secrets listed below.
-- Configure `BUGDROP_CANARY_GITHUB_TOKEN` as a fine-grained token limited to the synthetic test
-  repository with Issues read/write only.
+- Install a dedicated monitoring-only GitHub App on exactly
+  `mean-weasel/bugdrop-widget-test`. The App must have only metadata read and Issues write, no
+  webhook subscriptions, and no installation access to other repositories.
+- Set its numeric App ID as the repository variable `BUGDROP_HEARTBEAT_MONITOR_APP_ID` and its
+  private key as the repository Actions secret
+  `BUGDROP_HEARTBEAT_MONITOR_PRIVATE_KEY`.
 - Configure `VERCEL_AUTOMATION_BYPASS_SECRET` only if the fixed production venue requires it.
 - Configure `MONITOR_HEARTBEAT_SECRET` only after the compatible receiver is deployed. The workflow
   exposes it exclusively to the final best-effort outcome sender step.
@@ -30,9 +34,10 @@ configured fork from accidentally exercising the canonical BugDrop service.
 - Leave `GITHUB_TOKEN` at declared job permissions. Only the incident job receives `issues: write`,
   and that token is step-scoped and never reaches Playwright.
 
-Record token ownership and expiry privately. Rotate before expiry, validate replacement read access,
-then use an explicitly authorized disposable Issue to validate write/close access. Never print a
-token or place it in an artifact.
+Record App ownership, installation scope, and private-key rotation ownership privately. Rotate the
+private key under dual control, update the Actions secret without reading it back, validate the next
+installation token, then revoke the superseded key. Never print or place a private key or
+installation token in a log or artifact.
 
 ## Self-hosted and private repositories
 
@@ -59,9 +64,12 @@ Before configuration:
 5. Confirm `https://<your-worker-origin>/api/health` reports `environment=production` and a full
    lowercase 40-character `buildSha`. The deployment process must set `ENVIRONMENT=production` and
    `BUILD_SHA` to the deployed source commit.
-6. Confirm the self-hosted repository permits the GitHub-maintained Actions used by the workflow and
-   allows its scoped `GITHUB_TOKEN` to write Issues. Private repositories consume the account's
-   applicable GitHub Actions allowance.
+6. Provision a separate monitoring App for the self-hosted installation and replace the canonical
+   token-mint owner/repository inputs before enabling the workflow. The checked-in canonical inputs
+   deliberately mint only for `mean-weasel/bugdrop-widget-test`; repository variables cannot widen
+   that installation boundary.
+7. Confirm the self-hosted repository permits the GitHub-maintained Actions used by the workflow.
+   Private repositories consume the account's applicable GitHub Actions allowance.
 
 Set these repository variables under **Settings > Secrets and variables > Actions > Variables**:
 
@@ -73,12 +81,27 @@ Set these repository variables under **Settings > Secrets and variables > Action
 | `BUGDROP_HEARTBEAT_EXPECTED_AUTHOR` | Yes | GitHub App Issue author, normally `<app-slug>[bot]` |
 | `BUGDROP_HEARTBEAT_EXPECTED_LABELS` | No | Exact comma-separated labels including `bugdrop`; defaults to `bug,bugdrop` |
 | `BUGDROP_PRODUCTION_HEARTBEAT_MODE` | Later | Leave unset until staged activation |
+| `BUGDROP_HEARTBEAT_MONITOR_APP_ID` | Yes | Numeric App ID of the dedicated monitoring-only GitHub App |
 
-Set `BUGDROP_CANARY_GITHUB_TOKEN` as a repository Actions secret. Use a fine-grained credential with
-access to only the synthetic repository and Issues read/write permission. This verifier credential is
-separate from the GitHub App private key held by the Worker. Set `VERCEL_AUTOMATION_BYPASS_SECRET`
-only when the chosen venue requires it. Repository secrets do not copy with a fork and should never
-be exposed to untrusted pull-request workflows.
+Set `BUGDROP_HEARTBEAT_MONITOR_PRIVATE_KEY` as a repository Actions secret. It belongs only to the
+monitoring App and is separate from the production BugDrop App and every Worker credential. The
+workflow uses the pinned `actions/create-github-app-token` action to mint one short-lived
+installation token for `mean-weasel/bugdrop-widget-test` with Issues write. Only the preflight,
+verify, evidence, cleanup, and sweep helpers consume its masked action-step `token` output. The token
+is not promoted to job or workflow outputs and never reaches Playwright, a browser page, runtime
+code, logs, or diagnostics artifacts. At completion, the action's default post step attempts to
+DELETE the installation token and warns if revocation fails; the token's short expiry bounds that
+fallback, so operators must not treat job completion as guaranteed revocation.
+Set `VERCEL_AUTOMATION_BYPASS_SECRET` only when the chosen venue requires it. Repository secrets do
+not copy with a fork and should never be exposed to untrusted pull-request workflows.
+
+Keep `BUGDROP_PRODUCTION_HEARTBEAT_MODE` set to `manual` if App authentication fails. Retain the
+legacy `BUGDROP_CANARY_GITHUB_TOKEN` repository secret, without binding it anywhere in the new
+workflow, until an authorized App-backed staged run completes verification, cleanup, rollback proof,
+and Judge approval. The rollback is to revert the App-integration commit to reviewed head
+`808f0fbd58a7951627ffb08e02ae203e5a316132`, restoring that head's PAT bindings. Never bind the App
+installation token and legacy PAT concurrently, and do not delete either credential merely to
+perform rollback. Retire the legacy PAT only after the staged evidence and approval authorize it.
 
 Incidents are opened in the repository running the workflow using its scoped `GITHUB_TOKEN`; no
 separate incident token or repository variable is required. Keep Issues enabled in that repository.

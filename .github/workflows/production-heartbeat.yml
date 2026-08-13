@@ -121,6 +121,18 @@ jobs:
           echo "BUGDROP_CANARY_EVIDENCE_FILE=$RUNNER_TEMP/production-heartbeat-evidence.json" >> "$GITHUB_ENV"
           echo "LIVE_TARGET=production" >> "$GITHUB_ENV"
 
+      - name: Mint monitoring-only GitHub App token
+        id: heartbeat-monitor-token
+        if: always() && steps.checkout.outcome == 'success'
+        continue-on-error: true
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.BUGDROP_HEARTBEAT_MONITOR_APP_ID }}
+          private-key: ${{ secrets.BUGDROP_HEARTBEAT_MONITOR_PRIVATE_KEY }}
+          owner: mean-weasel
+          repositories: bugdrop-widget-test
+          permission-issues: write
+
       - name: Preflight production heartbeat cleanup
         id: preflight
         if: always() && steps.identity.outcome == 'success'
@@ -131,7 +143,7 @@ jobs:
           --repo "$BUGDROP_CANARY_REPO"
           --prefix "[BugDrop production heartbeat]" > /dev/null
         env:
-          BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
+          BUGDROP_CANARY_GITHUB_TOKEN: ${{ steps.heartbeat-monitor-token.outputs.token }}
 
       - name: Verify fixed production venue
         id: venue
@@ -172,7 +184,7 @@ jobs:
           --expected-sha "$EXPECTED_WORKER_SHA"
           --result-file "$BUGDROP_CANARY_RESULT_FILE" > /dev/null
         env:
-          BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
+          BUGDROP_CANARY_GITHUB_TOKEN: ${{ steps.heartbeat-monitor-token.outputs.token }}
 
       - name: Classify sanitized authoritative delivery evidence
         id: evidence
@@ -190,7 +202,7 @@ jobs:
           --evidence-file "$BUGDROP_CANARY_EVIDENCE_FILE"
           > /dev/null
         env:
-          BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
+          BUGDROP_CANARY_GITHUB_TOKEN: ${{ steps.heartbeat-monitor-token.outputs.token }}
 
       - name: Cleanup current production marker
         id: cleanup
@@ -206,7 +218,7 @@ jobs:
             --repo "$BUGDROP_CANARY_REPO" \
             --marker "$BUGDROP_CANARY_MARKER" > /dev/null
         env:
-          BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
+          BUGDROP_CANARY_GITHUB_TOKEN: ${{ steps.heartbeat-monitor-token.outputs.token }}
 
       - name: Final production-prefix sweep
         id: sweep
@@ -218,7 +230,7 @@ jobs:
           --repo "$BUGDROP_CANARY_REPO"
           --prefix "[BugDrop production heartbeat]" > /dev/null
         env:
-          BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
+          BUGDROP_CANARY_GITHUB_TOKEN: ${{ steps.heartbeat-monitor-token.outputs.token }}
 
       - name: Controlled post-cleanup failure
         id: controlled
