@@ -8,6 +8,7 @@ import {
 
 const TOKEN = 'incident-token-redaction-sentinel';
 const RUN_URL = 'https://github.com/mean-weasel/bugdrop/actions/runs/123';
+const noWait = vi.fn(async () => {});
 
 function response(value: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(value), {
@@ -28,10 +29,59 @@ function transition(fetchImpl: typeof fetch, outcome: 'failure' | 'recovery') {
     outcome,
     runUrl: RUN_URL,
     details: 'synthetic stage result',
+    retrySleepImpl: noWait,
   });
 }
 
 describe('heartbeat incident discovery', () => {
+  it('retries GET network and selected 5xx failures exactly three times with bounded delays', async () => {
+    const retrySleepImpl = vi.fn(async () => {});
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error(`network ${TOKEN}`))
+      .mockResolvedValueOnce(new Response(`upstream ${TOKEN}`, { status: 504 }))
+      .mockResolvedValueOnce(response([incident()]));
+    await expect(listIncidents({ fetchImpl, token: TOKEN, retrySleepImpl })).resolves.toHaveLength(
+      1
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(retrySleepImpl.mock.calls).toEqual([[1_000], [2_000]]);
+  });
+
+  it.each([
+    [
+      'github_rate_limited',
+      new Response(`quota ${TOKEN}`, { status: 403, headers: { 'x-ratelimit-remaining': '0' } }),
+    ],
+    ['github_auth', new Response(`auth ${TOKEN}`, { status: 401 })],
+    ['github_request_failed', new Response(`missing ${TOKEN}`, { status: 404 })],
+    ['github_response_invalid', new Response(`not-json ${TOKEN}`, { status: 200 })],
+  ])('does not retry deterministic GET failure %s', async (category, failedResponse) => {
+    const retrySleepImpl = vi.fn(async () => {});
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(failedResponse);
+    await expect(listIncidents({ fetchImpl, token: TOKEN, retrySleepImpl })).rejects.toThrow(
+      category
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(retrySleepImpl).not.toHaveBeenCalled();
+  });
+
+  it('retries the same incident page without duplicating prior page entries', async () => {
+    const retrySleepImpl = vi.fn(async () => {});
+    const pageTwo = 'https://api.github.com/repos/mean-weasel/bugdrop/issues?state=all&page=2';
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        response([incident('open', 7)], { headers: { Link: `<${pageTwo}>; rel="next"` } })
+      )
+      .mockResolvedValueOnce(new Response('temporary', { status: 500 }))
+      .mockResolvedValueOnce(response([incident('closed', 8)]));
+    const matches = await listIncidents({ fetchImpl, token: TOKEN, retrySleepImpl });
+    expect(matches.map(candidate => candidate.number)).toEqual([7, 8]);
+    expect(String(fetchImpl.mock.calls[1][0])).toBe(pageTwo);
+    expect(String(fetchImpl.mock.calls[2][0])).toBe(pageTwo);
+  });
+
   it('paginates, filters pull requests, and rejects duplicate incidents before mutation', async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
@@ -65,6 +115,19 @@ describe('heartbeat incident discovery', () => {
 });
 
 describe('heartbeat incident lifecycle', () => {
+  it('does not read or mutate the stable incident for an inconclusive outcome', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    await expect(
+      transitionHeartbeatIncident({
+        fetchImpl,
+        token: TOKEN,
+        outcome: 'inconclusive',
+        reasonCode: 'github_network',
+      })
+    ).resolves.toEqual({ action: 'none', state: 'unchanged' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('creates on first failure and comments on recurrence', async () => {
     const created = incident();
     const createFetch = vi
@@ -82,6 +145,22 @@ describe('heartbeat incident lifecycle', () => {
       .mockResolvedValueOnce(response({ id: 99 }));
     await expect(transition(updateFetch, 'failure')).resolves.toMatchObject({ action: 'updated' });
     expect(String(updateFetch.mock.calls[1][0])).toContain('/issues/7/comments');
+  });
+
+  it('uses only normalized classification in new incident comments', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response([]))
+      .mockResolvedValueOnce(response(incident()));
+    await transitionHeartbeatIncident({
+      fetchImpl,
+      token: TOKEN,
+      outcome: 'failure',
+      reasonCode: 'issue_absent',
+    });
+    const body = JSON.parse(String(fetchImpl.mock.calls[1][1]?.body)).body;
+    expect(body).toBe('Production heartbeat failure. Classification: issue_absent.');
+    expect(body).not.toContain('runs/');
   });
 
   it('reopens a closed incident on recurrence, then comments', async () => {
@@ -140,5 +219,23 @@ describe('heartbeat incident lifecycle', () => {
     }
     expect(message).toContain('[REDACTED]');
     expect(message).not.toContain(TOKEN);
+  });
+
+  it('fails a deterministic native mutation immediately without reconciliation or body leakage', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response([]))
+      .mockResolvedValueOnce(new Response(`forbidden ${TOKEN}`, { status: 422 }));
+    let message = '';
+    try {
+      await transition(fetchImpl, 'failure');
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls.filter(call => call[1]?.method === 'POST')).toHaveLength(1);
+    expect(message).toContain('github_request_failed');
+    expect(message).not.toContain(TOKEN);
+    expect(message).not.toContain('forbidden');
   });
 });

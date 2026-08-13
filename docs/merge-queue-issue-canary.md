@@ -42,6 +42,12 @@ rejects duplicates and pull requests, and checks the structured section, exact s
 title, labels, author, attribution, system information, and absence of screenshots. Cleanup always
 rediscovers by marker; it never depends on the browser result file.
 
+GitHub reads use three total attempts with one- and two-second backoffs, only for network failures
+and HTTP 500, 502, 503, or 504. Rate limits, authentication failures, other 4xx responses, and
+malformed successful JSON fail immediately with sanitized diagnostic categories. Marker discovery
+retains `state=all` for stable history; prefix preflight/final sweeps request only open Issues.
+Pagination retries the same URL and appends a page only after a valid response.
+
 ## Credential and rotation
 
 `BUGDROP_CANARY_GITHUB_TOKEN` must be a fine-grained token restricted to
@@ -63,6 +69,11 @@ Same-run cleanup has two independent passes while holding the lock:
 
 1. close every Issue matching the exact run marker;
 2. close every open Issue with the reserved `[BugDrop CI canary]` prefix and prove zero remain.
+
+Closing a synthetic Issue is never generically retried. An ambiguous network/selected-5xx first
+PATCH, or a 2xx response that does not confirm closure, is followed by bounded exact GET readback.
+Only stable proof that the Issue remains open permits one identical second PATCH, followed by final
+bounded GET proof. Deterministic failures and rate limits stop immediately.
 
 Hard cancellation can skip both passes. The next merge group performs a locked prefix preflight
 before deploying, and the daily scheduled live workflow performs the same prefix sweep under the

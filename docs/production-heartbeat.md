@@ -23,6 +23,8 @@ configured fork from accidentally exercising the canonical BugDrop service.
 - Configure `BUGDROP_CANARY_GITHUB_TOKEN` as a fine-grained token limited to the synthetic test
   repository with Issues read/write only.
 - Configure `VERCEL_AUTOMATION_BYPASS_SECRET` only if the fixed production venue requires it.
+- Configure `MONITOR_HEARTBEAT_SECRET` only after the compatible receiver is deployed. The workflow
+  exposes it exclusively to the final best-effort outcome sender step.
 - Confirm production health reports `environment=production` and a full lowercase 40-character
   `buildSha` before authorization.
 - Leave `GITHUB_TOKEN` at declared job permissions. Only the incident job receives `issues: write`,
@@ -112,17 +114,39 @@ different prefix, marker namespace, workflow owner, and lock.
 
 The conclusion fails unless transaction stages, marker cleanup, prefix sweep, artifact handling, and
 incident reconciliation succeed. Before upload, the summary writes a fixed-schema, token-free JSON
-file containing only run identifiers, stage outcomes, and the aggregate boolean. It writes to a
+file containing only normalized stage outcomes and the aggregate boolean. It writes to a
 run-specific temporary file, validates the exact schema and allowed outcome values, then atomically
 renames it before publishing summary outputs. Artifact staging independently requires non-empty,
-schema-valid diagnostics before copying optional Playwright directories; upload uses
-`if-no-files-found: error`. Summary, staging, and upload outcomes independently feed incident
+schema-valid diagnostics and never copies Playwright results, markers, Issue data, or browser
+payloads; upload uses `if-no-files-found: error`. Summary, staging, and upload outcomes independently feed incident
 selection and the final conclusion. Cleanup never trusts the browser result. A missing attempt
 sentinel skips marker cleanup safely, while the final prefix sweep remains mandatory.
+
+After a real canary attempt, bounded successful GitHub reads produce one sanitized evidence record:
+`issue_verified`, `issue_absent`, `issue_duplicate`, or `issue_contract_invalid`. Network, selected
+GitHub 5xx, rate-limit, authorization, browser, and classification ambiguity remain inconclusive.
+Confirmed delivery failure outranks later cleanup, sweep, artifact, or incident failure; verified
+delivery likewise remains verified. The stable operational incident opens or updates only for
+confirmed delivery failure, closes only for a wholly healthy verified run, and remains unchanged for
+inconclusive runs.
+
+The final step always attempts one authenticated v1 report with exactly `schemaVersion`, `outcome`,
+`reasonCode`, and canonical millisecond UTC `observedAt`. It validates HTTP 200, `Cache-Control:
+no-store`, and the receiver's exact response schema. The monitoring secret, request body, and
+receiver response never enter diagnostics, artifacts, summaries, native incident comments, or
+classifier outputs. Sender failure is visible but cannot rewrite the workflow's authoritative
+conclusion.
 
 The incident channel is GitHub itself. A GitHub outage can affect both the monitored transaction and
 incident delivery, so this is deduplicated visibility, not independent paging. External paging is a
 separate future control.
+
+GitHub API reads use three total attempts with one- and two-second backoffs only for network errors
+and HTTP 500, 502, 503, or 504. Rate limits, authorization failures, deterministic 4xx responses,
+and malformed successful JSON fail immediately with sanitized categories. Synthetic prefix scans
+request open Issues only, while exact marker cleanup and the stable heartbeat incident retain
+`state=all` history. POST/PATCH/comment operations are never placed in the GET retry path; native
+incident mutations remain one mutation followed only by exact reconciliation after ambiguity.
 
 ## Local, nonmutating checks
 

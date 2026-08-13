@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
 import {
@@ -20,6 +20,16 @@ const DEFAULT_CONSISTENCY_ATTEMPTS = 6;
 const DEFAULT_CONSISTENCY_DELAY_MS = 2_000;
 const MAX_CONSISTENCY_ATTEMPTS = 20;
 const MAX_CONSISTENCY_DELAY_MS = 10_000;
+const GITHUB_GET_RETRY_DELAYS_MS = [1_000, 2_000];
+
+class GitHubRequestError extends Error {
+  constructor(category, message, { retryable = false } = {}) {
+    super(`${category}: ${message}`);
+    this.name = 'GitHubRequestError';
+    this.category = category;
+    this.retryable = retryable;
+  }
+}
 
 export function canaryTitle(marker, profileName = 'preview', environment = process.env) {
   requireNonempty(marker, 'marker');
@@ -39,6 +49,8 @@ export async function listMatchingIssues({
   token,
   marker,
   prefix,
+  state = marker ? 'all' : 'open',
+  retrySleepImpl = sleep,
   profile = 'preview',
   profileEnvironment = process.env,
 }) {
@@ -49,7 +61,14 @@ export async function listMatchingIssues({
     prefix,
     environment: profileEnvironment,
   });
-  const issues = await listRepositoryIssues({ fetchImpl, apiBaseUrl, repo, token });
+  const issues = await listRepositoryIssues({
+    fetchImpl,
+    apiBaseUrl,
+    repo,
+    token,
+    state,
+    retrySleepImpl,
+  });
   return issues.filter(candidate => {
     if (candidate.pull_request) return false;
     if (selector.marker) {
@@ -74,6 +93,7 @@ export async function verifyCanaryIssue({
   consistencyAttempts = DEFAULT_CONSISTENCY_ATTEMPTS,
   consistencyDelayMs = DEFAULT_CONSISTENCY_DELAY_MS,
   sleepImpl = sleep,
+  retrySleepImpl = sleep,
   profile = 'preview',
   profileEnvironment = process.env,
 }) {
@@ -110,6 +130,7 @@ export async function verifyCanaryIssue({
     repo,
     token,
     number: result.issueNumber,
+    retrySleepImpl,
   });
   const matches = await waitForStableSingleton({
     fetchImpl,
@@ -120,6 +141,7 @@ export async function verifyCanaryIssue({
     profile,
     profileEnvironment,
     consistency,
+    retrySleepImpl,
   });
   const numbers = matches.map(candidate => candidate.number);
   if (matches.length !== 1) {
@@ -187,6 +209,7 @@ export async function closeMatchingIssues({
   consistencyAttempts = DEFAULT_CONSISTENCY_ATTEMPTS,
   consistencyDelayMs = DEFAULT_CONSISTENCY_DELAY_MS,
   sleepImpl = sleep,
+  retrySleepImpl = sleep,
   profile = 'preview',
   profileEnvironment = process.env,
 }) {
@@ -214,6 +237,8 @@ export async function closeMatchingIssues({
     repo,
     token,
     ...boundSelector,
+    state: marker ? 'all' : 'open',
+    retrySleepImpl,
     consistency,
   });
   if (marker && matches.length === 0) {
@@ -231,9 +256,11 @@ export async function closeMatchingIssues({
         token,
         number: candidate.number,
         consistency,
+        retrySleepImpl,
       });
       closedNumbers.push(candidate.number);
     } catch (error) {
+      if (isImmediateMutationFailure(error)) throw error;
       failures.push(`#${candidate.number}: ${safeErrorMessage(error, token)}`);
     }
   }
@@ -244,6 +271,8 @@ export async function closeMatchingIssues({
     repo,
     token,
     ...boundSelector,
+    state: 'open',
+    retrySleepImpl,
     consistency,
   });
   const openNumbers = finalMatches
@@ -266,6 +295,98 @@ export async function closeMatchingIssues({
   };
 }
 
+export async function observeCanaryDelivery({
+  fetchImpl = fetch,
+  apiBaseUrl = DEFAULT_API_BASE_URL,
+  repo,
+  token,
+  marker,
+  expectedSha,
+  result,
+  attempted,
+  expectedLabels,
+  expectedAuthor,
+  consistencyAttempts = DEFAULT_CONSISTENCY_ATTEMPTS,
+  consistencyDelayMs = DEFAULT_CONSISTENCY_DELAY_MS,
+  sleepImpl = sleep,
+  retrySleepImpl = sleep,
+  profile = 'preview',
+  profileEnvironment = process.env,
+  observedAt = new Date(),
+}) {
+  const timestamp = observedAt.toISOString();
+  if (!attempted) return deliveryEvidence('inconclusive', 'browser_inconclusive', timestamp);
+  const target = validateCanarySelector({
+    profile,
+    repo,
+    marker,
+    expectedWorkerSha: expectedSha,
+    environment: profileEnvironment,
+  });
+  requireNonempty(token, 'token');
+  const consistency = validateConsistencyOptions({
+    consistencyAttempts,
+    consistencyDelayMs,
+    sleepImpl,
+  });
+  try {
+    const matches = await waitForStableEvidenceMatches({
+      fetchImpl,
+      apiBaseUrl,
+      repo,
+      token,
+      marker,
+      profile: target.profile.id,
+      profileEnvironment,
+      consistency,
+      retrySleepImpl,
+    });
+    if (matches.length === 0) return deliveryEvidence('delivery_failed', 'issue_absent', timestamp);
+    if (matches.length > 1) {
+      return deliveryEvidence('delivery_failed', 'issue_duplicate', timestamp);
+    }
+    const referenceFailures = [];
+    validateBrowserResultReference({
+      failures: referenceFailures,
+      result,
+      marker,
+      expectedSha,
+      repo,
+    });
+    if (referenceFailures.length > 0) {
+      return deliveryEvidence('inconclusive', 'browser_inconclusive', timestamp);
+    }
+    try {
+      await verifyCanaryIssue({
+        fetchImpl,
+        apiBaseUrl,
+        repo,
+        token,
+        marker,
+        expectedSha,
+        result,
+        expectedLabels,
+        expectedAuthor,
+        consistencyAttempts,
+        consistencyDelayMs,
+        sleepImpl,
+        retrySleepImpl,
+        profile: target.profile.id,
+        profileEnvironment,
+      });
+      return deliveryEvidence('verified', 'issue_verified', timestamp);
+    } catch (error) {
+      if (error instanceof GitHubRequestError) throw error;
+      if (error instanceof Error && error.message.startsWith('Canary Issue #')) {
+        return deliveryEvidence('delivery_failed', 'issue_contract_invalid', timestamp);
+      }
+      return deliveryEvidence('inconclusive', 'classification_failed', timestamp);
+    }
+  } catch (error) {
+    return deliveryEvidence('inconclusive', githubEvidenceReason(error), timestamp);
+  }
+}
+
 export async function runCli(
   argv,
   {
@@ -280,13 +401,17 @@ export async function runCli(
   } = {}
 ) {
   const token = env.BUGDROP_CANARY_GITHUB_TOKEN;
+  let profile = 'preview';
   try {
     const { command, options } = parseCliArguments(argv);
-    const profile = options.profile ?? 'preview';
+    profile = options.profile ?? 'preview';
     const selector = validateCanarySelector({
       profile,
       repo: options.repo,
-      marker: command === 'verify' || command === 'cleanup' ? options.marker : undefined,
+      marker:
+        command === 'verify' || command === 'evidence' || command === 'cleanup'
+          ? options.marker
+          : undefined,
       prefix: command === 'preflight' || command === 'sweep' ? options.prefix : undefined,
       environment: env,
     });
@@ -311,6 +436,40 @@ export async function runCli(
         profileEnvironment: env,
       });
       output = { verified: true, issueNumber: candidate.number, issueUrl: candidate.html_url };
+    } else if (command === 'evidence') {
+      requireNonempty(options.marker, '--marker');
+      requireNonempty(options.resultFile, '--result-file');
+      requireNonempty(options.attemptFile, '--attempt-file');
+      requireNonempty(options.evidenceFile, '--evidence-file');
+      requireNonempty(options.expectedSha, '--expected-sha');
+      let result;
+      let attempted = false;
+      try {
+        await readFileImpl(options.attemptFile, 'utf8');
+        attempted = true;
+      } catch {
+        attempted = false;
+      }
+      try {
+        result = JSON.parse(await readFileImpl(options.resultFile, 'utf8'));
+      } catch {
+        result = undefined;
+      }
+      output = await observeCanaryDelivery({
+        fetchImpl,
+        repo: options.repo,
+        token,
+        marker: options.marker,
+        expectedSha: options.expectedSha,
+        result,
+        attempted,
+        profile: selector.profile.id,
+        consistencyAttempts,
+        consistencyDelayMs,
+        sleepImpl,
+        profileEnvironment: env,
+      });
+      await writeFile(options.evidenceFile, `${JSON.stringify(output)}\n`, { mode: 0o600 });
     } else if (command === 'cleanup') {
       requireNonempty(options.marker, '--marker');
       output = await closeMatchingIssues({
@@ -343,36 +502,62 @@ export async function runCli(
     stdout(JSON.stringify(output));
     return 0;
   } catch (error) {
-    stderr(`[bugdrop-canary] ${safeErrorMessage(error, token)}`);
+    stderr(
+      profile === 'production'
+        ? '[bugdrop-canary] operation_failed'
+        : `[bugdrop-canary] ${safeErrorMessage(error, token)}`
+    );
     return 1;
   }
 }
 
-async function listRepositoryIssues({ fetchImpl, apiBaseUrl, repo, token }) {
+async function listRepositoryIssues({ fetchImpl, apiBaseUrl, repo, token, state, retrySleepImpl }) {
   const { owner, name } = parseRepo(repo);
   requireNonempty(token, 'token');
   const url = new URL(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/issues`,
     apiBaseUrl
   );
-  url.searchParams.set('state', 'all');
+  if (state !== 'all' && state !== 'open') throw new Error('Issue listing state is invalid');
+  url.searchParams.set('state', state);
   url.searchParams.set('per_page', '100');
   let nextUrl = url.toString();
   const issues = [];
   while (nextUrl) {
-    const { response, data } = await requestJson({ fetchImpl, url: nextUrl, token });
-    if (!Array.isArray(data)) throw new Error('GitHub Issues response was not an array');
+    const { response, data } = await requestJson({
+      fetchImpl,
+      url: nextUrl,
+      token,
+      retrySleepImpl,
+    });
+    if (!Array.isArray(data)) {
+      throw new GitHubRequestError(
+        'github_response_invalid',
+        'GitHub Issues response was not an array'
+      );
+    }
     issues.push(...data);
     nextUrl = parseNextLink(response.headers.get('link'));
   }
   return issues;
 }
 
-async function closeOneIssue({ fetchImpl, apiBaseUrl, repo, token, number, consistency }) {
+async function closeOneIssue({
+  fetchImpl,
+  apiBaseUrl,
+  repo,
+  token,
+  number,
+  consistency,
+  retrySleepImpl,
+}) {
   let firstError;
+  let firstConfirmedClosed = false;
   try {
-    await patchIssueClosed({ fetchImpl, apiBaseUrl, repo, token, number });
+    const result = await patchIssueClosed({ fetchImpl, apiBaseUrl, repo, token, number });
+    firstConfirmedClosed = result?.state === 'closed';
   } catch (error) {
+    if (!isAmbiguousMutationError(error)) throw error;
     firstError = error;
   }
   const afterFirst = await waitForClosedIssue({
@@ -382,6 +567,7 @@ async function closeOneIssue({ fetchImpl, apiBaseUrl, repo, token, number, consi
     token,
     number,
     consistency,
+    retrySleepImpl,
   });
   if (afterFirst.state === 'closed') return;
   if (afterFirst.state !== 'open') {
@@ -389,11 +575,17 @@ async function closeOneIssue({ fetchImpl, apiBaseUrl, repo, token, number, consi
       `Close readback returned state ${afterFirst.state ?? 'missing'}${firstError ? `: ${safeErrorMessage(firstError, token)}` : ''}`
     );
   }
+  if (firstConfirmedClosed) {
+    throw new Error(
+      'Close response reported closed but final readback stably proved the Issue open'
+    );
+  }
 
   let retryError;
   try {
     await patchIssueClosed({ fetchImpl, apiBaseUrl, repo, token, number });
   } catch (error) {
+    if (!isAmbiguousMutationError(error)) throw error;
     retryError = error;
   }
   const afterRetry = await waitForClosedIssue({
@@ -403,6 +595,7 @@ async function closeOneIssue({ fetchImpl, apiBaseUrl, repo, token, number, consi
     token,
     number,
     consistency,
+    retrySleepImpl,
   });
   if (afterRetry.state !== 'closed') {
     throw new Error(
@@ -426,6 +619,22 @@ async function waitForStableSingleton({ consistency, ...listOptions }) {
     throw new Error('Exactly-one marker discovery did not stabilize within the retry bound');
   }
   return lastMatches;
+}
+
+async function waitForStableEvidenceMatches({ consistency, ...listOptions }) {
+  let previousSignature;
+  for (let attempt = 1; attempt <= consistency.attempts; attempt += 1) {
+    const matches = await listMatchingIssues(listOptions);
+    const signature = matches
+      .map(candidate => candidate.number)
+      .filter(Number.isInteger)
+      .sort((left, right) => left - right)
+      .join(',');
+    if (signature === previousSignature) return matches;
+    previousSignature = signature;
+    await waitBeforeNextAttempt({ attempt, consistency });
+  }
+  throw new Error('Authoritative marker discovery did not stabilize within the retry bound');
 }
 
 async function waitForInitialCleanupMatches({ consistency, marker, prefix, ...listOptions }) {
@@ -483,17 +692,38 @@ async function patchIssueClosed({ fetchImpl, apiBaseUrl, repo, token, number }) 
   ).data;
 }
 
-async function getIssue({ fetchImpl, apiBaseUrl, repo, token, number }) {
+async function getIssue({ fetchImpl, apiBaseUrl, repo, token, number, retrySleepImpl }) {
   return (
     await requestJson({
       fetchImpl,
       url: issueApiUrl(apiBaseUrl, repo, number),
       token,
+      retrySleepImpl,
     })
   ).data;
 }
 
-async function requestJson({ fetchImpl, url, token, method = 'GET', body }) {
+async function requestJson({
+  fetchImpl,
+  url,
+  token,
+  method = 'GET',
+  body,
+  retrySleepImpl = sleep,
+}) {
+  if (method !== 'GET') return requestJsonOnce({ fetchImpl, url, token, method, body });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await requestJsonOnce({ fetchImpl, url, token, method, body });
+    } catch (error) {
+      if (!(error instanceof GitHubRequestError) || !error.retryable || attempt === 2) throw error;
+      await retrySleepImpl(GITHUB_GET_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  throw new GitHubRequestError('github_request_failed', 'GitHub GET retry bound exhausted');
+}
+
+async function requestJsonOnce({ fetchImpl, url, token, method = 'GET', body }) {
   let response;
   try {
     response = await fetchImpl(url, {
@@ -507,23 +737,67 @@ async function requestJson({ fetchImpl, url, token, method = 'GET', body }) {
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
   } catch (error) {
-    throw new Error(`GitHub API ${method} request failed: ${safeErrorMessage(error, token)}`);
+    throw new GitHubRequestError('github_network', `GitHub ${method} request failed [REDACTED]`, {
+      retryable: method === 'GET',
+    });
   }
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(
-      `GitHub API ${method} ${redact(String(url), token)} returned ${response.status}: ${redact(text.slice(0, 500), token)}`
-    );
+    throw githubResponseError(response, method);
   }
   let data = null;
   if (text) {
     try {
       data = JSON.parse(text);
     } catch {
-      throw new Error(`GitHub API ${method} returned invalid JSON`);
+      throw new GitHubRequestError(
+        'github_response_invalid',
+        `GitHub ${method} returned invalid JSON`
+      );
     }
   }
   return { response, data };
+}
+
+function githubResponseError(response, method) {
+  const status = response.status;
+  if ((status === 403 || status === 429) && isRateLimited(response)) {
+    return new GitHubRequestError('github_rate_limited', `GitHub ${method} was rate limited`);
+  }
+  if (status === 401 || status === 403) {
+    return new GitHubRequestError(
+      'github_auth',
+      `GitHub ${method} authorization failed [REDACTED]`
+    );
+  }
+  if ([500, 502, 503, 504].includes(status)) {
+    return new GitHubRequestError('github_5xx', `GitHub ${method} returned ${status}`, {
+      retryable: method === 'GET',
+    });
+  }
+  return new GitHubRequestError('github_request_failed', `GitHub ${method} returned ${status}`);
+}
+
+function isRateLimited(response) {
+  return (
+    response.status === 429 ||
+    response.headers.get('x-ratelimit-remaining') === '0' ||
+    Boolean(response.headers.get('retry-after'))
+  );
+}
+
+function isAmbiguousMutationError(error) {
+  return (
+    error instanceof GitHubRequestError &&
+    (error.category === 'github_network' || error.category === 'github_5xx')
+  );
+}
+
+function isImmediateMutationFailure(error) {
+  return (
+    error instanceof GitHubRequestError &&
+    ['github_rate_limited', 'github_auth', 'github_request_failed'].includes(error.category)
+  );
 }
 
 function validateBrowserResult({ failures, result, marker, expectedSha, candidate, canonicalUrl }) {
@@ -660,6 +934,19 @@ function safeErrorMessage(error, token) {
   return redact(error instanceof Error ? error.message : String(error), token);
 }
 
+function deliveryEvidence(outcome, reasonCode, observedAt) {
+  return { schemaVersion: 1, outcome, reasonCode, observedAt };
+}
+
+function githubEvidenceReason(error) {
+  if (!(error instanceof GitHubRequestError)) return 'classification_failed';
+  if (error.category === 'github_network') return 'github_network';
+  if (error.category === 'github_5xx') return 'github_5xx';
+  if (error.category === 'github_rate_limited') return 'github_rate_limited';
+  if (error.category === 'github_auth') return 'github_auth_failed';
+  return 'classification_failed';
+}
+
 function redact(value, token) {
   if (!token) return value;
   return value.split(token).join('[REDACTED]');
@@ -677,6 +964,8 @@ function parseCliArguments(argv) {
     '--marker': 'marker',
     '--prefix': 'prefix',
     '--result-file': 'resultFile',
+    '--attempt-file': 'attemptFile',
+    '--evidence-file': 'evidenceFile',
     '--expected-sha': 'expectedSha',
     '--profile': 'profile',
   };

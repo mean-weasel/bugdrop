@@ -68,20 +68,22 @@ require 'node scripts/release/verify-live.mjs observe'
 require 'bugdrop-production-heartbeat:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${worker_sha}'
 require 'npx playwright test e2e/widget.issue-canary.spec.ts --project=chromium-issue-canary --workers=1 --retries=0'
 
-[[ $(grep -Fc -- '--profile production' "$workflow") -eq 4 ]] ||
-  fail 'exactly four production GitHub operations must select the production profile'
-[[ $(grep -Fc 'BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}' "$workflow") -eq 4 ]] ||
-  fail 'the canary token must exist only on preflight, verify, cleanup, and sweep'
+[[ $(grep -Fc -- '--profile production' "$workflow") -eq 5 ]] ||
+  fail 'exactly five production GitHub operations must select the production profile'
+[[ $(grep -Fc 'BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}' "$workflow") -eq 5 ]] ||
+  fail 'the canary token must exist only on preflight, verify, evidence, cleanup, and sweep'
 require_absent 'BUGDROP_CANARY_GITHUB_TOKEN: ${{ github.token }}'
 
 for step in \
   'Cleanup current production marker' \
   'Final production-prefix sweep' \
+  'Classify sanitized authoritative delivery evidence' \
   'Summarize heartbeat stages' \
   'Upload heartbeat diagnostics' \
   'Reconcile one stable incident Issue' \
   'Fail closed on every required outcome' \
-  'Check in successful production heartbeat'; do
+  'Classify final sanitized outcome' \
+  'Send sanitized production heartbeat outcome'; do
   require "name: $step"
 done
 require 'if: always() && steps.identity.outcome'
@@ -97,7 +99,7 @@ require 'Controlled post-cleanup failure'
 require 'inputs.controlled_failure'
 require 'diagnostics_path="$RUNNER_TEMP/production-heartbeat-diagnostics.json"'
 require 'name: Prepare heartbeat diagnostics artifact'
-require 'diagnostics_tmp="$RUNNER_TEMP/production-heartbeat-diagnostics-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tmp"'
+require 'diagnostics_tmp="$RUNNER_TEMP/production-heartbeat-diagnostics.tmp"'
 require '> "$diagnostics_tmp"'
 require 'test -s "$diagnostics_tmp"'
 require "' \"\$diagnostics_tmp\" > /dev/null"
@@ -105,14 +107,17 @@ require 'mv "$diagnostics_tmp" "$diagnostics_path"'
 require 'test -s "$diagnostics_path"'
 require "' \"\$diagnostics_path\" > /dev/null"
 require 'cp "$diagnostics_path" "$artifact_path/diagnostics.json"'
-require 'if [ -d playwright-report ]; then cp -R playwright-report "$artifact_path/"; fi'
-require 'if [ -d test-results ]; then cp -R test-results "$artifact_path/"; fi'
-require '${{ runner.temp }}/production-heartbeat-artifact-${{ github.run_id }}-${{ github.run_attempt }}/'
+require_absent 'cp -R playwright-report'
+require_absent 'cp -R test-results'
+require 'name: production-heartbeat-diagnostics'
+require '${{ runner.temp }}/production-heartbeat-artifact/'
 require 'if-no-files-found: error'
 require_absent 'if-no-files-found: ignore'
 require_absent 'test -f "$diagnostics_path"'
 require_absent '> "$diagnostics_path"'
-require "'{schemaVersion: \$schemaVersion, runId: \$runId, runAttempt: \$runAttempt, stages:"
+require "'{schemaVersion: \$schemaVersion, stages:"
+require_absent '--arg runId'
+require_absent '--arg runAttempt'
 require '--arg config "$CONFIG"'
 require '"config"'
 
@@ -126,8 +131,8 @@ for forbidden in BUGDROP_CANARY_GITHUB_TOKEN GITHUB_TOKEN VERCEL_AUTOMATION_BYPA
     fail "token-free diagnostics summary contains credential input: $forbidden"
   fi
 done
-[[ $(grep -Fc 'ARTIFACT_PREPARE_OUTCOME: ${{ needs.heartbeat.outputs.artifact_prepare_outcome }}' "$workflow") -eq 2 ]] ||
-  fail 'artifact preparation must feed both incident selection and final conclusion'
+[[ $(grep -Fc 'ARTIFACT_PREPARE_OUTCOME: ${{ needs.heartbeat.outputs.artifact_prepare_outcome }}' "$workflow") -eq 3 ]] ||
+  fail 'artifact preparation must feed incident selection, classification, and final conclusion'
 [[ $(grep -Fc 'SUMMARIZE_OUTCOME: ${{ needs.heartbeat.outputs.summarize_outcome }}' "$workflow") -eq 2 ]] ||
   fail 'summarize outcome must feed both incident selection and final conclusion'
 require '[ "$SUMMARIZE_OUTCOME" = success ]'
@@ -135,21 +140,35 @@ require '[ "$SUMMARIZE_OUTCOME" != success ]'
 require '[ "$ARTIFACT_PREPARE_OUTCOME" = success ]'
 require '[ "$ARTIFACT_PREPARE_OUTCOME" != success ]'
 
-checkin_block=$(awk '
-  /name: Check in successful production heartbeat/ { capture = 1 }
+sender_block=$(awk '
+  /name: Send sanitized production heartbeat outcome/ { capture = 1 }
   capture { print }
 ' "$workflow")
 for required in \
+  'if: always()' \
   'continue-on-error: true' \
   'MONITOR_HEARTBEAT_SECRET: ${{ secrets.MONITOR_HEARTBEAT_SECRET }}' \
-  'curl --fail --silent --show-error --max-time 10' \
-  '--retry 2 --retry-all-errors' \
-  '--request POST' \
-  '--header "Authorization: Bearer $MONITOR_HEARTBEAT_SECRET"' \
-  '--header "X-BugDrop-Heartbeat-Id: ${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}"' \
-  'https://bugdrop.dev/api/monitor/heartbeat'; do
-  grep -Fq -- "$required" <<< "$checkin_block" || fail "check-in step missing: $required"
+  'HEARTBEAT_ID: ${{ github.run_id }}:${{ github.run_attempt }}' \
+  'HEARTBEAT_OUTCOME: ${{ steps.classify.outputs.outcome }}' \
+  'HEARTBEAT_REASON_CODE: ${{ steps.classify.outputs.reason_code }}' \
+  'HEARTBEAT_OBSERVED_AT: ${{ steps.classify.outputs.observed_at }}' \
+  'node scripts/production-heartbeat-outcome.mjs send'; do
+  grep -Fq -- "$required" <<< "$sender_block" || fail "sender step missing: $required"
 done
+[[ $(grep -Fc 'MONITOR_HEARTBEAT_SECRET: ${{ secrets.MONITOR_HEARTBEAT_SECRET }}' "$workflow") -eq 1 ]] ||
+  fail 'monitoring secret must exist only in the final sender step'
+require_absent 'curl --fail --silent --show-error --max-time 10'
+require 'node scripts/github-issue-canary.mjs evidence'
+require '--evidence-file "$BUGDROP_CANARY_EVIDENCE_FILE"'
+require '> /dev/null'
+require 'node scripts/production-heartbeat-outcome.mjs classify'
+require 'outcome=inconclusive'
+require 'if [ "$EVIDENCE_OUTCOME" = delivery_failed ]'
+require 'elif [ "$EVIDENCE_OUTCOME" = verified ]'
+require 'node scripts/github-heartbeat-incident.mjs "$outcome"'
+require '--reason-code "$EVIDENCE_REASON" > /dev/null'
+require_absent '--run-url'
+require_absent '--details'
 
 summary_move_line=$(grep -n 'mv "$diagnostics_tmp" "$diagnostics_path"' "$workflow" | cut -d: -f1)
 summary_output_line=$(grep -n 'echo "heartbeat_ok=$heartbeat_ok" >> "$GITHUB_OUTPUT"' "$workflow" | cut -d: -f1)
@@ -163,8 +182,8 @@ controlled_line=$(grep -n 'name: Controlled post-cleanup failure' "$workflow" | 
   fail 'controlled failure must occur only after both cleanup passes'
 
 conclusion_line=$(grep -n 'name: Fail closed on every required outcome' "$workflow" | cut -d: -f1)
-checkin_line=$(grep -n 'name: Check in successful production heartbeat' "$workflow" | cut -d: -f1)
-(( conclusion_line < checkin_line )) ||
-  fail 'dead-man check-in must run only after the authoritative fail-closed conclusion'
+sender_line=$(grep -n 'name: Send sanitized production heartbeat outcome' "$workflow" | cut -d: -f1)
+(( conclusion_line < sender_line )) ||
+  fail 'outcome sender must be the final step after the fail-closed conclusion'
 
 echo 'Production heartbeat workflow contract checks passed'

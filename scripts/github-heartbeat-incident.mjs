@@ -6,6 +6,16 @@ export const INCIDENT_REPO = 'mean-weasel/bugdrop';
 export const INCIDENT_TITLE = '[BugDrop production heartbeat] Incident';
 
 const API_BASE = 'https://api.github.com';
+const GITHUB_GET_RETRY_DELAYS_MS = [1_000, 2_000];
+
+class GitHubRequestError extends Error {
+  constructor(category, message, { retryable = false } = {}) {
+    super(`${category}: ${message}`);
+    this.name = 'GitHubRequestError';
+    this.category = category;
+    this.retryable = retryable;
+  }
+}
 
 export async function transitionHeartbeatIncident({
   fetchImpl = fetch,
@@ -13,15 +23,18 @@ export async function transitionHeartbeatIncident({
   outcome,
   runUrl,
   details,
+  reasonCode,
   apiBaseUrl = API_BASE,
   repo = INCIDENT_REPO,
+  retrySleepImpl = sleep,
 }) {
   requireToken(token);
-  if (outcome !== 'failure' && outcome !== 'recovery') {
-    throw new Error('outcome must be failure or recovery');
+  if (!['failure', 'recovery', 'inconclusive'].includes(outcome)) {
+    throw new Error('outcome must be failure, recovery, or inconclusive');
   }
-  const body = incidentComment({ outcome, runUrl, details });
-  let matches = await listIncidents({ fetchImpl, token, apiBaseUrl, repo });
+  if (outcome === 'inconclusive') return { action: 'none', state: 'unchanged' };
+  const body = incidentComment({ outcome, runUrl, details, reasonCode });
+  let matches = await listIncidents({ fetchImpl, token, apiBaseUrl, repo, retrySleepImpl });
   if (matches.length > 1) {
     throw new Error(`Expected at most one heartbeat incident; found ${matches.length}`);
   }
@@ -38,7 +51,7 @@ export async function transitionHeartbeatIncident({
           body: { title: INCIDENT_TITLE, body },
         }),
       reconcile: async () => {
-        matches = await listIncidents({ fetchImpl, token, apiBaseUrl, repo });
+        matches = await listIncidents({ fetchImpl, token, apiBaseUrl, repo, retrySleepImpl });
         return matches.length === 1 ? matches[0] : undefined;
       },
       token,
@@ -56,18 +69,43 @@ export async function transitionHeartbeatIncident({
       repo,
       number: incident.number,
       state: 'open',
+      retrySleepImpl,
     });
-    await addComment({ fetchImpl, token, apiBaseUrl, repo, number: incident.number, body });
+    await addComment({
+      fetchImpl,
+      token,
+      apiBaseUrl,
+      repo,
+      number: incident.number,
+      body,
+      retrySleepImpl,
+    });
     return { action: 'reopened', issueNumber: incident.number, state: incident.state };
   }
   if (outcome === 'failure') {
-    await addComment({ fetchImpl, token, apiBaseUrl, repo, number: incident.number, body });
+    await addComment({
+      fetchImpl,
+      token,
+      apiBaseUrl,
+      repo,
+      number: incident.number,
+      body,
+      retrySleepImpl,
+    });
     return { action: 'updated', issueNumber: incident.number, state: incident.state };
   }
   if (incident.state === 'closed') {
     return { action: 'none', issueNumber: incident.number, state: incident.state };
   }
-  await addComment({ fetchImpl, token, apiBaseUrl, repo, number: incident.number, body });
+  await addComment({
+    fetchImpl,
+    token,
+    apiBaseUrl,
+    repo,
+    number: incident.number,
+    body,
+    retrySleepImpl,
+  });
   incident = await setIssueState({
     fetchImpl,
     token,
@@ -75,6 +113,7 @@ export async function transitionHeartbeatIncident({
     repo,
     number: incident.number,
     state: 'closed',
+    retrySleepImpl,
   });
   return { action: 'closed', issueNumber: incident.number, state: incident.state };
 }
@@ -84,6 +123,7 @@ export async function listIncidents({
   token,
   apiBaseUrl = API_BASE,
   repo = INCIDENT_REPO,
+  retrySleepImpl = sleep,
 }) {
   requireToken(token);
   let next = new URL(issuesUrl(apiBaseUrl, repo));
@@ -91,15 +131,25 @@ export async function listIncidents({
   next.searchParams.set('per_page', '100');
   const matches = [];
   while (next) {
-    const { response, data } = await requestJson({ fetchImpl, token, url: next.toString() });
-    if (!Array.isArray(data)) throw new Error('GitHub Issues response was not an array');
+    const { response, data } = await requestJson({
+      fetchImpl,
+      token,
+      url: next.toString(),
+      retrySleepImpl,
+    });
+    if (!Array.isArray(data)) {
+      throw new GitHubRequestError(
+        'github_response_invalid',
+        'GitHub Issues response was not an array'
+      );
+    }
     matches.push(...data.filter(issue => !issue.pull_request && issue.title === INCIDENT_TITLE));
     next = nextLink(response.headers.get('link'));
   }
   return matches;
 }
 
-async function addComment({ fetchImpl, token, apiBaseUrl, repo, number, body }) {
+async function addComment({ fetchImpl, token, apiBaseUrl, repo, number, body, retrySleepImpl }) {
   await mutateAndReconcile({
     mutate: () =>
       requestJson({
@@ -117,6 +167,7 @@ async function addComment({ fetchImpl, token, apiBaseUrl, repo, number, body }) 
           fetchImpl,
           token,
           url: next.toString(),
+          retrySleepImpl,
         });
         if (Array.isArray(data) && data.some(comment => comment.body === body)) return true;
         next = nextLink(response.headers.get('link'));
@@ -128,13 +179,22 @@ async function addComment({ fetchImpl, token, apiBaseUrl, repo, number, body }) 
   });
 }
 
-async function setIssueState({ fetchImpl, token, apiBaseUrl, repo, number, state }) {
+async function setIssueState({
+  fetchImpl,
+  token,
+  apiBaseUrl,
+  repo,
+  number,
+  state,
+  retrySleepImpl,
+}) {
   return mutateAndReconcile({
     mutate: () =>
       requestJson({
         fetchImpl,
         token,
         url: issueUrl(apiBaseUrl, repo, number),
+        retrySleepImpl,
         method: 'PATCH',
         body: { state, ...(state === 'closed' ? { state_reason: 'completed' } : {}) },
       }),
@@ -156,6 +216,7 @@ async function mutateAndReconcile({ mutate, reconcile, token, operation }) {
     const { data } = await mutate();
     return data;
   } catch (error) {
+    if (!isAmbiguousMutationError(error)) throw error;
     try {
       const reconciled = await reconcile();
       if (reconciled) return reconciled;
@@ -168,7 +229,34 @@ async function mutateAndReconcile({ mutate, reconcile, token, operation }) {
   }
 }
 
-async function requestJson({ fetchImpl, token, url, method = 'GET', body }) {
+function isAmbiguousMutationError(error) {
+  return (
+    error instanceof GitHubRequestError &&
+    ['github_network', 'github_5xx', 'github_response_invalid'].includes(error.category)
+  );
+}
+
+async function requestJson({
+  fetchImpl,
+  token,
+  url,
+  method = 'GET',
+  body,
+  retrySleepImpl = sleep,
+}) {
+  if (method !== 'GET') return requestJsonOnce({ fetchImpl, token, url, method, body });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await requestJsonOnce({ fetchImpl, token, url, method, body });
+    } catch (error) {
+      if (!(error instanceof GitHubRequestError) || !error.retryable || attempt === 2) throw error;
+      await retrySleepImpl(GITHUB_GET_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  throw new GitHubRequestError('github_request_failed', 'GitHub GET retry bound exhausted');
+}
+
+async function requestJsonOnce({ fetchImpl, token, url, method = 'GET', body }) {
   let response;
   try {
     response = await fetchImpl(url, {
@@ -182,21 +270,60 @@ async function requestJson({ fetchImpl, token, url, method = 'GET', body }) {
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
   } catch (error) {
-    throw new Error(`GitHub API request failed: ${safe(error, token)}`);
+    throw new GitHubRequestError('github_network', `GitHub ${method} request failed [REDACTED]`, {
+      retryable: method === 'GET',
+    });
   }
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`GitHub API returned ${response.status}: ${redact(text.slice(0, 500), token)}`);
+    throw githubResponseError(response, method);
   }
   if (!text) return { response, data: null };
   try {
     return { response, data: JSON.parse(text) };
   } catch {
-    throw new Error('GitHub API returned invalid JSON');
+    throw new GitHubRequestError(
+      'github_response_invalid',
+      `GitHub ${method} returned invalid JSON`
+    );
   }
 }
 
-function incidentComment({ outcome, runUrl, details }) {
+function githubResponseError(response, method) {
+  const status = response.status;
+  if ((status === 403 || status === 429) && isRateLimited(response)) {
+    return new GitHubRequestError('github_rate_limited', `GitHub ${method} was rate limited`);
+  }
+  if (status === 401 || status === 403) {
+    return new GitHubRequestError(
+      'github_auth',
+      `GitHub ${method} authorization failed [REDACTED]`
+    );
+  }
+  if ([500, 502, 503, 504].includes(status)) {
+    return new GitHubRequestError('github_5xx', `GitHub ${method} returned ${status}`, {
+      retryable: method === 'GET',
+    });
+  }
+  return new GitHubRequestError('github_request_failed', `GitHub ${method} returned ${status}`);
+}
+
+function isRateLimited(response) {
+  return (
+    response.status === 429 ||
+    response.headers.get('x-ratelimit-remaining') === '0' ||
+    Boolean(response.headers.get('retry-after'))
+  );
+}
+
+function sleep(delayMs) {
+  return new Promise(resolve => setTimeout(resolve, delayMs));
+}
+
+function incidentComment({ outcome, runUrl, details, reasonCode }) {
+  if (reasonCode) {
+    return `Production heartbeat ${outcome}. Classification: ${requireReasonCode(reasonCode)}.`;
+  }
   const safeRunUrl = requireText(runUrl, 'runUrl');
   const safeDetails = requireText(details, 'details');
   return [
@@ -206,6 +333,17 @@ function incidentComment({ outcome, runUrl, details }) {
     '',
     `Details: ${safeDetails}`,
   ].join('\n');
+}
+
+function requireReasonCode(value) {
+  const allowed = new Set([
+    'issue_verified',
+    'issue_absent',
+    'issue_duplicate',
+    'issue_contract_invalid',
+  ]);
+  if (!allowed.has(value)) throw new Error('invalid heartbeat reason code');
+  return value;
 }
 
 function issuesUrl(apiBaseUrl, repo) {
@@ -265,6 +403,7 @@ async function main() {
     outcome,
     runUrl: options['--run-url'],
     details: options['--details'],
+    reasonCode: options['--reason-code'],
     repo: process.env.BUGDROP_HEARTBEAT_INCIDENT_REPO || process.env.GITHUB_REPOSITORY,
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
