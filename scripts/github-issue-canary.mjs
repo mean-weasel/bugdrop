@@ -815,7 +815,7 @@ function isRateLimited(response) {
 function isAmbiguousMutationError(error) {
   return (
     error instanceof GitHubRequestError &&
-    (error.category === 'github_network' || error.category === 'github_5xx')
+    ['github_network', 'github_5xx', 'github_response_invalid'].includes(error.category)
   );
 }
 

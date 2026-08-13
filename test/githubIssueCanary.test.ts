@@ -913,6 +913,32 @@ describe('GitHub Issue canary cleanup', () => {
     expect(fetchImpl.mock.calls.filter(call => call[1]?.method === 'PATCH')).toHaveLength(1);
   });
 
+  it('reconciles an accepted close with malformed JSON by exact readback without repeating it', async () => {
+    const candidate = issue();
+    let exactGetCount = 0;
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input).includes('/issues?')) return jsonResponse([candidate]);
+      if (init?.method === 'PATCH') {
+        candidate.state = 'closed';
+        return new Response('not-json', { status: 200 });
+      }
+      exactGetCount += 1;
+      return jsonResponse(candidate);
+    });
+
+    await expect(
+      closeMatchingIssues({
+        fetchImpl,
+        repo: REPO,
+        token: TOKEN,
+        marker: MARKER,
+        sleepImpl: noWait,
+      })
+    ).resolves.toMatchObject({ closedNumbers: [42], openNumbers: [] });
+    expect(fetchImpl.mock.calls.filter(call => call[1]?.method === 'PATCH')).toHaveLength(1);
+    expect(exactGetCount).toBe(1);
+  });
+
   it('retries an ambiguous close once only after readback proves the Issue is still open', async () => {
     const candidate = issue();
     let patchCount = 0;
