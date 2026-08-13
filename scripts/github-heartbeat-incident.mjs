@@ -211,33 +211,65 @@ export async function listIncidents({
 }
 
 async function addComment({ fetchImpl, token, apiBaseUrl, repo, number, body, retrySleepImpl }) {
+  const commentsUrl = `${issueUrl(apiBaseUrl, repo, number)}/comments`;
+  const existingComments = await listComments({
+    fetchImpl,
+    token,
+    url: commentsUrl,
+    retrySleepImpl,
+  });
+  const existingIdentities = new Set(existingComments.map(stableCommentIdentity).filter(Boolean));
   await mutateAndReconcile({
     mutate: () =>
       requestJson({
         fetchImpl,
         token,
-        url: `${issueUrl(apiBaseUrl, repo, number)}/comments`,
+        url: commentsUrl,
         method: 'POST',
         body: { body },
       }),
     reconcile: async () => {
-      let next = new URL(`${issueUrl(apiBaseUrl, repo, number)}/comments`);
-      next.searchParams.set('per_page', '100');
-      while (next) {
-        const { response, data } = await requestJson({
-          fetchImpl,
-          token,
-          url: next.toString(),
-          retrySleepImpl,
-        });
-        if (Array.isArray(data) && data.some(comment => comment.body === body)) return true;
-        next = nextLink(response.headers.get('link'));
-      }
-      return undefined;
+      const comments = await listComments({
+        fetchImpl,
+        token,
+        url: commentsUrl,
+        retrySleepImpl,
+      });
+      return comments.some(comment => {
+        const identity = stableCommentIdentity(comment);
+        return identity && !existingIdentities.has(identity) && comment.body === body;
+      });
     },
     token,
     operation: 'comment on incident',
   });
+}
+
+async function listComments({ fetchImpl, token, url, retrySleepImpl }) {
+  let next = new URL(url);
+  next.searchParams.set('per_page', '100');
+  const comments = [];
+  while (next) {
+    const { response, data } = await requestJson({
+      fetchImpl,
+      token,
+      url: next.toString(),
+      retrySleepImpl,
+    });
+    if (!Array.isArray(data)) {
+      throw new GitHubRequestError(
+        'github_response_invalid',
+        'GitHub Issue comments response was not an array'
+      );
+    }
+    comments.push(...data);
+    next = nextLink(response.headers.get('link'));
+  }
+  return comments;
+}
+
+function stableCommentIdentity(comment) {
+  return Number.isInteger(comment?.id) && comment.id > 0 ? String(comment.id) : null;
 }
 
 async function setIssueState({

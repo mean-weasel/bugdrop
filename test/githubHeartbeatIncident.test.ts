@@ -142,6 +142,7 @@ describe('heartbeat incident lifecycle', () => {
     const updateFetch = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response([created]))
+      .mockResolvedValueOnce(response([]))
       .mockResolvedValueOnce(response({ id: 99 }));
     await expect(
       transitionHeartbeatIncident({
@@ -157,6 +158,7 @@ describe('heartbeat incident lifecycle', () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response([closed]))
       .mockResolvedValueOnce(response(created))
+      .mockResolvedValueOnce(response([]))
       .mockResolvedValueOnce(response({ id: 100 }));
     await expect(
       transitionHeartbeatIncident({
@@ -176,6 +178,7 @@ describe('heartbeat incident lifecycle', () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response([incident()]))
+      .mockResolvedValueOnce(response([]))
       .mockResolvedValueOnce(response({ id: 101 }));
     await expect(
       transitionHeartbeatIncident({
@@ -185,9 +188,9 @@ describe('heartbeat incident lifecycle', () => {
         reasonCode: 'cleanup_failed',
       })
     ).resolves.toMatchObject({ action: 'updated', state: 'open' });
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
     expect(fetchImpl.mock.calls.some(call => call[1]?.method === 'PATCH')).toBe(false);
-    expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body))).toEqual({
+    expect(JSON.parse(String(fetchImpl.mock.calls[2][1]?.body))).toEqual({
       body: 'Production heartbeat inconclusive. Classification: cleanup_failed.',
     });
   });
@@ -206,6 +209,7 @@ describe('heartbeat incident lifecycle', () => {
         ])
       )
       .mockResolvedValueOnce(response(incident('open', 7, confirmedBody)))
+      .mockResolvedValueOnce(response([]))
       .mockResolvedValueOnce(response({ id: 102 }));
     await expect(
       transitionHeartbeatIncident({
@@ -216,7 +220,7 @@ describe('heartbeat incident lifecycle', () => {
       })
     ).resolves.toMatchObject({ action: 'updated', state: 'open' });
     expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body))).toEqual({ body: confirmedBody });
-    expect(JSON.parse(String(fetchImpl.mock.calls[2][1]?.body))).toEqual({ body: confirmedBody });
+    expect(JSON.parse(String(fetchImpl.mock.calls[3][1]?.body))).toEqual({ body: confirmedBody });
   });
 
   it('creates on first failure and comments on recurrence', async () => {
@@ -233,9 +237,10 @@ describe('heartbeat incident lifecycle', () => {
     const updateFetch = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response([created]))
+      .mockResolvedValueOnce(response([]))
       .mockResolvedValueOnce(response({ id: 99 }));
     await expect(transition(updateFetch, 'failure')).resolves.toMatchObject({ action: 'updated' });
-    expect(String(updateFetch.mock.calls[1][0])).toContain('/issues/7/comments');
+    expect(String(updateFetch.mock.calls[2][0])).toContain('/issues/7/comments');
   });
 
   it('uses only normalized classification in new incident comments', async () => {
@@ -260,6 +265,7 @@ describe('heartbeat incident lifecycle', () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response([closed]))
       .mockResolvedValueOnce(response(incident('open')))
+      .mockResolvedValueOnce(response([]))
       .mockResolvedValueOnce(response({ id: 99 }));
     await expect(transition(fetchImpl, 'failure')).resolves.toMatchObject({ action: 'reopened' });
     expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body))).toEqual({ state: 'open' });
@@ -269,10 +275,11 @@ describe('heartbeat incident lifecycle', () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response([incident()]))
+      .mockResolvedValueOnce(response([]))
       .mockResolvedValueOnce(response({ id: 99 }))
       .mockResolvedValueOnce(response(incident('closed')));
     await expect(transition(fetchImpl, 'recovery')).resolves.toMatchObject({ action: 'closed' });
-    expect(JSON.parse(String(fetchImpl.mock.calls[2][1]?.body))).toEqual({
+    expect(JSON.parse(String(fetchImpl.mock.calls[3][1]?.body))).toEqual({
       state: 'closed',
       state_reason: 'completed',
     });
@@ -285,6 +292,81 @@ describe('heartbeat incident lifecycle', () => {
       state: 'absent',
     });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects ambiguous comment failure when only a historical identical comment exists', async () => {
+    const body = 'Production heartbeat failure. Classification: issue_absent.';
+    const historical = { id: 10, body };
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response([incident()]))
+      .mockResolvedValueOnce(response([historical]))
+      .mockRejectedValueOnce(new Error('connection failed before acceptance'))
+      .mockResolvedValueOnce(response([historical]));
+
+    await expect(
+      transitionHeartbeatIncident({
+        fetchImpl,
+        token: TOKEN,
+        outcome: 'failure',
+        reasonCode: 'issue_absent',
+        retrySleepImpl: noWait,
+      })
+    ).rejects.toThrow('could not be reconciled');
+    expect(fetchImpl.mock.calls.filter(call => call[1]?.method === 'POST')).toHaveLength(1);
+  });
+
+  it('reconciles after-acceptance ambiguity only from a new paginated exact-body identity', async () => {
+    const body = 'Production heartbeat failure. Classification: issue_absent.';
+    const pageTwo = 'https://api.github.com/repos/mean-weasel/bugdrop/issues/7/comments?page=2';
+    const historical = { id: 10, body };
+    const unrelated = { id: 20, body: 'different sanitized comment' };
+    const accepted = { id: 11, body };
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response([incident()]))
+      .mockResolvedValueOnce(
+        response([historical], { headers: { Link: `<${pageTwo}>; rel="next"` } })
+      )
+      .mockResolvedValueOnce(response([unrelated]))
+      .mockRejectedValueOnce(new Error('response lost after acceptance'))
+      .mockResolvedValueOnce(
+        response([historical], { headers: { Link: `<${pageTwo}>; rel="next"` } })
+      )
+      .mockResolvedValueOnce(response([unrelated, accepted]));
+
+    await expect(
+      transitionHeartbeatIncident({
+        fetchImpl,
+        token: TOKEN,
+        outcome: 'failure',
+        reasonCode: 'issue_absent',
+        retrySleepImpl: noWait,
+      })
+    ).resolves.toMatchObject({ action: 'updated' });
+    expect(fetchImpl.mock.calls.filter(call => call[1]?.method === 'POST')).toHaveLength(1);
+    expect(String(fetchImpl.mock.calls[2][0])).toBe(pageTwo);
+    expect(String(fetchImpl.mock.calls[5][0])).toBe(pageTwo);
+  });
+
+  it('does not reconcile a deterministic comment failure', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response([incident()]))
+      .mockResolvedValueOnce(response([]))
+      .mockResolvedValueOnce(new Response(`forbidden ${TOKEN}`, { status: 422 }));
+
+    await expect(
+      transitionHeartbeatIncident({
+        fetchImpl,
+        token: TOKEN,
+        outcome: 'failure',
+        reasonCode: 'issue_absent',
+        retrySleepImpl: noWait,
+      })
+    ).rejects.toThrow('github_request_failed');
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(fetchImpl.mock.calls.filter(call => call[1]?.method === 'POST')).toHaveLength(1);
   });
 
   it('reconciles an ambiguous create by rediscovery', async () => {
