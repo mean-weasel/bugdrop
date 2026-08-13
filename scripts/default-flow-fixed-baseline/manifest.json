@@ -1,0 +1,24 @@
+{
+  "schema": "bugdrop.default-flow-fixed-baseline/v1",
+  "sourceCommit": "bb0f1b50a37867f8351b99f7e712a960836deb3f",
+  "files": [
+    {
+      "candidatePath": "src/widget/index.ts",
+      "assetPath": "src/widget/index.ts.txt",
+      "length": 65201,
+      "sha256": "e43e2d05611dfd5b9bab77f14ee0be3ad8a8cc1f587f37a57ad519d6189e399d"
+    },
+    {
+      "candidatePath": "src/widget/default-flow/definition.ts",
+      "assetPath": "src/widget/default-flow/definition.ts.txt",
+      "length": 4412,
+      "sha256": "387d8e624be87f5961a34941e5b406c9c8fc4556439cff4470b84712717d20e1"
+    },
+    {
+      "candidatePath": "src/widget/default-flow/runtime.ts",
+      "assetPath": "src/widget/default-flow/runtime.ts.txt",
+      "length": 2005,
+      "sha256": "720b00d490edccee7a2be55eac3487f1638f73dc1de86b59e98f5f9a87a88048"
+    }
+  ]
+}
