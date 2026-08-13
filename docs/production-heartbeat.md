@@ -122,17 +122,22 @@ payloads; upload uses `if-no-files-found: error`. Summary, staging, and upload o
 selection and the final conclusion. Cleanup never trusts the browser result. A missing attempt
 sentinel skips marker cleanup safely, while the final prefix sweep remains mandatory.
 
-After a real canary attempt, bounded successful GitHub reads produce one sanitized evidence record:
+After Playwright validates and forwards its first feedback POST, it writes a private evidence signal
+separate from the earlier cleanup-start sentinel. Only that POST proof plus bounded successful
+GitHub reads can produce one authoritative delivery evidence record:
 `issue_verified`, `issue_absent`, `issue_duplicate`, or `issue_contract_invalid`. Network, selected
 GitHub 5xx, rate-limit, authorization, browser, and classification ambiguity remain inconclusive.
 Confirmed delivery failure outranks later cleanup, sweep, artifact, or incident failure; verified
-delivery likewise remains verified. The stable operational incident opens or updates only for
-confirmed delivery failure, closes only for a wholly healthy verified run, and remains unchanged for
-inconclusive runs.
+delivery likewise remains verified. The stable operational incident closes only for a wholly
+healthy verified run. Inconclusive runs create, comment on, or reopen the native incident with
+enum-only wording, but never close or relabel an active confirmed-failure incident.
 
-The final step always attempts one authenticated v1 report with exactly `schemaVersion`, `outcome`,
+The final step sends one authenticated v1 report with exactly `schemaVersion`, `outcome`,
 `reasonCode`, and canonical millisecond UTC `observedAt`. It validates HTTP 200, `Cache-Control:
-no-store`, and the receiver's exact response schema. The monitoring secret, request body, and
+no-store`, and the receiver's exact response schema. Network, timeout, and HTTP 500, 502, 503, or
+504 failures receive at most two bounded retries using identical bytes, headers, timestamp, and
+heartbeat ID; deterministic and response-contract failures are never retried. The monitoring secret,
+request body, and
 receiver response never enter diagnostics, artifacts, summaries, native incident comments, or
 classifier outputs. Sender failure is visible but cannot rewrite the workflow's authoritative
 conclusion.

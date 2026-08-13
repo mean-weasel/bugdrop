@@ -47,6 +47,7 @@ describe('production heartbeat classification', () => {
     ['browser', 'setup_failed'],
     ['identity', 'identity_failed'],
     ['venue', 'venue_failed'],
+    ['preflight', 'cleanup_failed'],
     ['canary', 'browser_inconclusive'],
     ['cleanup', 'cleanup_failed'],
     ['sweep', 'sweep_failed'],
@@ -59,6 +60,35 @@ describe('production heartbeat classification', () => {
         incident: 'success',
       })
     ).toMatchObject({ outcome: 'inconclusive', reasonCode });
+  });
+
+  it('prioritizes identity over skipped dependent preflight, venue, and canary stages', () => {
+    expect(
+      classifyHeartbeatOutcome({
+        stages: {
+          ...stages,
+          identity: 'failure',
+          preflight: 'skipped',
+          venue: 'skipped',
+          canary: 'skipped',
+        },
+        artifactPrepare: 'success',
+        artifact: 'success',
+        incident: 'success',
+      })
+    ).toMatchObject({ outcome: 'inconclusive', reasonCode: 'identity_failed' });
+  });
+
+  it('classifies the real preflight failure path before browser-inconclusive evidence', () => {
+    expect(
+      classifyHeartbeatOutcome({
+        evidence: outcome('inconclusive', 'browser_inconclusive', observedAt),
+        stages: { ...stages, preflight: 'failure', canary: 'skipped' },
+        artifactPrepare: 'success',
+        artifact: 'success',
+        incident: 'success',
+      })
+    ).toMatchObject({ outcome: 'inconclusive', reasonCode: 'cleanup_failed' });
   });
 
   it('maps artifact and incident failures without inventing delivery failure', () => {
@@ -148,6 +178,90 @@ describe('production heartbeat sender', () => {
       'X-BugDrop-Heartbeat-Id': '123:1',
     });
     expect(JSON.parse(String(request[1]?.body))).toEqual(report);
+  });
+
+  it('retries transient network and selected 5xx failures with byte-identical requests', async () => {
+    const report = outcome('delivery_failed', 'issue_absent', observedAt);
+    const retrySleepImpl = vi.fn(async () => {});
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new DOMException('timed out', 'AbortError'))
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            schemaVersion: 1,
+            accepted: true,
+            duplicate: false,
+            outcome: 'delivery_failed',
+            effect: 'degraded',
+            observedAt,
+          },
+          { headers: { 'cache-control': 'no-store' } }
+        )
+      );
+
+    await expect(
+      sendHeartbeatOutcome({
+        fetchImpl,
+        endpoint: 'https://bugdrop.dev/api/monitor/heartbeat',
+        secret: 'secret',
+        heartbeatId: '123:1',
+        report,
+        retrySleepImpl,
+      })
+    ).resolves.toMatchObject({ effect: 'degraded' });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(retrySleepImpl.mock.calls).toEqual([[1_000], [2_000]]);
+    const requestMaterial = fetchImpl.mock.calls.map(([endpoint, request]) => ({
+      endpoint,
+      method: request?.method,
+      redirect: request?.redirect,
+      headers: request?.headers,
+      body: request?.body,
+    }));
+    expect(requestMaterial[1]).toEqual(requestMaterial[0]);
+    expect(requestMaterial[2]).toEqual(requestMaterial[0]);
+  });
+
+  it.each([400, 401, 409, 429])('does not retry deterministic HTTP %s', async status => {
+    const retrySleepImpl = vi.fn(async () => {});
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status }));
+    await expect(
+      sendHeartbeatOutcome({
+        fetchImpl,
+        endpoint: 'https://bugdrop.dev/api/monitor/heartbeat',
+        secret: 'secret',
+        heartbeatId: '123:1',
+        report: outcome('verified', 'issue_verified', observedAt),
+        retrySleepImpl,
+      })
+    ).rejects.toThrow(`heartbeat_receiver_http_${status}`);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(retrySleepImpl).not.toHaveBeenCalled();
+  });
+
+  it.each([301, 302])('handles redirect HTTP %s as one deterministic response', async status => {
+    const retrySleepImpl = vi.fn(async () => {});
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(null, {
+        status,
+        headers: { location: 'https://example.invalid/redirected' },
+      })
+    );
+    await expect(
+      sendHeartbeatOutcome({
+        fetchImpl,
+        endpoint: 'https://bugdrop.dev/api/monitor/heartbeat',
+        secret: 'secret',
+        heartbeatId: '123:1',
+        report: outcome('verified', 'issue_verified', observedAt),
+        retrySleepImpl,
+      })
+    ).rejects.toThrow(`heartbeat_receiver_http_${status}`);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0][1]?.redirect).toBe('manual');
+    expect(retrySleepImpl).not.toHaveBeenCalled();
   });
 
   it('accepts idempotent recorded_only responses but rejects a false inconclusive transition', async () => {

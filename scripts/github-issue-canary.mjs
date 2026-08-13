@@ -304,6 +304,7 @@ export async function observeCanaryDelivery({
   expectedSha,
   result,
   attempted,
+  feedbackPostObserved,
   expectedLabels,
   expectedAuthor,
   consistencyAttempts = DEFAULT_CONSISTENCY_ATTEMPTS,
@@ -315,7 +316,9 @@ export async function observeCanaryDelivery({
   observedAt = new Date(),
 }) {
   const timestamp = observedAt.toISOString();
-  if (!attempted) return deliveryEvidence('inconclusive', 'browser_inconclusive', timestamp);
+  if (!attempted || !feedbackPostObserved) {
+    return deliveryEvidence('inconclusive', 'browser_inconclusive', timestamp);
+  }
   const target = validateCanarySelector({
     profile,
     repo,
@@ -329,6 +332,17 @@ export async function observeCanaryDelivery({
     consistencyDelayMs,
     sleepImpl,
   });
+  const referenceFailures = [];
+  validateBrowserResultReference({
+    failures: referenceFailures,
+    result,
+    marker,
+    expectedSha,
+    repo,
+  });
+  if (referenceFailures.length > 0) {
+    return deliveryEvidence('inconclusive', 'browser_inconclusive', timestamp);
+  }
   try {
     const matches = await waitForStableEvidenceMatches({
       fetchImpl,
@@ -344,17 +358,6 @@ export async function observeCanaryDelivery({
     if (matches.length === 0) return deliveryEvidence('delivery_failed', 'issue_absent', timestamp);
     if (matches.length > 1) {
       return deliveryEvidence('delivery_failed', 'issue_duplicate', timestamp);
-    }
-    const referenceFailures = [];
-    validateBrowserResultReference({
-      failures: referenceFailures,
-      result,
-      marker,
-      expectedSha,
-      repo,
-    });
-    if (referenceFailures.length > 0) {
-      return deliveryEvidence('inconclusive', 'browser_inconclusive', timestamp);
     }
     try {
       await verifyCanaryIssue({
@@ -440,15 +443,23 @@ export async function runCli(
       requireNonempty(options.marker, '--marker');
       requireNonempty(options.resultFile, '--result-file');
       requireNonempty(options.attemptFile, '--attempt-file');
+      requireNonempty(options.postEvidenceFile, '--post-evidence-file');
       requireNonempty(options.evidenceFile, '--evidence-file');
       requireNonempty(options.expectedSha, '--expected-sha');
       let result;
       let attempted = false;
+      let feedbackPostObserved = false;
       try {
         await readFileImpl(options.attemptFile, 'utf8');
         attempted = true;
       } catch {
         attempted = false;
+      }
+      try {
+        await readFileImpl(options.postEvidenceFile, 'utf8');
+        feedbackPostObserved = true;
+      } catch {
+        feedbackPostObserved = false;
       }
       try {
         result = JSON.parse(await readFileImpl(options.resultFile, 'utf8'));
@@ -463,6 +474,7 @@ export async function runCli(
         expectedSha: options.expectedSha,
         result,
         attempted,
+        feedbackPostObserved,
         profile: selector.profile.id,
         consistencyAttempts,
         consistencyDelayMs,
@@ -965,6 +977,7 @@ function parseCliArguments(argv) {
     '--prefix': 'prefix',
     '--result-file': 'resultFile',
     '--attempt-file': 'attemptFile',
+    '--post-evidence-file': 'postEvidenceFile',
     '--evidence-file': 'evidenceFile',
     '--expected-sha': 'expectedSha',
     '--profile': 'profile',

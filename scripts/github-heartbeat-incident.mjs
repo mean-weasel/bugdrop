@@ -7,6 +7,25 @@ export const INCIDENT_TITLE = '[BugDrop production heartbeat] Incident';
 
 const API_BASE = 'https://api.github.com';
 const GITHUB_GET_RETRY_DELAYS_MS = [1_000, 2_000];
+const REASON_CODES = {
+  failure: new Set(['issue_absent', 'issue_duplicate', 'issue_contract_invalid']),
+  recovery: new Set(['issue_verified']),
+  inconclusive: new Set([
+    'setup_failed',
+    'identity_failed',
+    'venue_failed',
+    'browser_inconclusive',
+    'github_network',
+    'github_5xx',
+    'github_rate_limited',
+    'github_auth_failed',
+    'cleanup_failed',
+    'sweep_failed',
+    'artifact_failed',
+    'incident_failed',
+    'classification_failed',
+  ]),
+};
 
 class GitHubRequestError extends Error {
   constructor(category, message, { retryable = false } = {}) {
@@ -32,7 +51,6 @@ export async function transitionHeartbeatIncident({
   if (!['failure', 'recovery', 'inconclusive'].includes(outcome)) {
     throw new Error('outcome must be failure, recovery, or inconclusive');
   }
-  if (outcome === 'inconclusive') return { action: 'none', state: 'unchanged' };
   const body = incidentComment({ outcome, runUrl, details, reasonCode });
   let matches = await listIncidents({ fetchImpl, token, apiBaseUrl, repo, retrySleepImpl });
   if (matches.length > 1) {
@@ -40,7 +58,7 @@ export async function transitionHeartbeatIncident({
   }
   let incident = matches[0];
 
-  if (outcome === 'failure' && !incident) {
+  if ((outcome === 'failure' || outcome === 'inconclusive') && !incident) {
     incident = await mutateAndReconcile({
       mutate: () =>
         requestJson({
@@ -61,7 +79,26 @@ export async function transitionHeartbeatIncident({
   }
   if (!incident) return { action: 'none', state: 'absent' };
 
-  if (outcome === 'failure' && incident.state === 'closed') {
+  if (
+    outcome === 'inconclusive' &&
+    incident.state === 'open' &&
+    isConfirmedFailureIncident(incident)
+  ) {
+    await addComment({
+      fetchImpl,
+      token,
+      apiBaseUrl,
+      repo,
+      number: incident.number,
+      body,
+      retrySleepImpl,
+    });
+    return { action: 'updated', issueNumber: incident.number, state: incident.state };
+  }
+
+  if ((outcome === 'failure' || outcome === 'inconclusive') && incident.state === 'closed') {
+    const transitionBody =
+      outcome === 'inconclusive' || !isConfirmedFailureIncident(incident) ? body : undefined;
     incident = await setIssueState({
       fetchImpl,
       token,
@@ -69,6 +106,7 @@ export async function transitionHeartbeatIncident({
       repo,
       number: incident.number,
       state: 'open',
+      body: transitionBody,
       retrySleepImpl,
     });
     await addComment({
@@ -83,6 +121,29 @@ export async function transitionHeartbeatIncident({
     return { action: 'reopened', issueNumber: incident.number, state: incident.state };
   }
   if (outcome === 'failure') {
+    if (!isConfirmedFailureIncident(incident)) {
+      incident = await setIssueBody({
+        fetchImpl,
+        token,
+        apiBaseUrl,
+        repo,
+        number: incident.number,
+        body,
+        retrySleepImpl,
+      });
+    }
+    await addComment({
+      fetchImpl,
+      token,
+      apiBaseUrl,
+      repo,
+      number: incident.number,
+      body,
+      retrySleepImpl,
+    });
+    return { action: 'updated', issueNumber: incident.number, state: incident.state };
+  }
+  if (outcome === 'inconclusive') {
     await addComment({
       fetchImpl,
       token,
@@ -186,6 +247,7 @@ async function setIssueState({
   repo,
   number,
   state,
+  body,
   retrySleepImpl,
 }) {
   return mutateAndReconcile({
@@ -196,7 +258,11 @@ async function setIssueState({
         url: issueUrl(apiBaseUrl, repo, number),
         retrySleepImpl,
         method: 'PATCH',
-        body: { state, ...(state === 'closed' ? { state_reason: 'completed' } : {}) },
+        body: {
+          state,
+          ...(state === 'closed' ? { state_reason: 'completed' } : {}),
+          ...(body ? { body } : {}),
+        },
       }),
     reconcile: async () => {
       const { data } = await requestJson({
@@ -204,10 +270,34 @@ async function setIssueState({
         token,
         url: issueUrl(apiBaseUrl, repo, number),
       });
-      return data?.state === state ? data : undefined;
+      return data?.state === state && (!body || data?.body === body) ? data : undefined;
     },
     token,
     operation: `${state} incident`,
+  });
+}
+
+async function setIssueBody({ fetchImpl, token, apiBaseUrl, repo, number, body, retrySleepImpl }) {
+  return mutateAndReconcile({
+    mutate: () =>
+      requestJson({
+        fetchImpl,
+        token,
+        url: issueUrl(apiBaseUrl, repo, number),
+        method: 'PATCH',
+        body: { body },
+      }),
+    reconcile: async () => {
+      const { data } = await requestJson({
+        fetchImpl,
+        token,
+        url: issueUrl(apiBaseUrl, repo, number),
+        retrySleepImpl,
+      });
+      return data?.body === body ? data : undefined;
+    },
+    token,
+    operation: 'classify incident',
   });
 }
 
@@ -322,7 +412,7 @@ function sleep(delayMs) {
 
 function incidentComment({ outcome, runUrl, details, reasonCode }) {
   if (reasonCode) {
-    return `Production heartbeat ${outcome}. Classification: ${requireReasonCode(reasonCode)}.`;
+    return `Production heartbeat ${outcome}. Classification: ${requireReasonCode(reasonCode, outcome)}.`;
   }
   const safeRunUrl = requireText(runUrl, 'runUrl');
   const safeDetails = requireText(details, 'details');
@@ -335,15 +425,15 @@ function incidentComment({ outcome, runUrl, details, reasonCode }) {
   ].join('\n');
 }
 
-function requireReasonCode(value) {
-  const allowed = new Set([
-    'issue_verified',
-    'issue_absent',
-    'issue_duplicate',
-    'issue_contract_invalid',
-  ]);
-  if (!allowed.has(value)) throw new Error('invalid heartbeat reason code');
+function requireReasonCode(value, outcome) {
+  if (!REASON_CODES[outcome]?.has(value)) throw new Error('invalid heartbeat reason code');
   return value;
+}
+
+function isConfirmedFailureIncident(incident) {
+  return (
+    typeof incident?.body === 'string' && incident.body.startsWith('Production heartbeat failure.')
+  );
 }
 
 function issuesUrl(apiBaseUrl, repo) {

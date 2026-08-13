@@ -516,6 +516,7 @@ describe('sanitized authoritative delivery evidence', () => {
       expectedSha: SHA,
       result: result(),
       attempted: true,
+      feedbackPostObserved: true,
       consistencyAttempts: 2,
       consistencyDelayMs: 0,
       sleepImpl: noWait,
@@ -555,6 +556,31 @@ describe('sanitized authoritative delivery evidence', () => {
       reasonCode: 'browser_inconclusive',
     });
     await expect(observe(issueFetch([issue()]), { result: undefined })).resolves.toMatchObject({
+      outcome: 'inconclusive',
+      reasonCode: 'browser_inconclusive',
+    });
+    await expect(
+      observe(issueFetch([]), { result: undefined, feedbackPostObserved: false })
+    ).resolves.toMatchObject({
+      outcome: 'inconclusive',
+      reasonCode: 'browser_inconclusive',
+    });
+    await expect(
+      observe(issueFetch([]), { result: undefined, feedbackPostObserved: true })
+    ).resolves.toMatchObject({
+      outcome: 'inconclusive',
+      reasonCode: 'browser_inconclusive',
+    });
+    await expect(
+      observe(issueFetch([]), {
+        result: result({ workerSha: 'b'.repeat(40) }),
+        feedbackPostObserved: true,
+      })
+    ).resolves.toMatchObject({
+      outcome: 'inconclusive',
+      reasonCode: 'browser_inconclusive',
+    });
+    await expect(observe(issueFetch([]), { feedbackPostObserved: false })).resolves.toMatchObject({
       outcome: 'inconclusive',
       reasonCode: 'browser_inconclusive',
     });

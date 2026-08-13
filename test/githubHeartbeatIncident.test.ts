@@ -18,11 +18,15 @@ function response(value: unknown, init: ResponseInit = {}): Response {
   });
 }
 
-function incident(state: 'open' | 'closed' = 'open', number = 7) {
-  return { number, title: INCIDENT_TITLE, state };
+function incident(
+  state: 'open' | 'closed' = 'open',
+  number = 7,
+  body = 'Production heartbeat failure. Classification: issue_absent.'
+) {
+  return { number, title: INCIDENT_TITLE, state, body };
 }
 
-function transition(fetchImpl: typeof fetch, outcome: 'failure' | 'recovery') {
+function transition(fetchImpl: typeof fetch, outcome: 'failure' | 'recovery' | 'inconclusive') {
   return transitionHeartbeatIncident({
     fetchImpl,
     token: TOKEN,
@@ -115,17 +119,104 @@ describe('heartbeat incident discovery', () => {
 });
 
 describe('heartbeat incident lifecycle', () => {
-  it('does not read or mutate the stable incident for an inconclusive outcome', async () => {
-    const fetchImpl = vi.fn<typeof fetch>();
+  it('creates, comments, and reopens a sanitized inconclusive incident', async () => {
+    const body = 'Production heartbeat inconclusive. Classification: github_network.';
+    const created = incident('open', 7, body);
+    const createFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response([]))
+      .mockResolvedValueOnce(response(created));
+    await expect(
+      transitionHeartbeatIncident({
+        fetchImpl: createFetch,
+        token: TOKEN,
+        outcome: 'inconclusive',
+        reasonCode: 'github_network',
+      })
+    ).resolves.toMatchObject({ action: 'created' });
+    expect(JSON.parse(String(createFetch.mock.calls[1][1]?.body))).toEqual({
+      title: INCIDENT_TITLE,
+      body,
+    });
+
+    const updateFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response([created]))
+      .mockResolvedValueOnce(response({ id: 99 }));
+    await expect(
+      transitionHeartbeatIncident({
+        fetchImpl: updateFetch,
+        token: TOKEN,
+        outcome: 'inconclusive',
+        reasonCode: 'github_network',
+      })
+    ).resolves.toMatchObject({ action: 'updated' });
+
+    const closed = incident('closed', 7, body);
+    const reopenFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response([closed]))
+      .mockResolvedValueOnce(response(created))
+      .mockResolvedValueOnce(response({ id: 100 }));
+    await expect(
+      transitionHeartbeatIncident({
+        fetchImpl: reopenFetch,
+        token: TOKEN,
+        outcome: 'inconclusive',
+        reasonCode: 'github_network',
+      })
+    ).resolves.toMatchObject({ action: 'reopened' });
+    expect(JSON.parse(String(reopenFetch.mock.calls[1][1]?.body))).toEqual({
+      state: 'open',
+      body,
+    });
+  });
+
+  it('comments without closing or relabeling an active confirmed failure as inconclusive', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response([incident()]))
+      .mockResolvedValueOnce(response({ id: 101 }));
     await expect(
       transitionHeartbeatIncident({
         fetchImpl,
         token: TOKEN,
         outcome: 'inconclusive',
-        reasonCode: 'github_network',
+        reasonCode: 'cleanup_failed',
       })
-    ).resolves.toEqual({ action: 'none', state: 'unchanged' });
-    expect(fetchImpl).not.toHaveBeenCalled();
+    ).resolves.toMatchObject({ action: 'updated', state: 'open' });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls.some(call => call[1]?.method === 'PATCH')).toBe(false);
+    expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body))).toEqual({
+      body: 'Production heartbeat inconclusive. Classification: cleanup_failed.',
+    });
+  });
+
+  it('promotes an open inconclusive incident to confirmed failure before commenting', async () => {
+    const confirmedBody = 'Production heartbeat failure. Classification: issue_absent.';
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        response([
+          incident(
+            'open',
+            7,
+            'Production heartbeat inconclusive. Classification: browser_inconclusive.'
+          ),
+        ])
+      )
+      .mockResolvedValueOnce(response(incident('open', 7, confirmedBody)))
+      .mockResolvedValueOnce(response({ id: 102 }));
+    await expect(
+      transitionHeartbeatIncident({
+        fetchImpl,
+        token: TOKEN,
+        outcome: 'failure',
+        reasonCode: 'issue_absent',
+      })
+    ).resolves.toMatchObject({ action: 'updated', state: 'open' });
+    expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body))).toEqual({ body: confirmedBody });
+    expect(JSON.parse(String(fetchImpl.mock.calls[2][1]?.body))).toEqual({ body: confirmedBody });
   });
 
   it('creates on first failure and comments on recurrence', async () => {

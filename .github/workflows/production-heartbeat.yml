@@ -117,6 +117,7 @@ jobs:
           echo "BUGDROP_CANARY_MARKER=bugdrop-production-heartbeat:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${worker_sha}" >> "$GITHUB_ENV"
           echo "BUGDROP_CANARY_RESULT_FILE=$RUNNER_TEMP/production-heartbeat-result.json" >> "$GITHUB_ENV"
           echo "BUGDROP_CANARY_ATTEMPT_FILE=$RUNNER_TEMP/production-heartbeat-attempt" >> "$GITHUB_ENV"
+          echo "BUGDROP_CANARY_POST_EVIDENCE_FILE=$RUNNER_TEMP/production-heartbeat-post-evidence" >> "$GITHUB_ENV"
           echo "BUGDROP_CANARY_EVIDENCE_FILE=$RUNNER_TEMP/production-heartbeat-evidence.json" >> "$GITHUB_ENV"
           echo "LIVE_TARGET=production" >> "$GITHUB_ENV"
 
@@ -185,6 +186,7 @@ jobs:
           --expected-sha "$EXPECTED_WORKER_SHA"
           --result-file "$BUGDROP_CANARY_RESULT_FILE"
           --attempt-file "$BUGDROP_CANARY_ATTEMPT_FILE"
+          --post-evidence-file "$BUGDROP_CANARY_POST_EVIDENCE_FILE"
           --evidence-file "$BUGDROP_CANARY_EVIDENCE_FILE"
           > /dev/null
         env:
@@ -348,13 +350,16 @@ jobs:
           BUGDROP_HEARTBEAT_INCIDENT_REPO: ${{ github.repository }}
         run: |
           outcome=inconclusive
+          reason="${EVIDENCE_REASON:-classification_failed}"
           if [ "$EVIDENCE_OUTCOME" = delivery_failed ]; then
             outcome=failure
           elif [ "$EVIDENCE_OUTCOME" = verified ] && [ "$HEARTBEAT_OK" = true ] && [ "$SUMMARIZE_OUTCOME" = success ] && [ "$ARTIFACT_PREPARE_OUTCOME" = success ] && [ "$ARTIFACT_OUTCOME" = success ]; then
             outcome=recovery
+          elif [ "$EVIDENCE_OUTCOME" = verified ]; then
+            reason=classification_failed
           fi
           node scripts/github-heartbeat-incident.mjs "$outcome" \
-            --reason-code "$EVIDENCE_REASON" > /dev/null
+            --reason-code "$reason" > /dev/null
           echo "transition=$outcome" >> "$GITHUB_OUTPUT"
 
   conclusion:

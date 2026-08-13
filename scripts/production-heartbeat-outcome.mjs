@@ -23,7 +23,8 @@ const REASON_CODES = {
   ]),
 };
 
-const SETUP_STAGES = ['checkout', 'node', 'install', 'config', 'browser', 'preflight'];
+const SETUP_STAGES = ['checkout', 'node', 'install', 'config', 'browser'];
+const RECEIVER_RETRY_DELAYS_MS = [1_000, 2_000];
 
 export function classifyHeartbeatOutcome({
   evidence,
@@ -41,6 +42,8 @@ export function classifyHeartbeatOutcome({
     reasonCode = 'identity_failed';
   } else if (!reasonCode && stages?.venue !== 'success') {
     reasonCode = 'venue_failed';
+  } else if (!reasonCode && stages?.preflight !== 'success') {
+    reasonCode = 'cleanup_failed';
   } else if (
     evidence?.outcome === 'inconclusive' &&
     REASON_CODES.inconclusive.has(evidence.reasonCode)
@@ -70,46 +73,63 @@ export async function sendHeartbeatOutcome({
   secret,
   heartbeatId,
   report,
+  retrySleepImpl = sleep,
 }) {
   requireNonempty(endpoint, 'endpoint');
   requireNonempty(secret, 'secret');
   requireNonempty(heartbeatId, 'heartbeatId');
   validateOutcome(report);
 
-  const response = await fetchImpl(endpoint, {
+  const body = JSON.stringify(report);
+  const request = {
     method: 'POST',
-    redirect: 'error',
+    redirect: 'manual',
     headers: {
       Authorization: `Bearer ${secret}`,
       'Content-Type': 'application/json',
       'X-BugDrop-Heartbeat-Id': heartbeatId,
     },
-    body: JSON.stringify(report),
-    signal: AbortSignal.timeout(10_000),
-  });
+    body,
+  };
+  let response;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      response = await fetchImpl(endpoint, {
+        ...request,
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      if (attempt === 2) throw new Error('heartbeat_receiver_network');
+      await retrySleepImpl(RECEIVER_RETRY_DELAYS_MS[attempt]);
+      continue;
+    }
+    if (![500, 502, 503, 504].includes(response.status) || attempt === 2) break;
+    await retrySleepImpl(RECEIVER_RETRY_DELAYS_MS[attempt]);
+  }
   if (response.status !== 200) throw new Error(`heartbeat_receiver_http_${response.status}`);
   if (response.headers.get('cache-control')?.toLowerCase() !== 'no-store') {
     throw new Error('heartbeat_receiver_cache_invalid');
   }
-  let body;
+  let responseBody;
   try {
-    body = await response.json();
+    responseBody = await response.json();
   } catch {
     throw new Error('heartbeat_receiver_response_invalid');
   }
-  const keys = body && typeof body === 'object' ? Object.keys(body).sort() : [];
+  const keys =
+    responseBody && typeof responseBody === 'object' ? Object.keys(responseBody).sort() : [];
   if (
     keys.join(',') !== 'accepted,duplicate,effect,observedAt,outcome,schemaVersion' ||
-    body.schemaVersion !== 1 ||
-    body.accepted !== true ||
-    typeof body.duplicate !== 'boolean' ||
-    body.outcome !== report.outcome ||
-    body.observedAt !== report.observedAt ||
-    !validEffect(report.outcome, body.effect)
+    responseBody.schemaVersion !== 1 ||
+    responseBody.accepted !== true ||
+    typeof responseBody.duplicate !== 'boolean' ||
+    responseBody.outcome !== report.outcome ||
+    responseBody.observedAt !== report.observedAt ||
+    !validEffect(report.outcome, responseBody.effect)
   ) {
     throw new Error('heartbeat_receiver_response_invalid');
   }
-  return body;
+  return responseBody;
 }
 
 export function outcome(outcomeName, reasonCode, observedAt) {
@@ -176,6 +196,10 @@ function canonicalTime(value) {
 function requireNonempty(value, name) {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`${name}_missing`);
   return value.trim();
+}
+
+function sleep(delayMs) {
+  return new Promise(resolve => setTimeout(resolve, delayMs));
 }
 
 function stagesFromEnvironment(environment) {
