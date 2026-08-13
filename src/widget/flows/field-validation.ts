@@ -29,7 +29,7 @@ export function isAllowedFlowAttachmentType(value: string): boolean {
   return ALLOWED_ATTACHMENT_TYPES.has(value);
 }
 
-export interface NormalizedFlowOpenOptions {
+interface NormalizedFlowOpenOptions {
   context: Readonly<Record<string, FlowScalar>>;
   initialAnswers: Record<string, unknown>;
 }

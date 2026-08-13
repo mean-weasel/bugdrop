@@ -27,12 +27,10 @@ function host(page: Page) {
 }
 
 async function prepareContext(context: BrowserContext, runner: Runner, captureHook?: string) {
-  if (runner === 'private') {
-    await context.addInitScript(() => {
-      (window as unknown as { __bugdropDefaultFlowRuntime?: string }).__bugdropDefaultFlowRuntime =
-        'private';
-    });
-  }
+  await context.addInitScript(selected => {
+    (window as unknown as { __bugdropDefaultFlowRuntime?: string }).__bugdropDefaultFlowRuntime =
+      selected;
+  }, runner);
   if (captureHook) await context.addInitScript({ content: captureHook });
 }
 
@@ -83,9 +81,9 @@ async function expectPairedJourney(
   captureHook?: string
 ): Promise<JourneyResult> {
   const fixed = await runJourney(browser, 'fixed', journey, captureHook);
-  const privateRuntime = await runJourney(browser, 'private', journey, captureHook);
-  expect(privateRuntime.trace).toEqual(fixed.trace);
-  expect(privateRuntime.requests).toEqual(fixed.requests);
+  const flowRuntime = await runJourney(browser, 'private', journey, captureHook);
+  expect(flowRuntime.trace).toEqual(fixed.trace);
+  expect(flowRuntime.requests).toEqual(fixed.requests);
   return fixed;
 }
 

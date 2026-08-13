@@ -77,24 +77,24 @@ afterEach(async () => {
 });
 
 describe('internal default-flow build selector', () => {
-  it('defaults to fixed and restores byte-identical fixed output after a private build', async () => {
-    const fixedBefore = await build(undefined, 'fixed-before');
-    const privateBuild = await build('private', 'private');
+  it('defaults to flow and restores byte-identical fixed rollback output', async () => {
+    const fixedBefore = await build('fixed', 'fixed-before');
+    const flowBuild = await build(undefined, 'flow');
     const fixedAfter = await build('fixed', 'fixed-after');
 
     expect(fixedAfter.files).toEqual(fixedBefore.files);
-    expect(privateBuild.files['widget.js']).not.toEqual(fixedBefore.files['widget.js']);
+    expect(flowBuild.files['widget.js']).not.toEqual(fixedBefore.files['widget.js']);
 
     const fixedSource = fixedBefore.files['widget.js'].toString('utf8');
-    const privateSource = privateBuild.files['widget.js'].toString('utf8');
-    for (const source of [fixedSource, privateSource]) {
+    const flowSource = flowBuild.files['widget.js'].toString('utf8');
+    for (const source of [fixedSource, flowSource]) {
       expect(source).not.toContain('__bugdropDefaultFlowRuntime');
       expect(source).not.toContain('__bugdropMockToPng');
       expect(source).toContain('registerFlow');
       expect(source).not.toContain('FlowConfig');
     }
     expect(fixedSource).not.toContain('bugdrop-default@1');
-    expect(privateSource).toContain('bugdrop-default@1');
+    expect(flowSource).toContain('bugdrop-flow@1');
   }, 20_000);
 
   it('rejects unsupported selector values', () => {

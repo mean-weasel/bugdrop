@@ -1098,10 +1098,11 @@ async function openFeedbackFlow(
   // Mark modal as open
   _isModalOpen = true;
 
-  if (
-    __BUGDROP_DEFAULT_FLOW_RUNTIME__ === 'private' ||
-    (__BUGDROP_ENABLE_TEST_HOOKS__ && shouldUsePrivateDefaultJourney())
-  ) {
+  const testRuntime = __BUGDROP_ENABLE_TEST_HOOKS__ ? requestedDefaultJourney() : undefined;
+  const useFlowRuntime =
+    testRuntime === 'private' ||
+    (testRuntime !== 'fixed' && __BUGDROP_DEFAULT_FLOW_RUNTIME__ === 'private');
+  if (useFlowRuntime) {
     const outcome = await runPrivateDefaultJourney(root, config, opts);
     if (outcome === 'preflight-blocked') return;
   } else {
@@ -1123,11 +1124,10 @@ async function openFeedbackFlow(
   _isModalOpen = false;
 }
 
-function shouldUsePrivateDefaultJourney(): boolean {
-  return (
-    (window as unknown as { __bugdropDefaultFlowRuntime?: unknown }).__bugdropDefaultFlowRuntime ===
-    'private'
-  );
+function requestedDefaultJourney(): 'fixed' | 'private' | undefined {
+  const value = (window as unknown as { __bugdropDefaultFlowRuntime?: unknown })
+    .__bugdropDefaultFlowRuntime;
+  return value === 'fixed' || value === 'private' ? value : undefined;
 }
 
 async function runFixedDefaultJourney(

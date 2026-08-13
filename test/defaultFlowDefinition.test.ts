@@ -46,6 +46,13 @@ describe('private default definition normalizer', () => {
       );
 
       expect(definition.id).toBe(DEFAULT_DEFINITION_ID);
+      expect(definition.flow.compiler).toBe('bugdrop-flow@1');
+      expect(definition.flow.config.configVersion).toBe(1);
+      expect(definition.flow.screens.map(screen => screen.id)).toEqual([
+        'welcome',
+        'details',
+        'screenshot',
+      ]);
       expect(definition.steps[0]).toEqual({ kind: 'welcome', enabled, remember });
     }
   );
@@ -104,6 +111,7 @@ describe('private default definition normalizer', () => {
     );
 
     expect(Object.isFrozen(definition)).toBe(true);
+    expect(Object.isFrozen(definition.flow.config)).toBe(true);
     expect(Object.isFrozen(definition.steps)).toBe(true);
     expect(definition.steps.every(Object.isFrozen)).toBe(true);
     expect(Object.isFrozen(definition.system)).toBe(true);

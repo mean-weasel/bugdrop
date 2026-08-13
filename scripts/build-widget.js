@@ -16,6 +16,12 @@ import { canonicalize } from './release/canonical-json.mjs';
 import { loadRetentionInput } from './release/retention.mjs';
 
 const CONTROLLER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const FIXED_DEFAULT_BASELINE_SHA = 'bb0f1b50a37867f8351b99f7e712a960836deb3f';
+const FIXED_DEFAULT_BASELINE_FILES = new Set([
+  'src/widget/index.ts',
+  'src/widget/default-flow/definition.ts',
+  'src/widget/default-flow/runtime.ts',
+]);
 const VALUE_OPTIONS = new Set([
   'mode',
   'source-dir',
@@ -47,7 +53,7 @@ Common options:
   --source-dir PATH           Candidate checkout (default: repository root)
   --output-dir PATH           Clean output tree (default: <source>/public)
   --development-id ID         Visible identity for development output
-  --default-flow-runtime ID   Internal default controller: fixed (default) or private
+  --default-flow-runtime ID   Internal default controller: private (default) or fixed rollback
 
 Release options:
   --version MAJOR.MINOR.PATCH  Required planned stable version
@@ -167,6 +173,26 @@ async function bundleCandidate({ sourceDir, version, enableTestHooks, defaultFlo
     logLevel: 'silent',
     minify: true,
     outfile: 'widget.js',
+    plugins:
+      defaultFlowRuntime === 'fixed'
+        ? [
+            {
+              name: 'fixed-default-baseline',
+              setup(build) {
+                build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, args => {
+                  const path = normalized(relative(sourceDir, args.path));
+                  if (!FIXED_DEFAULT_BASELINE_FILES.has(path)) return undefined;
+                  const contents = execFileSync(
+                    'git',
+                    ['-C', CONTROLLER_ROOT, 'show', `${FIXED_DEFAULT_BASELINE_SHA}:${path}`],
+                    { encoding: 'utf8' }
+                  );
+                  return { contents, loader: 'ts' };
+                });
+              },
+            },
+          ]
+        : [],
     write: false,
   });
   if (result.outputFiles.length !== 1) throw new Error('Expected exactly one widget bundle output');
@@ -215,10 +241,10 @@ async function main() {
     options,
     'default-flow-runtime',
     'BUGDROP_DEFAULT_FLOW_RUNTIME',
-    'fixed'
+    'private'
   );
   if (defaultFlowRuntime !== 'fixed' && defaultFlowRuntime !== 'private') {
-    throw new Error('Unsupported default flow runtime: expected fixed or private');
+    throw new Error('Unsupported default flow runtime: expected private or fixed');
   }
 
   if (mode === 'development') {

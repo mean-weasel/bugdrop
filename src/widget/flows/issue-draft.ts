@@ -1,6 +1,6 @@
 import type { FlowConfig, FlowIssueSection, FlowScalar } from './public-types';
 
-export interface FlowIssueDraft {
+interface FlowIssueDraft {
   title: string;
   description: string;
   category: 'bug' | 'feature' | 'question';
