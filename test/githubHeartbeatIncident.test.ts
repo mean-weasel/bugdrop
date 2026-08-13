@@ -18,6 +18,17 @@ function response(value: unknown, init: ResponseInit = {}): Response {
   });
 }
 
+function terminatedResponse(status = 200): Response {
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.error(new TypeError('terminated'));
+      },
+    }),
+    { status }
+  );
+}
+
 function incident(
   state: 'open' | 'closed' = 'open',
   number = 7,
@@ -50,6 +61,32 @@ describe('heartbeat incident discovery', () => {
     );
     expect(fetchImpl).toHaveBeenCalledTimes(3);
     expect(retrySleepImpl.mock.calls).toEqual([[1_000], [2_000]]);
+  });
+
+  it('retries a terminated GET response body on the same URL', async () => {
+    const retrySleepImpl = vi.fn(async () => {});
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(terminatedResponse())
+      .mockResolvedValueOnce(response([incident()]));
+
+    await expect(listIncidents({ fetchImpl, token: TOKEN, retrySleepImpl })).resolves.toHaveLength(
+      1
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(String(fetchImpl.mock.calls[1][0])).toBe(String(fetchImpl.mock.calls[0][0]));
+    expect(retrySleepImpl.mock.calls).toEqual([[1_000]]);
+  });
+
+  it('classifies a terminated 401 response from status without retrying its body', async () => {
+    const retrySleepImpl = vi.fn(async () => {});
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(terminatedResponse(401));
+
+    await expect(listIncidents({ fetchImpl, token: TOKEN, retrySleepImpl })).rejects.toThrow(
+      'github_auth'
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(retrySleepImpl).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -401,6 +438,21 @@ describe('heartbeat incident lifecycle', () => {
       .mockRejectedValueOnce(new Error('response lost'))
       .mockResolvedValueOnce(response([incident()]));
     await expect(transition(fetchImpl, 'failure')).resolves.toMatchObject({ action: 'created' });
+  });
+
+  it('reconciles an accepted create whose response body terminates without repeating the POST', async () => {
+    let created = false;
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      if (init?.method === 'POST') {
+        created = true;
+        return terminatedResponse(201);
+      }
+      return response(created ? [incident()] : []);
+    });
+
+    await expect(transition(fetchImpl, 'failure')).resolves.toMatchObject({ action: 'created' });
+    expect(fetchImpl.mock.calls.filter(call => call[1]?.method === 'POST')).toHaveLength(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
   it('redacts the token on a failed mutation and failed reconciliation', async () => {

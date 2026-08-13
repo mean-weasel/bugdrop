@@ -395,9 +395,18 @@ async function requestJsonOnce({ fetchImpl, token, url, method = 'GET', body }) 
       retryable: method === 'GET',
     });
   }
-  const text = await response.text();
   if (!response.ok) {
     throw githubResponseError(response, method);
+  }
+  let text;
+  try {
+    text = await response.text();
+  } catch {
+    throw new GitHubRequestError(
+      'github_network',
+      `GitHub ${method} response body failed [REDACTED]`,
+      { retryable: method === 'GET' }
+    );
   }
   if (!text) return { response, data: null };
   try {

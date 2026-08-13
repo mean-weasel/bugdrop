@@ -176,7 +176,8 @@ for required in \
   "'X-BugDrop-Heartbeat-Id': heartbeatId" \
   'const delays = [1_000, 2_000]' \
   'for (let attempt = 0; attempt < 3; attempt += 1)' \
-  'if (![500, 502, 503, 504].includes(response.status) || attempt === 2) break' \
+  'if ([500, 502, 503, 504].includes(response.status) && attempt < 2)' \
+  'responseText = await response.text()' \
   "response.headers.get('cache-control')?.toLowerCase() !== 'no-store'" \
   "keys !== 'accepted,duplicate,effect,observedAt,outcome,schemaVersion'"; do
   grep -Fq -- "$required" <<< "$sender_block" || fail "checkout-independent sender missing: $required"
@@ -247,6 +248,46 @@ run_fallback_success verified issue_verified '2026-08-12T12:34:56.789Z' verified
 run_fallback_success delivery_failed issue_absent invalid inconclusive setup_failed
 run_fallback_success __proto__ issue_verified '2026-08-12T12:34:56.789Z' inconclusive setup_failed
 
+{
+  cat <<'NODE'
+const attempts = [];
+globalThis.setTimeout = callback => (queueMicrotask(callback), 0);
+globalThis.fetch = async (endpoint, request) => {
+  attempts.push({ endpoint, request });
+  if (attempts.length === 1) {
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.error(new TypeError('terminated'));
+        },
+      }),
+      { status: 200, headers: { 'cache-control': 'no-store' } }
+    );
+  }
+  const report = JSON.parse(request.body);
+  if (
+    attempts.length !== 2 ||
+    attempts[0].endpoint !== endpoint ||
+    attempts[0].request.body !== request.body ||
+    attempts[0].request.headers['X-BugDrop-Heartbeat-Id'] !==
+      request.headers['X-BugDrop-Heartbeat-Id']
+  ) throw new Error('fallback body retry changed request identity');
+  return Response.json(
+    { schemaVersion: 1, accepted: true, duplicate: true, outcome: report.outcome, effect: 'recorded_only', observedAt: report.observedAt },
+    { headers: { 'cache-control': 'no-store' } }
+  );
+};
+process.on('beforeExit', () => {
+  if (attempts.length !== 2) throw new Error(`expected two attempts, received ${attempts.length}`);
+});
+NODE
+  cat "$fallback_script"
+} > "$fallback_harness"
+MONITOR_HEARTBEAT_SECRET='fallback-secret-redaction-sentinel' HEARTBEAT_ID='123:2' \
+  node "$fallback_harness" 2> "$fallback_error" ||
+  fail 'checkout-independent fallback did not retry a terminated response body'
+test ! -s "$fallback_error" || fail 'successful fallback body retry emitted diagnostics'
+
 run_fallback_rejection() {
   local response_expression=$1
   local expected_attempts=$2
@@ -277,6 +318,7 @@ NODE
 run_fallback_rejection "new Response(null, { status: 302, headers: { location: 'https://example.invalid' } })" 1
 run_fallback_rejection "new Response(null, { status: 400 })" 1
 run_fallback_rejection "Response.json({ schemaVersion: 1 }, { headers: { 'cache-control': 'no-store' } })" 1
+run_fallback_rejection "new Response('not-json', { status: 200, headers: { 'cache-control': 'no-store' } })" 1
 run_fallback_rejection "Response.json({ schemaVersion: 1, accepted: true, duplicate: false, outcome: 'inconclusive', effect: 'recorded_only', observedAt: new Date().toISOString() }, { headers: { 'cache-control': 'max-age=60' } })" 1
 
 {

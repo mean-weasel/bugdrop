@@ -92,6 +92,7 @@ export async function sendHeartbeatOutcome({
     body,
   };
   let response;
+  let responseText;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       response = await fetchImpl(endpoint, {
@@ -103,8 +104,24 @@ export async function sendHeartbeatOutcome({
       await retrySleepImpl(RECEIVER_RETRY_DELAYS_MS[attempt]);
       continue;
     }
-    if (![500, 502, 503, 504].includes(response.status) || attempt === 2) break;
-    await retrySleepImpl(RECEIVER_RETRY_DELAYS_MS[attempt]);
+    if ([500, 502, 503, 504].includes(response.status) && attempt < 2) {
+      await retrySleepImpl(RECEIVER_RETRY_DELAYS_MS[attempt]);
+      continue;
+    }
+    if (
+      response.status !== 200 ||
+      response.headers.get('cache-control')?.toLowerCase() !== 'no-store'
+    ) {
+      break;
+    }
+    try {
+      responseText = await response.text();
+    } catch {
+      if (attempt === 2) throw new Error('heartbeat_receiver_network');
+      await retrySleepImpl(RECEIVER_RETRY_DELAYS_MS[attempt]);
+      continue;
+    }
+    break;
   }
   if (response.status !== 200) throw new Error(`heartbeat_receiver_http_${response.status}`);
   if (response.headers.get('cache-control')?.toLowerCase() !== 'no-store') {
@@ -112,7 +129,7 @@ export async function sendHeartbeatOutcome({
   }
   let responseBody;
   try {
-    responseBody = await response.json();
+    responseBody = JSON.parse(responseText);
   } catch {
     throw new Error('heartbeat_receiver_response_invalid');
   }

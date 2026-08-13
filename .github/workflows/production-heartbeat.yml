@@ -490,6 +490,7 @@ jobs:
             (report.outcome === 'delivery_failed' && effect === 'degraded');
           const main = async () => {
             let response;
+            let responseText;
             for (let attempt = 0; attempt < 3; attempt += 1) {
               try {
                 response = await fetch('https://bugdrop.dev/api/monitor/heartbeat', {
@@ -501,14 +502,33 @@ jobs:
                 await sleep(delays[attempt]);
                 continue;
               }
-              if (![500, 502, 503, 504].includes(response.status) || attempt === 2) break;
-              await sleep(delays[attempt]);
+              if ([500, 502, 503, 504].includes(response.status) && attempt < 2) {
+                await sleep(delays[attempt]);
+                continue;
+              }
+              if (
+                response.status !== 200 ||
+                response.headers.get('cache-control')?.toLowerCase() !== 'no-store'
+              ) break;
+              try {
+                responseText = await response.text();
+              } catch {
+                if (attempt === 2) throw new Error('heartbeat_receiver_network');
+                await sleep(delays[attempt]);
+                continue;
+              }
+              break;
             }
             if (response.status !== 200) throw new Error('heartbeat_receiver_http');
             if (response.headers.get('cache-control')?.toLowerCase() !== 'no-store') {
               throw new Error('heartbeat_receiver_cache_invalid');
             }
-            const responseBody = await response.json();
+            let responseBody;
+            try {
+              responseBody = JSON.parse(responseText);
+            } catch {
+              throw new Error('heartbeat_receiver_response_invalid');
+            }
             const keys = Object.keys(responseBody || {}).sort().join(',');
             if (
               keys !== 'accepted,duplicate,effect,observedAt,outcome,schemaVersion' ||

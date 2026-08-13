@@ -224,6 +224,78 @@ describe('production heartbeat sender', () => {
     expect(requestMaterial[2]).toEqual(requestMaterial[0]);
   });
 
+  it('retries a terminated 200 response body with the identical stable request', async () => {
+    const report = outcome('verified', 'issue_verified', observedAt);
+    const retrySleepImpl = vi.fn(async () => {});
+    const terminated = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.error(new TypeError('terminated'));
+        },
+      }),
+      { status: 200, headers: { 'cache-control': 'no-store' } }
+    );
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(terminated)
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            schemaVersion: 1,
+            accepted: true,
+            duplicate: true,
+            outcome: 'verified',
+            effect: 'recorded_only',
+            observedAt,
+          },
+          { headers: { 'cache-control': 'no-store' } }
+        )
+      );
+
+    await expect(
+      sendHeartbeatOutcome({
+        fetchImpl,
+        endpoint: 'https://bugdrop.dev/api/monitor/heartbeat',
+        secret: 'secret',
+        heartbeatId: '123:1',
+        report,
+        retrySleepImpl,
+      })
+    ).resolves.toMatchObject({ duplicate: true, effect: 'recorded_only' });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(retrySleepImpl.mock.calls).toEqual([[1_000]]);
+    const requestMaterial = fetchImpl.mock.calls.map(([endpoint, request]) => ({
+      endpoint,
+      method: request?.method,
+      redirect: request?.redirect,
+      headers: request?.headers,
+      body: request?.body,
+    }));
+    expect(requestMaterial[1]).toEqual(requestMaterial[0]);
+  });
+
+  it('does not retry a fully received malformed 200 response body', async () => {
+    const retrySleepImpl = vi.fn(async () => {});
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response('not-json', { status: 200, headers: { 'cache-control': 'no-store' } })
+      );
+
+    await expect(
+      sendHeartbeatOutcome({
+        fetchImpl,
+        endpoint: 'https://bugdrop.dev/api/monitor/heartbeat',
+        secret: 'secret',
+        heartbeatId: '123:1',
+        report: outcome('verified', 'issue_verified', observedAt),
+        retrySleepImpl,
+      })
+    ).rejects.toThrow('heartbeat_receiver_response_invalid');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(retrySleepImpl).not.toHaveBeenCalled();
+  });
+
   it.each([400, 401, 409, 429])('does not retry deterministic HTTP %s', async status => {
     const retrySleepImpl = vi.fn(async () => {});
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status }));

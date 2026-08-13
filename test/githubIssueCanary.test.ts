@@ -62,6 +62,17 @@ function jsonResponse(value: unknown, init: ResponseInit = {}): Response {
   });
 }
 
+function terminatedResponse(status = 200): Response {
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.error(new TypeError('terminated'));
+      },
+    }),
+    { status }
+  );
+}
+
 function result(overrides: Record<string, unknown> = {}) {
   return {
     marker: MARKER,
@@ -110,6 +121,32 @@ describe('GitHub Issue canary discovery and verification', () => {
       String(fetchImpl.mock.calls[0][0]),
       String(fetchImpl.mock.calls[0][0]),
     ]);
+  });
+
+  it('retries a terminated GET response body on the same URL', async () => {
+    const retrySleepImpl = vi.fn(async () => {});
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(terminatedResponse())
+      .mockResolvedValueOnce(jsonResponse([issue()]));
+
+    await expect(
+      listMatchingIssues({ fetchImpl, repo: REPO, token: TOKEN, marker: MARKER, retrySleepImpl })
+    ).resolves.toHaveLength(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(String(fetchImpl.mock.calls[1][0])).toBe(String(fetchImpl.mock.calls[0][0]));
+    expect(retrySleepImpl.mock.calls).toEqual([[1_000]]);
+  });
+
+  it('classifies a terminated 401 response from status without retrying its body', async () => {
+    const retrySleepImpl = vi.fn(async () => {});
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(terminatedResponse(401));
+
+    await expect(
+      listMatchingIssues({ fetchImpl, repo: REPO, token: TOKEN, marker: MARKER, retrySleepImpl })
+    ).rejects.toThrow('github_auth');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(retrySleepImpl).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -851,6 +888,29 @@ describe('GitHub Issue canary cleanup', () => {
 
     expect(cleanup.closedNumbers).toEqual([42]);
     expect(listCount).toBe(3);
+  });
+
+  it('reconciles an accepted close whose response body terminates without repeating the PATCH', async () => {
+    const candidate = issue();
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input).includes('/issues?')) return jsonResponse([candidate]);
+      if (init?.method === 'PATCH') {
+        candidate.state = 'closed';
+        return terminatedResponse();
+      }
+      return jsonResponse(candidate);
+    });
+
+    await expect(
+      closeMatchingIssues({
+        fetchImpl,
+        repo: REPO,
+        token: TOKEN,
+        marker: MARKER,
+        sleepImpl: noWait,
+      })
+    ).resolves.toMatchObject({ closedNumbers: [42], openNumbers: [] });
+    expect(fetchImpl.mock.calls.filter(call => call[1]?.method === 'PATCH')).toHaveLength(1);
   });
 
   it('retries an ambiguous close once only after readback proves the Issue is still open', async () => {
