@@ -3,7 +3,7 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-ci_workflow="$repo_root/.github/workflows/ci.yml"
+ci_workflow=${CI_WORKFLOW_UNDER_TEST:-"$repo_root/.github/workflows/ci.yml"}
 coverage_config="$repo_root/vitest.config.ts"
 codecov_config="$repo_root/codecov.yml"
 playwright_config="$repo_root/playwright.config.ts"
@@ -47,6 +47,54 @@ job_block() {
     found && $0 ~ /^  [[:alnum:]_-]+:$/ && $0 != "  " job ":" { exit }
     found { print }
   ' "$file"
+}
+
+step_block() {
+  local file=$1
+  local name=$2
+  awk -v name="$name" '
+    $0 == "      - name: " name { found = 1 }
+    found && $0 ~ /^      - (name:|uses:)/ && $0 != "      - name: " name { exit }
+    found { print }
+  ' "$file"
+}
+
+require_count() {
+  local text=$1
+  local value=$2
+  local expected=$3
+  local label=$4
+  [[ $(grep -Fc -- "$value" <<< "$text") -eq $expected ]] ||
+    fail "$label must contain exactly $expected occurrence(s) of: $value"
+}
+
+require_paired_lane() {
+  local name=$1
+  local fixture=$2
+  local digest=$3
+  local command=$4
+  local block
+  block=$(step_block "$ci_workflow" "$name")
+  [[ -n "$block" ]] || fail "paired preview lane is missing: $name"
+  require_count "$block" "EXACT_WIDGET_FIXTURE_PATH=\"\$$fixture\"" 1 "$name"
+  require_count "$block" "EXPECTED_WIDGET_SHA256=\"\$$digest\"" 1 "$name"
+  require_count "$block" "$command" 1 "$name"
+  if [[ $fixture == EXACT_WIDGET_FIXTURE_PATH ]] &&
+    grep -Fq 'EXACT_CLASSIC_WIDGET_FIXTURE_PATH' <<< "$block"; then
+    fail "$name cross-pairs candidate execution with the classic fixture"
+  fi
+  if [[ $digest == EXPECTED_WIDGET_SHA256 ]] &&
+    grep -Fq 'EXPECTED_CLASSIC_WIDGET_SHA256' <<< "$block"; then
+    fail "$name cross-pairs candidate execution with the classic hash"
+  fi
+  if [[ $fixture == EXACT_CLASSIC_WIDGET_FIXTURE_PATH ]] &&
+    grep -Fq 'EXACT_WIDGET_FIXTURE_PATH="$EXACT_WIDGET_FIXTURE_PATH"' <<< "$block"; then
+    fail "$name cross-pairs classic execution with the candidate fixture"
+  fi
+  if [[ $digest == EXPECTED_CLASSIC_WIDGET_SHA256 ]] &&
+    grep -Fq 'EXPECTED_WIDGET_SHA256="$EXPECTED_WIDGET_SHA256"' <<< "$block"; then
+    fail "$name cross-pairs classic execution with the candidate hash"
+  fi
 }
 
 # GitHub renders matrix expressions; match required contexts literally.
@@ -288,10 +336,18 @@ grep -Fq "if: github.event_name == 'merge_group'" <<< "$critical" ||
 grep -Fq 'group: bugdrop-shared-preview' <<< "$critical" || fail 'shared preview lock is missing'
 grep -Fq 'cancel-in-progress: false' <<< "$critical" || fail 'active preview runs may be cancelled'
 grep -Fq 'queue: max' <<< "$critical" || fail 'pending merge groups may be dropped'
-grep -Fq 'BUGDROP_BUILD_MODE=development' <<< "$critical" ||
-  fail 'preview widget build does not declare development mode'
-grep -Fq 'BUGDROP_DEVELOPMENT_ID="merge-group-${GITHUB_SHA}"' <<< "$critical" ||
-  fail 'preview widget build lacks an explicit merge-group identity'
+require_count "$critical" 'name: Build normal flow-controller preview widget and application' 1 \
+  'normal flow-controller build'
+require_count "$critical" 'name: Build classic fixed-controller preview widget' 1 \
+  'classic fixed-controller build'
+require_count "$critical" 'BUGDROP_BUILD_MODE=development' 1 'normal flow-controller build'
+require_count "$critical" 'make build-all' 1 'normal flow-controller build command'
+require_count "$critical" 'node scripts/build-widget.js' 1 'classic fixed-controller build command'
+require_count "$critical" 'BUGDROP_DEVELOPMENT_ID="merge-group-${GITHUB_SHA}-candidate"' 1 \
+  'normal flow-controller identity'
+require_count "$critical" '--development-id "merge-group-${GITHUB_SHA}-classic"' 1 \
+  'classic fixed-controller identity'
+require_count "$critical" '--default-flow-runtime fixed' 1 'classic fixed-controller selection'
 if grep -Fq 'git describe' <<< "$critical"; then
   fail 'preview widget identity must not be inferred from repository tags'
 fi
@@ -316,6 +372,27 @@ grep -Fq 'ENVIRONMENT" = "preview"' <<< "$critical" ||
   fail 'health polling does not require the preview environment'
 grep -Fq 'BUILD_SHA" = "$GITHUB_SHA"' <<< "$critical" ||
   fail 'health polling does not require the exact full SHA'
+for identity_check in \
+  '[[ "$CANDIDATE_SHA256" =~ ^[a-f0-9]{64}$ ]]' \
+  '[[ "$CLASSIC_SHA256" =~ ^[a-f0-9]{64}$ ]]' \
+  '[ "$CANDIDATE_SHA256" != "$CLASSIC_SHA256" ]' \
+  'development:merge-group-${GITHUB_SHA}-candidate' \
+  'development:merge-group-${GITHUB_SHA}-classic' \
+  "grep -Fq 'bugdrop-flow@1' public/widget.js" \
+  "grep -Fq 'bugdrop-flow@1' public/widget.classic.js" \
+  "grep -Fq 'bugdrop-default@1' public/widget.js" \
+  "if grep -Fq 'bugdrop-default@1' public/widget.classic.js"; do
+  grep -Fq "$identity_check" <<< "$critical" ||
+    fail "dual-controller identity check is missing: $identity_check"
+done
+require_count "$critical" "grep -Fq 'bugdrop-flow@1' public/widget.js" 1 \
+  'candidate public compiler identity'
+require_count "$critical" "grep -Fq 'bugdrop-flow@1' public/widget.classic.js" 1 \
+  'classic public compiler identity'
+require_count "$critical" "grep -Fq 'bugdrop-default@1' public/widget.js" 1 \
+  'candidate built-in controller identity'
+require_count "$critical" "if grep -Fq 'bugdrop-default@1' public/widget.classic.js" 1 \
+  'classic built-in controller exclusion'
 grep -Fq 'EXPECTED_WIDGET_SHA256=' <<< "$critical" || fail 'checkout widget hash is not recorded'
 grep -Fq 'ACTUAL_SHA" = "$EXPECTED_WIDGET_SHA256"' <<< "$critical" ||
   fail 'deployed widget bytes are not polled to an exact hash match'
@@ -331,18 +408,83 @@ grep -Fq 'mv "$CANDIDATE_PATH" "$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"' <<< "$criti
   fail 'the verified classic widget is not retained as the exact browser fixture'
 grep -Fq 'public/widget.classic.js' <<< "$critical" ||
   fail 'the classic preview widget is not staged for deployment'
-grep -Fq 'BUGDROP_DEFAULT_FLOW_RUNTIME=fixed' <<< "$critical" ||
-  fail 'the classic preview widget is not built with the fixed controller'
-[[ $(grep -Fc 'EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"' <<< "$critical") -eq 6 ]] ||
-  fail 'every legacy preview browser lane must use the classic widget fixture'
-flow_live_step=$(sed -n \
-  '/- name: Run composable FlowConfig live E2E tests/,/- name: Run classic live Radix E2E tests/p' \
-  <<< "$critical")
-grep -Fq 'npx playwright test --project=chromium-flow-live --workers=1 --retries=0' <<< "$flow_live_step" ||
-  fail 'the composable-flow preview lane is missing'
-if grep -Fq 'EXACT_CLASSIC_WIDGET_FIXTURE_PATH' <<< "$flow_live_step"; then
-  fail 'the composable-flow preview lane must not use the classic widget fixture'
+candidate_poll=$(step_block "$ci_workflow" 'Wait for exact preview widget asset')
+classic_poll=$(step_block "$ci_workflow" 'Wait for exact classic preview widget asset')
+for polling_check in \
+  'WIDGET_URL="$EXPECTED_WIDGET_ORIGIN/widget.js"' \
+  'ACTUAL_SHA" = "$EXPECTED_WIDGET_SHA256"' \
+  'mv "$CANDIDATE_PATH" "$EXACT_WIDGET_FIXTURE_PATH"'; do
+  grep -Fq "$polling_check" <<< "$candidate_poll" ||
+    fail "candidate polling is missing: $polling_check"
+done
+for polling_check in \
+  'WIDGET_URL="$EXPECTED_WIDGET_ORIGIN/widget.classic.js"' \
+  'ACTUAL_SHA" = "$EXPECTED_CLASSIC_WIDGET_SHA256"' \
+  'mv "$CANDIDATE_PATH" "$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"'; do
+  grep -Fq "$polling_check" <<< "$classic_poll" ||
+    fail "classic polling is missing: $polling_check"
+done
+
+legacy_command='npx playwright test --project=chromium-live --workers=1 --retries=0 --reporter=json'
+require_paired_lane 'Run candidate legacy and default live E2E tests' \
+  EXACT_WIDGET_FIXTURE_PATH EXPECTED_WIDGET_SHA256 "$legacy_command"
+require_paired_lane 'Run classic legacy and default live E2E tests' \
+  EXACT_CLASSIC_WIDGET_FIXTURE_PATH EXPECTED_CLASSIC_WIDGET_SHA256 "$legacy_command"
+require_count "$critical" "$legacy_command" 2 'paired chromium-live execution'
+
+comparison=$(step_block "$ci_workflow" 'Require identical candidate and classic legacy outcomes')
+for comparison_check in \
+  'Candidate and classic chromium-live identifiers/outcomes differ.' \
+  'candidate.length !== 22 || passed !== 21 || skipped.length !== 1' \
+  'privacy masking failure UX works on the deployed production widget'; do
+  grep -Fq "$comparison_check" <<< "$comparison" ||
+    fail "paired chromium-live comparison is missing: $comparison_check"
+done
+
+require_paired_lane 'Run candidate live Radix E2E tests' \
+  EXACT_WIDGET_FIXTURE_PATH EXPECTED_WIDGET_SHA256 'make test-live-radix'
+require_paired_lane 'Run classic live Radix E2E tests' \
+  EXACT_CLASSIC_WIDGET_FIXTURE_PATH EXPECTED_CLASSIC_WIDGET_SHA256 'make test-live-radix'
+require_count "$critical" 'make test-live-radix' 2 'paired Radix execution'
+
+for browser in Chromium Firefox WebKit; do
+  browser_arg=$(tr '[:upper:]' '[:lower:]' <<< "$browser")
+  require_paired_lane "Run candidate $browser live cross-browser smoke" \
+    EXACT_WIDGET_FIXTURE_PATH EXPECTED_WIDGET_SHA256 \
+    "make test-live-cross-browser BROWSER=$browser_arg"
+  require_paired_lane "Run classic $browser live cross-browser smoke" \
+    EXACT_CLASSIC_WIDGET_FIXTURE_PATH EXPECTED_CLASSIC_WIDGET_SHA256 \
+    "make test-live-cross-browser BROWSER=$browser_arg"
+  require_count "$critical" "make test-live-cross-browser BROWSER=$browser_arg" 2 \
+    "paired $browser cross-browser execution"
+done
+
+require_paired_lane 'Run composable FlowConfig live E2E tests' \
+  EXACT_WIDGET_FIXTURE_PATH EXPECTED_WIDGET_SHA256 \
+  'npx playwright test --project=chromium-flow-live --workers=1 --retries=0'
+grep -Fq 'runs a conditional multi-screen FlowConfig through the exact preview widget' \
+  "$repo_root/e2e/public-flow.flow-live.spec.ts" ||
+  fail 'the candidate-only custom FlowConfig lane lost its conditional multi-screen assertion'
+
+require_paired_lane 'Run one structured real-Issue canary' \
+  EXACT_WIDGET_FIXTURE_PATH EXPECTED_WIDGET_SHA256 \
+  'npx playwright test e2e/widget.issue-canary.spec.ts --project=chromium-issue-canary --workers=1 --retries=0'
+canary_step=$(step_block "$ci_workflow" 'Run one structured real-Issue canary')
+if grep -Fq 'CLASSIC' <<< "$canary_step"; then
+  fail 'the one real-Issue canary must be candidate-bound, never classic-bound'
 fi
+
+require_count "$critical" 'EXACT_WIDGET_FIXTURE_PATH="$EXACT_WIDGET_FIXTURE_PATH"' 7 \
+  'candidate command-scoped fixture selection'
+require_count "$critical" 'EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"' 5 \
+  'classic command-scoped fixture selection'
+if grep -Eq -- '--retries=([1-9][0-9]*|[^0[:space:]][^[:space:]]*)|PLAYWRIGHT_RETRIES' <<< "$critical"; then
+  fail 'preview browser lanes must not enable inherited or explicit retries'
+fi
+require_literal "$makefile" 'npx playwright test e2e/widget.live-radix.spec.ts --project=chromium-live-radix --workers=1 --retries=0'
+require_literal "$makefile" 'npx playwright test e2e/widget.cross-browser-live.spec.ts --project=$(BROWSER)-cross-browser-live --workers=1 --retries=0'
+require_literal "$live_spec" "locator('css=.bd-trigger')"
+require_literal "$live_radix_spec" 'window.BugDrop?.open()'
 grep -Fq 'EXACT_WIDGET_FIXTURE_PATH=$RUNNER_TEMP/' <<< "$critical" ||
   fail "Playwright may delete the exact widget snapshot unless it lives in RUNNER_TEMP"
 if grep -Fq 'EXACT_WIDGET_FIXTURE_PATH=$GITHUB_WORKSPACE/test-results/' <<< "$critical"; then
@@ -379,6 +521,27 @@ sweep_line=$(grep -n 'name: Final reserved-prefix sweep' "$ci_workflow" | cut -d
 artifact_line=$(grep -n 'name: Upload preview failure report' "$ci_workflow" | cut -d: -f1)
 [[ -n "$cleanup_line" && -n "$sweep_line" && -n "$artifact_line" ]] || fail 'cleanup/artifact steps missing'
 (( cleanup_line < sweep_line && sweep_line < artifact_line )) || fail 'artifacts must follow both cleanup steps'
+failure_artifact=$(step_block "$ci_workflow" 'Upload preview failure report')
+require_count "$failure_artifact" 'if: failure()' 1 \
+  'preview report uploader failure binding'
+require_count "$failure_artifact" 'path: |' 1 'preview report uploader path list'
+require_count "$failure_artifact" 'playwright-report/' 1 'preview HTML failure report'
+candidate_json_report='${{ runner.temp }}/chromium-live-candidate-${{ github.run_id }}-${{ github.run_attempt }}.json'
+classic_json_report='${{ runner.temp }}/chromium-live-classic-${{ github.run_id }}-${{ github.run_attempt }}.json'
+require_count "$failure_artifact" "$candidate_json_report" 1 \
+  'candidate run-attempt JSON failure report'
+require_count "$failure_artifact" "$classic_json_report" 1 \
+  'classic run-attempt JSON failure report'
+require_count "$failure_artifact" 'if-no-files-found: warn' 1 \
+  'partial preview report availability'
+for available_report in "$candidate_json_report" "$classic_json_report"; do
+  matched_reports=0
+  for configured_report in "$candidate_json_report" "$classic_json_report"; do
+    [[ $available_report == "$configured_report" ]] && ((matched_reports += 1))
+  done
+  [[ $matched_reports -eq 1 ]] ||
+    fail "an independently available JSON report is not matched exactly once: $available_report"
+done
 sed -n "${cleanup_line},$((cleanup_line + 12))p" "$ci_workflow" | grep -Fq 'if: always()' ||
   fail 'current-marker cleanup is not unconditional'
 sed -n "${cleanup_line},$((cleanup_line + 12))p" "$ci_workflow" | grep -Fq -- '--marker "$BUGDROP_CANARY_MARKER"' ||
