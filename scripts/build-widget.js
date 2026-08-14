@@ -2,7 +2,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFile, readdir, realpath, writeFile } from 'node:fs/promises';
+import { lstat, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,11 +18,8 @@ import { loadRetentionInput } from './release/retention.mjs';
 const CONTROLLER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const FIXED_DEFAULT_BASELINE_ROOT = join(CONTROLLER_ROOT, 'scripts/default-flow-fixed-baseline');
 const FIXED_DEFAULT_BASELINE_MANIFEST = join(FIXED_DEFAULT_BASELINE_ROOT, 'manifest.json');
-const FIXED_DEFAULT_BASELINE_PATHS = new Map([
-  ['src/widget/index.ts', 'src/widget/index.ts.txt'],
-  ['src/widget/default-flow/definition.ts', 'src/widget/default-flow/definition.ts.txt'],
-  ['src/widget/default-flow/runtime.ts', 'src/widget/default-flow/runtime.ts.txt'],
-]);
+const FIXED_DEFAULT_BASELINE_ENTRY = 'src/widget/index.ts';
+const FIXED_DEFAULT_BASELINE_FILE_COUNT = 70;
 const VALUE_OPTIONS = new Set([
   'mode',
   'source-dir',
@@ -128,14 +125,12 @@ async function treeDigest(root) {
 }
 
 async function controllerIdentity() {
+  const fixedBaselineFiles = await listSourceFiles(FIXED_DEFAULT_BASELINE_ROOT);
   const paths = [
     fileURLToPath(import.meta.url),
     join(CONTROLLER_ROOT, 'scripts/release/canonical-json.mjs'),
     join(CONTROLLER_ROOT, 'scripts/release/static-assets.mjs'),
-    FIXED_DEFAULT_BASELINE_MANIFEST,
-    ...Array.from(FIXED_DEFAULT_BASELINE_PATHS.values(), path =>
-      join(FIXED_DEFAULT_BASELINE_ROOT, path)
-    ),
+    ...fixedBaselineFiles.map(path => join(FIXED_DEFAULT_BASELINE_ROOT, path)),
   ];
   const hash = createHash('sha256');
   for (const path of paths) {
@@ -182,7 +177,7 @@ async function loadFixedDefaultBaseline(sourceDir) {
     manifest.schema !== 'bugdrop.default-flow-fixed-baseline/v1' ||
     manifest.sourceCommit !== 'bb0f1b50a37867f8351b99f7e712a960836deb3f' ||
     !Array.isArray(manifest.files) ||
-    manifest.files.length !== 3
+    manifest.files.length !== FIXED_DEFAULT_BASELINE_FILE_COUNT
   ) {
     throw new Error('Fixed default baseline manifest identity is invalid');
   }
@@ -209,7 +204,11 @@ async function loadFixedDefaultBaseline(sourceDir) {
     }
     candidatePaths.add(candidatePath);
     assetPaths.add(assetPath);
-    if (FIXED_DEFAULT_BASELINE_PATHS.get(candidatePath) !== assetPath) {
+    if (
+      (candidatePath !== 'src/defaults.ts' && !candidatePath.startsWith('src/widget/')) ||
+      !candidatePath.endsWith('.ts') ||
+      assetPath !== `${candidatePath}.txt`
+    ) {
       throw new Error('Fixed default baseline manifest path identity is invalid');
     }
     const candidateFile = resolveInside(physicalSourceDir, candidatePath, 'candidate path');
@@ -227,10 +226,33 @@ async function loadFixedDefaultBaseline(sourceDir) {
     }
     baseline.set(candidateFile, bytes.toString('utf8'));
   }
-  if (candidatePaths.size !== FIXED_DEFAULT_BASELINE_PATHS.size) {
+  if (
+    candidatePaths.size !== FIXED_DEFAULT_BASELINE_FILE_COUNT ||
+    !candidatePaths.has(FIXED_DEFAULT_BASELINE_ENTRY)
+  ) {
     throw new Error('Fixed default baseline manifest is incomplete');
   }
-  return baseline;
+  const entry = resolveInside(physicalSourceDir, FIXED_DEFAULT_BASELINE_ENTRY, 'candidate entry');
+  let entryStat;
+  try {
+    entryStat = await lstat(entry);
+  } catch {
+    throw new Error(`Fixed default baseline candidate is missing: ${FIXED_DEFAULT_BASELINE_ENTRY}`);
+  }
+  if (!entryStat.isFile() || entryStat.isSymbolicLink()) {
+    throw new Error(
+      `Fixed default baseline candidate must be a regular file: ${FIXED_DEFAULT_BASELINE_ENTRY}`
+    );
+  }
+  return { entry, modules: baseline };
+}
+
+function resolveFixedDefaultImport(modules, importer, specifier) {
+  const unresolved = resolve(dirname(importer), specifier);
+  for (const path of [unresolved, `${unresolved}.ts`, join(unresolved, 'index.ts')]) {
+    if (modules.has(path)) return path;
+  }
+  throw new Error(`Fixed default baseline import is missing: ${specifier} from ${importer}`);
 }
 
 function git(sourceDir, args) {
@@ -253,6 +275,7 @@ async function bundleCandidate({ sourceDir, version, enableTestHooks, defaultFlo
   const entry = join(sourceDir, 'src/widget/index.ts');
   const fixedBaseline =
     defaultFlowRuntime === 'fixed' ? await loadFixedDefaultBaseline(sourceDir) : undefined;
+  const loadedFixedBaseline = new Set();
   const result = await build({
     absWorkingDir: sourceDir,
     bundle: true,
@@ -261,7 +284,7 @@ async function bundleCandidate({ sourceDir, version, enableTestHooks, defaultFlo
       __BUGDROP_DEFAULT_FLOW_RUNTIME__: JSON.stringify(defaultFlowRuntime),
       __BUGDROP_VERSION__: JSON.stringify(version),
     },
-    entryPoints: [entry],
+    entryPoints: [fixedBaseline?.entry ?? entry],
     format: 'iife',
     logLevel: 'silent',
     minify: true,
@@ -272,9 +295,25 @@ async function bundleCandidate({ sourceDir, version, enableTestHooks, defaultFlo
             {
               name: 'fixed-default-baseline',
               setup(build) {
+                build.onResolve({ filter: /.*/ }, args => {
+                  if (!fixedBaseline.modules.has(args.importer) || !args.path.startsWith('.')) {
+                    return undefined;
+                  }
+                  return {
+                    path: resolveFixedDefaultImport(
+                      fixedBaseline.modules,
+                      args.importer,
+                      args.path
+                    ),
+                  };
+                });
                 build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, args => {
-                  const contents = fixedBaseline.get(resolve(args.path));
+                  const contents = fixedBaseline.modules.get(args.path);
                   if (contents === undefined) return undefined;
+                  if (loadedFixedBaseline.has(args.path)) {
+                    throw new Error(`Fixed default baseline loaded more than once: ${args.path}`);
+                  }
+                  loadedFixedBaseline.add(args.path);
                   return { contents, loader: 'ts', resolveDir: dirname(args.path) };
                 });
               },
@@ -283,6 +322,13 @@ async function bundleCandidate({ sourceDir, version, enableTestHooks, defaultFlo
         : [],
     write: false,
   });
+  if (fixedBaseline && loadedFixedBaseline.size !== fixedBaseline.modules.size) {
+    const missing = Array.from(fixedBaseline.modules.keys())
+      .filter(path => !loadedFixedBaseline.has(path))
+      .map(path => normalized(relative(sourceDir, path)))
+      .sort();
+    throw new Error(`Fixed default baseline substitution is incomplete: ${missing.join(', ')}`);
+  }
   if (result.outputFiles.length !== 1) throw new Error('Expected exactly one widget bundle output');
   const bytes = Buffer.from(result.outputFiles[0].contents);
   if (!enableTestHooks && bytes.includes('__bugdropMockToPng')) {

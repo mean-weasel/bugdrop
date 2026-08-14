@@ -276,4 +276,24 @@ describe('internal default-flow build selector', () => {
       expect(execution.result.stderr).toContain('Fixed default baseline');
     }
   }, 20_000);
+
+  it('fails closed when an expected baseline candidate is a symlink', async () => {
+    const index = join(candidate, 'src/widget/index.ts');
+    const target = join(candidate, 'src/widget/index-current.ts');
+    await cp(index, target);
+    await rm(index);
+    await symlink('index-current.ts', index);
+
+    const execution = await runBuild('fixed', 'symlinked-index');
+    expect(execution.result.status).toBe(1);
+    expect(execution.result.stderr).toContain(
+      'Fixed default baseline candidate must be a regular file: src/widget/index.ts'
+    );
+  });
+
+  it('builds the complete fixed baseline against the supported older candidate fixture', async () => {
+    const olderCandidate = join(ROOT, 'test/fixtures/release/static-assets/older-candidate');
+    const execution = await runBuild('fixed', 'older-candidate', { sourceDir: olderCandidate });
+    expect(execution.result.status, execution.result.stderr).toBe(0);
+  });
 });
