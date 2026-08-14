@@ -1,5 +1,8 @@
 import type { BugDropAuthTokenProvider } from '../auth-token';
 import type { IssueLinkVisibility } from '../ui';
+import { normalizeFlowDefinition, type FlowDefinition } from '../flows/definition';
+import type { FlowConfig } from '../flows/public-types';
+import { validateAndFreezeFlowConfig } from '../flows/validate-config';
 
 export const DEFAULT_DEFINITION_ID = 'bugdrop-default@1' as const;
 
@@ -30,6 +33,7 @@ export interface DefaultDefinitionInput {
 
 export interface DefaultDefinition {
   readonly id: typeof DEFAULT_DEFINITION_ID;
+  readonly flow: FlowDefinition;
   readonly steps: readonly [
     Readonly<{ kind: 'welcome'; enabled: boolean; remember: boolean }>,
     Readonly<{
@@ -119,8 +123,61 @@ export function normalizeDefaultDefinition(input: DefaultDefinitionInput): Defau
     }),
   ]) as DefaultDefinition['steps'];
 
+  const config: FlowConfig = {
+    configVersion: 1,
+    id: 'bugdrop-default-v1',
+    presentation: { kind: 'modal' },
+    forms: [
+      {
+        id: 'details',
+        title: 'Send Feedback',
+        fields: [
+          { id: 'title', type: 'shortText', label: 'Title', required: true },
+          { id: 'description', type: 'longText', label: 'Description' },
+          {
+            id: 'category',
+            type: 'singleChoice',
+            label: 'Category',
+            required: true,
+            options: [
+              { value: 'bug', label: 'Bug' },
+              { value: 'feature', label: 'Feature' },
+              { value: 'question', label: 'Question' },
+            ],
+          },
+          { id: 'attachments', type: 'attachments', label: 'Attachments' },
+          { id: 'send-console-logs', type: 'checkbox', label: 'Include console logs' },
+          { id: 'name', type: 'shortText', label: 'Name' },
+          { id: 'email', type: 'shortText', label: 'Email' },
+        ],
+      },
+    ],
+    screens: [
+      {
+        id: 'welcome',
+        type: 'message',
+        title: 'Share feedback',
+        when: { context: 'show-welcome', equals: true },
+      },
+      { id: 'details', type: 'form', form: 'details' },
+      { id: 'screenshot', type: 'screenshot', mode: input.screenshotMode },
+    ],
+    issue: {
+      classification: 'bug',
+      title: '{{details.title}}',
+      sections: [{ heading: 'Description', answer: 'details.description', omitWhenEmpty: true }],
+    },
+    evidence: {
+      attachments: 'details.attachments',
+      sendConsoleLogs: 'details.send-console-logs',
+      submitter: { name: 'details.name', email: 'details.email' },
+    },
+  };
+  const flow = normalizeFlowDefinition(validateAndFreezeFlowConfig(config));
+
   return Object.freeze({
     id: DEFAULT_DEFINITION_ID,
+    flow,
     steps,
     system: Object.freeze({
       preflight: Object.freeze({

@@ -188,6 +188,7 @@ then
 fi
 
 require_literal "$playwright_config" "'chromium-live'"
+require_literal "$playwright_config" "'chromium-flow-live'"
 require_literal "$playwright_config" "'chromium-live-radix'"
 require_literal "$playwright_config" "'chromium-cross-browser-live'"
 require_literal "$playwright_config" "'firefox-cross-browser-live'"
@@ -199,6 +200,7 @@ local_discovery=$(env -u LIVE_TARGET -u PLAYWRIGHT_BASE_URL \
 grep -Fq '[chromium]' <<< "$local_discovery" || fail 'local Chromium project was not discovered'
 for excluded_project in \
   chromium-live \
+  chromium-flow-live \
   chromium-live-radix \
   chromium-cross-browser-live \
   firefox-cross-browser-live \
@@ -211,6 +213,7 @@ done
 
 for live_project in \
   chromium-live \
+  chromium-flow-live \
   chromium-live-radix \
   chromium-cross-browser-live \
   firefox-cross-browser-live \
@@ -296,6 +299,7 @@ fi
 for command in \
   'npx wrangler deploy --env preview' \
   'npx playwright test --project=chromium-live --workers=1 --retries=0' \
+  'npx playwright test --project=chromium-flow-live --workers=1 --retries=0' \
   'make test-live-radix' \
   'make test-live-cross-browser BROWSER=chromium' \
   'make test-live-cross-browser BROWSER=firefox' \
@@ -317,6 +321,28 @@ grep -Fq 'ACTUAL_SHA" = "$EXPECTED_WIDGET_SHA256"' <<< "$critical" ||
   fail 'deployed widget bytes are not polled to an exact hash match'
 grep -Fq 'EXACT_WIDGET_FIXTURE_PATH=' <<< "$critical" ||
   fail 'the exact deployed widget snapshot path is not recorded'
+grep -Fq 'EXACT_CLASSIC_WIDGET_FIXTURE_PATH=' <<< "$critical" ||
+  fail 'the exact classic widget snapshot path is not recorded'
+grep -Fq 'EXPECTED_CLASSIC_WIDGET_SHA256=' <<< "$critical" ||
+  fail 'the classic preview widget hash is not recorded'
+grep -Fq 'ACTUAL_SHA" = "$EXPECTED_CLASSIC_WIDGET_SHA256"' <<< "$critical" ||
+  fail 'deployed classic widget bytes are not polled to an exact hash match'
+grep -Fq 'mv "$CANDIDATE_PATH" "$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"' <<< "$critical" ||
+  fail 'the verified classic widget is not retained as the exact browser fixture'
+grep -Fq 'public/widget.classic.js' <<< "$critical" ||
+  fail 'the classic preview widget is not staged for deployment'
+grep -Fq 'BUGDROP_DEFAULT_FLOW_RUNTIME=fixed' <<< "$critical" ||
+  fail 'the classic preview widget is not built with the fixed controller'
+[[ $(grep -Fc 'EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"' <<< "$critical") -eq 6 ]] ||
+  fail 'every legacy preview browser lane must use the classic widget fixture'
+flow_live_step=$(sed -n \
+  '/- name: Run composable FlowConfig live E2E tests/,/- name: Run classic live Radix E2E tests/p' \
+  <<< "$critical")
+grep -Fq 'npx playwright test --project=chromium-flow-live --workers=1 --retries=0' <<< "$flow_live_step" ||
+  fail 'the composable-flow preview lane is missing'
+if grep -Fq 'EXACT_CLASSIC_WIDGET_FIXTURE_PATH' <<< "$flow_live_step"; then
+  fail 'the composable-flow preview lane must not use the classic widget fixture'
+fi
 grep -Fq 'EXACT_WIDGET_FIXTURE_PATH=$RUNNER_TEMP/' <<< "$critical" ||
   fail "Playwright may delete the exact widget snapshot unless it lives in RUNNER_TEMP"
 if grep -Fq 'EXACT_WIDGET_FIXTURE_PATH=$GITHUB_WORKSPACE/test-results/' <<< "$critical"; then

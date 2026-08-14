@@ -388,6 +388,7 @@ jobs:
           echo "BUGDROP_CANARY_RESULT_FILE=test-results/issue-canary-result.json" >> "$GITHUB_ENV"
           echo "BUGDROP_CANARY_ATTEMPT_FILE=$RUNNER_TEMP/bugdrop-canary-attempt-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
           echo "EXACT_WIDGET_FIXTURE_PATH=$RUNNER_TEMP/bugdrop-exact-preview-widget-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.js" >> "$GITHUB_ENV"
+          echo "EXACT_CLASSIC_WIDGET_FIXTURE_PATH=$RUNNER_TEMP/bugdrop-exact-preview-classic-widget-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.js" >> "$GITHUB_ENV"
           echo "EXPECTED_WORKER_SHA=${GITHUB_SHA}" >> "$GITHUB_ENV"
           echo "EXPECTED_WIDGET_ORIGIN=https://bugdrop-preview.neonwatty.workers.dev" >> "$GITHUB_ENV"
           echo "LIVE_TARGET=preview" >> "$GITHUB_ENV"
@@ -402,11 +403,23 @@ jobs:
         env:
           BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
 
+      - name: Build classic preview widget
+        run: |
+          CLASSIC_OUTPUT="$RUNNER_TEMP/classic-preview-widget"
+          BUGDROP_DEFAULT_FLOW_RUNTIME=fixed node scripts/build-widget.js \
+            --mode development \
+            --source-dir . \
+            --output-dir "$CLASSIC_OUTPUT" \
+            --development-id "merge-group-${GITHUB_SHA}-classic"
+
       - name: Build all
         run: BUGDROP_BUILD_MODE=development BUGDROP_DEVELOPMENT_ID="merge-group-${GITHUB_SHA}" make build-all
 
-      - name: Record expected preview widget hash
-        run: echo "EXPECTED_WIDGET_SHA256=$(shasum -a 256 public/widget.js | awk '{print $1}')" >> "$GITHUB_ENV"
+      - name: Record expected preview widget hashes
+        run: |
+          cp "$RUNNER_TEMP/classic-preview-widget/widget.js" public/widget.classic.js
+          echo "EXPECTED_WIDGET_SHA256=$(shasum -a 256 public/widget.js | awk '{print $1}')" >> "$GITHUB_ENV"
+          echo "EXPECTED_CLASSIC_WIDGET_SHA256=$(shasum -a 256 public/widget.classic.js | awk '{print $1}')" >> "$GITHUB_ENV"
 
       - name: Deploy to preview
         run: npx wrangler deploy --env preview --var "BUILD_SHA:$GITHUB_SHA"
@@ -456,6 +469,30 @@ jobs:
           echo "Preview widget did not serve expected asset $EXPECTED_WIDGET_SHA256"
           exit 1
 
+      - name: Wait for exact classic preview widget asset
+        run: |
+          WIDGET_URL="$EXPECTED_WIDGET_ORIGIN/widget.classic.js"
+          CANDIDATE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH.candidate"
+          mkdir -p "$(dirname "$EXACT_CLASSIC_WIDGET_FIXTURE_PATH")"
+          echo "Waiting for $WIDGET_URL to serve $EXPECTED_CLASSIC_WIDGET_SHA256..."
+          for i in $(seq 1 30); do
+            if ! curl -sSf "$WIDGET_URL" -o "$CANDIDATE_PATH"; then
+              echo "Attempt $i/30 could not download the classic preview widget; waiting 5s..."
+              sleep 5
+              continue
+            fi
+            ACTUAL_SHA="$(shasum -a 256 "$CANDIDATE_PATH" | awk '{print $1}')"
+            if [ "$ACTUAL_SHA" = "$EXPECTED_CLASSIC_WIDGET_SHA256" ]; then
+              mv "$CANDIDATE_PATH" "$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"
+              echo "Classic preview widget asset matched after $((i * 5))s"
+              exit 0
+            fi
+            echo "Attempt $i/30 served $ACTUAL_SHA; waiting 5s..."
+            sleep 5
+          done
+          echo "Classic preview widget did not serve expected asset $EXPECTED_CLASSIC_WIDGET_SHA256"
+          exit 1
+
       - name: Verify fixed preview venue
         run: |
           BYPASS_ARGS=()
@@ -470,28 +507,48 @@ jobs:
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
-      - name: Run live E2E tests
-        run: npx playwright test --project=chromium-live --workers=1 --retries=0
+      - name: Run classic live E2E tests
+        run: >-
+          EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"
+          EXPECTED_WIDGET_SHA256="$EXPECTED_CLASSIC_WIDGET_SHA256"
+          npx playwright test --project=chromium-live --workers=1 --retries=0
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
-      - name: Run live Radix E2E tests
-        run: make test-live-radix
+      - name: Run composable FlowConfig live E2E tests
+        run: npx playwright test --project=chromium-flow-live --workers=1 --retries=0
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
-      - name: Run Chromium live cross-browser smoke
-        run: make test-live-cross-browser BROWSER=chromium
+      - name: Run classic live Radix E2E tests
+        run: >-
+          EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"
+          EXPECTED_WIDGET_SHA256="$EXPECTED_CLASSIC_WIDGET_SHA256"
+          make test-live-radix
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
-      - name: Run Firefox live cross-browser smoke
-        run: make test-live-cross-browser BROWSER=firefox
+      - name: Run classic Chromium live cross-browser smoke
+        run: >-
+          EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"
+          EXPECTED_WIDGET_SHA256="$EXPECTED_CLASSIC_WIDGET_SHA256"
+          make test-live-cross-browser BROWSER=chromium
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
-      - name: Run WebKit live cross-browser smoke
-        run: make test-live-cross-browser BROWSER=webkit
+      - name: Run classic Firefox live cross-browser smoke
+        run: >-
+          EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"
+          EXPECTED_WIDGET_SHA256="$EXPECTED_CLASSIC_WIDGET_SHA256"
+          make test-live-cross-browser BROWSER=firefox
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+      - name: Run classic WebKit live cross-browser smoke
+        run: >-
+          EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"
+          EXPECTED_WIDGET_SHA256="$EXPECTED_CLASSIC_WIDGET_SHA256"
+          make test-live-cross-browser BROWSER=webkit
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
@@ -499,7 +556,9 @@ jobs:
         run: |
           mkdir -p "$(dirname "$BUGDROP_CANARY_ATTEMPT_FILE")"
           : > "$BUGDROP_CANARY_ATTEMPT_FILE"
-          npx playwright test e2e/widget.issue-canary.spec.ts --project=chromium-issue-canary --workers=1 --retries=0
+          EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH" \
+          EXPECTED_WIDGET_SHA256="$EXPECTED_CLASSIC_WIDGET_SHA256" \
+            npx playwright test e2e/widget.issue-canary.spec.ts --project=chromium-issue-canary --workers=1 --retries=0
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 

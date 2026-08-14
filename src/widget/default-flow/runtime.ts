@@ -6,6 +6,7 @@ import type {
   DefaultSubmissionRecipe,
   DefaultWelcomeStep,
 } from './definition';
+import { FlowRuntime } from '../flows/runtime';
 
 type DefaultPreflightResult =
   { status: 'installed' } | { status: 'not_installed' | 'unreachable'; appName?: string };
@@ -34,20 +35,30 @@ export async function runDefaultJourney<Details, Capture>(
   }
 
   const welcome = definition.steps[0];
-  if (welcome.enabled) {
+  const runtime = new FlowRuntime(definition.flow, { 'show-welcome': welcome.enabled });
+  if (runtime.current()?.id === 'welcome') {
     if (!(await ports.showWelcome(welcome))) return 'finished';
     if (welcome.remember) ports.rememberWelcome(welcome);
+    runtime.next();
   }
 
   const detailsStep = definition.steps[1];
   const screenshotStep = definition.steps[2];
   let details: Details | null = null;
   while (true) {
+    if (runtime.current()?.id !== 'details')
+      throw new Error('Default flow expected details screen');
     details = await ports.showDetails(detailsStep, details);
     if (!details) return 'finished';
 
+    runtime.next();
+    if (runtime.current()?.id !== 'screenshot')
+      throw new Error('Default flow expected screenshot screen');
     const capture = await ports.capture(screenshotStep, details);
-    if (capture.returnToDetails) continue;
+    if (capture.returnToDetails) {
+      runtime.back();
+      continue;
+    }
 
     await ports.submit(definition.system.submission, details, capture);
     return 'finished';

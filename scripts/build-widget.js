@@ -2,8 +2,8 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFile, readdir, writeFile } from 'node:fs/promises';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { lstat, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { build, version as esbuildVersion } from 'esbuild';
@@ -16,6 +16,10 @@ import { canonicalize } from './release/canonical-json.mjs';
 import { loadRetentionInput } from './release/retention.mjs';
 
 const CONTROLLER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const FIXED_DEFAULT_BASELINE_ROOT = join(CONTROLLER_ROOT, 'scripts/default-flow-fixed-baseline');
+const FIXED_DEFAULT_BASELINE_MANIFEST = join(FIXED_DEFAULT_BASELINE_ROOT, 'manifest.json');
+const FIXED_DEFAULT_BASELINE_ENTRY = 'src/widget/index.ts';
+const FIXED_DEFAULT_BASELINE_FILE_COUNT = 70;
 const VALUE_OPTIONS = new Set([
   'mode',
   'source-dir',
@@ -47,7 +51,7 @@ Common options:
   --source-dir PATH           Candidate checkout (default: repository root)
   --output-dir PATH           Clean output tree (default: <source>/public)
   --development-id ID         Visible identity for development output
-  --default-flow-runtime ID   Internal default controller: fixed (default) or private
+  --default-flow-runtime ID   Internal default controller: private (default) or fixed rollback
 
 Release options:
   --version MAJOR.MINOR.PATCH  Required planned stable version
@@ -121,10 +125,12 @@ async function treeDigest(root) {
 }
 
 async function controllerIdentity() {
+  const fixedBaselineFiles = await listSourceFiles(FIXED_DEFAULT_BASELINE_ROOT);
   const paths = [
     fileURLToPath(import.meta.url),
     join(CONTROLLER_ROOT, 'scripts/release/canonical-json.mjs'),
     join(CONTROLLER_ROOT, 'scripts/release/static-assets.mjs'),
+    ...fixedBaselineFiles.map(path => join(FIXED_DEFAULT_BASELINE_ROOT, path)),
   ];
   const hash = createHash('sha256');
   for (const path of paths) {
@@ -134,6 +140,119 @@ async function controllerIdentity() {
     hash.update('\0');
   }
   return `sha256:${hash.digest('hex')}`;
+}
+
+function isPlainObject(value) {
+  return value !== null && !Array.isArray(value) && typeof value === 'object';
+}
+
+function resolveInside(root, path, label) {
+  if (typeof path !== 'string' || path.length === 0 || path.includes('\\') || isAbsolute(path)) {
+    throw new Error(`Fixed default baseline ${label} is invalid`);
+  }
+  const resolved = resolve(root, path);
+  const fromRoot = relative(root, resolved);
+  if (
+    fromRoot === '' ||
+    fromRoot === '..' ||
+    fromRoot.startsWith(`..${sep}`) ||
+    isAbsolute(fromRoot)
+  ) {
+    throw new Error(`Fixed default baseline ${label} escapes its root`);
+  }
+  return resolved;
+}
+
+async function loadFixedDefaultBaseline(sourceDir) {
+  const physicalSourceDir = await realpath(sourceDir);
+  const physicalBaselineRoot = await realpath(FIXED_DEFAULT_BASELINE_ROOT);
+  let manifest;
+  try {
+    manifest = JSON.parse(await readFile(FIXED_DEFAULT_BASELINE_MANIFEST, 'utf8'));
+  } catch {
+    throw new Error('Fixed default baseline manifest is missing or malformed');
+  }
+  if (
+    !isPlainObject(manifest) ||
+    manifest.schema !== 'bugdrop.default-flow-fixed-baseline/v1' ||
+    manifest.sourceCommit !== 'bb0f1b50a37867f8351b99f7e712a960836deb3f' ||
+    !Array.isArray(manifest.files) ||
+    manifest.files.length !== FIXED_DEFAULT_BASELINE_FILE_COUNT
+  ) {
+    throw new Error('Fixed default baseline manifest identity is invalid');
+  }
+  const candidatePaths = new Set();
+  const assetPaths = new Set();
+  const baseline = new Map();
+  for (const file of manifest.files) {
+    if (
+      !isPlainObject(file) ||
+      !Number.isSafeInteger(file.length) ||
+      file.length <= 0 ||
+      typeof file.sha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(file.sha256)
+    ) {
+      throw new Error('Fixed default baseline manifest entry is invalid');
+    }
+    if (typeof file.candidatePath !== 'string' || typeof file.assetPath !== 'string') {
+      throw new Error('Fixed default baseline manifest entry is invalid');
+    }
+    const candidatePath = normalized(file.candidatePath);
+    const assetPath = normalized(file.assetPath);
+    if (candidatePaths.has(candidatePath) || assetPaths.has(assetPath)) {
+      throw new Error('Fixed default baseline manifest contains a duplicate path');
+    }
+    candidatePaths.add(candidatePath);
+    assetPaths.add(assetPath);
+    if (
+      (candidatePath !== 'src/defaults.ts' && !candidatePath.startsWith('src/widget/')) ||
+      !candidatePath.endsWith('.ts') ||
+      assetPath !== `${candidatePath}.txt`
+    ) {
+      throw new Error('Fixed default baseline manifest path identity is invalid');
+    }
+    const candidateFile = resolveInside(physicalSourceDir, candidatePath, 'candidate path');
+    const declaredAssetFile = resolveInside(physicalBaselineRoot, assetPath, 'asset path');
+    let bytes;
+    try {
+      const assetFile = await realpath(declaredAssetFile);
+      resolveInside(physicalBaselineRoot, relative(physicalBaselineRoot, assetFile), 'asset path');
+      bytes = await readFile(assetFile);
+    } catch {
+      throw new Error(`Fixed default baseline asset is missing: ${assetPath}`);
+    }
+    if (bytes.length !== file.length || sha256(bytes) !== file.sha256) {
+      throw new Error(`Fixed default baseline asset integrity failed: ${assetPath}`);
+    }
+    baseline.set(candidateFile, bytes.toString('utf8'));
+  }
+  if (
+    candidatePaths.size !== FIXED_DEFAULT_BASELINE_FILE_COUNT ||
+    !candidatePaths.has(FIXED_DEFAULT_BASELINE_ENTRY)
+  ) {
+    throw new Error('Fixed default baseline manifest is incomplete');
+  }
+  const entry = resolveInside(physicalSourceDir, FIXED_DEFAULT_BASELINE_ENTRY, 'candidate entry');
+  let entryStat;
+  try {
+    entryStat = await lstat(entry);
+  } catch {
+    throw new Error(`Fixed default baseline candidate is missing: ${FIXED_DEFAULT_BASELINE_ENTRY}`);
+  }
+  if (!entryStat.isFile() || entryStat.isSymbolicLink()) {
+    throw new Error(
+      `Fixed default baseline candidate must be a regular file: ${FIXED_DEFAULT_BASELINE_ENTRY}`
+    );
+  }
+  return { entry, modules: baseline };
+}
+
+function resolveFixedDefaultImport(modules, importer, specifier) {
+  const unresolved = resolve(dirname(importer), specifier);
+  for (const path of [unresolved, `${unresolved}.ts`, join(unresolved, 'index.ts')]) {
+    if (modules.has(path)) return path;
+  }
+  throw new Error(`Fixed default baseline import is missing: ${specifier} from ${importer}`);
 }
 
 function git(sourceDir, args) {
@@ -154,6 +273,9 @@ function repositoryFromRemote(remote) {
 
 async function bundleCandidate({ sourceDir, version, enableTestHooks, defaultFlowRuntime }) {
   const entry = join(sourceDir, 'src/widget/index.ts');
+  const fixedBaseline =
+    defaultFlowRuntime === 'fixed' ? await loadFixedDefaultBaseline(sourceDir) : undefined;
+  const loadedFixedBaseline = new Set();
   const result = await build({
     absWorkingDir: sourceDir,
     bundle: true,
@@ -162,13 +284,51 @@ async function bundleCandidate({ sourceDir, version, enableTestHooks, defaultFlo
       __BUGDROP_DEFAULT_FLOW_RUNTIME__: JSON.stringify(defaultFlowRuntime),
       __BUGDROP_VERSION__: JSON.stringify(version),
     },
-    entryPoints: [entry],
+    entryPoints: [fixedBaseline?.entry ?? entry],
     format: 'iife',
     logLevel: 'silent',
     minify: true,
     outfile: 'widget.js',
+    plugins:
+      defaultFlowRuntime === 'fixed'
+        ? [
+            {
+              name: 'fixed-default-baseline',
+              setup(build) {
+                build.onResolve({ filter: /.*/ }, args => {
+                  if (!fixedBaseline.modules.has(args.importer) || !args.path.startsWith('.')) {
+                    return undefined;
+                  }
+                  return {
+                    path: resolveFixedDefaultImport(
+                      fixedBaseline.modules,
+                      args.importer,
+                      args.path
+                    ),
+                  };
+                });
+                build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, args => {
+                  const contents = fixedBaseline.modules.get(args.path);
+                  if (contents === undefined) return undefined;
+                  if (loadedFixedBaseline.has(args.path)) {
+                    throw new Error(`Fixed default baseline loaded more than once: ${args.path}`);
+                  }
+                  loadedFixedBaseline.add(args.path);
+                  return { contents, loader: 'ts', resolveDir: dirname(args.path) };
+                });
+              },
+            },
+          ]
+        : [],
     write: false,
   });
+  if (fixedBaseline && loadedFixedBaseline.size !== fixedBaseline.modules.size) {
+    const missing = Array.from(fixedBaseline.modules.keys())
+      .filter(path => !loadedFixedBaseline.has(path))
+      .map(path => normalized(relative(sourceDir, path)))
+      .sort();
+    throw new Error(`Fixed default baseline substitution is incomplete: ${missing.join(', ')}`);
+  }
   if (result.outputFiles.length !== 1) throw new Error('Expected exactly one widget bundle output');
   const bytes = Buffer.from(result.outputFiles[0].contents);
   if (!enableTestHooks && bytes.includes('__bugdropMockToPng')) {
@@ -215,10 +375,10 @@ async function main() {
     options,
     'default-flow-runtime',
     'BUGDROP_DEFAULT_FLOW_RUNTIME',
-    'fixed'
+    'private'
   );
   if (defaultFlowRuntime !== 'fixed' && defaultFlowRuntime !== 'private') {
-    throw new Error('Unsupported default flow runtime: expected fixed or private');
+    throw new Error('Unsupported default flow runtime: expected private or fixed');
   }
 
   if (mode === 'development') {
@@ -245,18 +405,11 @@ async function main() {
   if (!version) throw new Error('Release mode requires --version or BUGDROP_VERSION');
   if (!timestamp) throw new Error('Release mode requires --timestamp or BUGDROP_RELEASE_TIMESTAMP');
 
-  const targetSha = option(
-    options,
-    'target-sha',
-    'BUGDROP_TARGET_SHA',
-    git(sourceDir, ['rev-parse', 'HEAD'])
-  );
-  const repository = option(
-    options,
-    'repository',
-    'BUGDROP_REPOSITORY',
-    repositoryFromRemote(git(sourceDir, ['remote', 'get-url', 'origin']))
-  );
+  const targetSha =
+    option(options, 'target-sha', 'BUGDROP_TARGET_SHA') ?? git(sourceDir, ['rev-parse', 'HEAD']);
+  const repository =
+    option(options, 'repository', 'BUGDROP_REPOSITORY') ??
+    repositoryFromRemote(git(sourceDir, ['remote', 'get-url', 'origin']));
   const retention = await loadRetentionPlan(
     option(options, 'retention-plan', 'BUGDROP_RETENTION_PLAN'),
     option(options, 'request-plan', 'BUGDROP_REQUEST_PLAN')
