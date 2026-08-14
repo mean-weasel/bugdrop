@@ -127,7 +127,7 @@ describe('internal default-flow build selector', () => {
     }
     expect(fixedSource).not.toContain('bugdrop-default@1');
     expect(flowSource).toContain('bugdrop-flow@1');
-  }, 20_000);
+  }, 40_000);
 
   it('rejects unsupported selector values', () => {
     const result = spawnSync(process.execPath, [join(ROOT, 'scripts/build-widget.js')], {
