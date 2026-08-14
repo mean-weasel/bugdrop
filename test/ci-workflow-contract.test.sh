@@ -427,15 +427,22 @@ done
 
 legacy_command='npx playwright test --project=chromium-live --workers=1 --retries=0 --reporter=json'
 require_paired_lane 'Run candidate legacy and default live E2E tests' \
-  EXACT_WIDGET_FIXTURE_PATH EXPECTED_WIDGET_SHA256 "$legacy_command"
+  EXACT_WIDGET_FIXTURE_PATH EXPECTED_WIDGET_SHA256 \
+  'chromium-live-candidate-style-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json' "$legacy_command"
 require_paired_lane 'Run classic legacy and default live E2E tests' \
-  EXACT_CLASSIC_WIDGET_FIXTURE_PATH EXPECTED_CLASSIC_WIDGET_SHA256 "$legacy_command"
+  EXACT_CLASSIC_WIDGET_FIXTURE_PATH EXPECTED_CLASSIC_WIDGET_SHA256 \
+  'chromium-live-classic-style-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json' "$legacy_command"
 require_count "$critical" "$legacy_command" 2 'paired chromium-live execution'
+require_literal "$live_spec" \
+  'preserves configured styling across the exact default-flow artifact'
+require_literal "$live_spec" "font: 'monospace'"
+require_literal "$live_spec" "shadow: 'hard'"
 
 comparison=$(step_block "$ci_workflow" 'Require identical candidate and classic legacy outcomes')
 for comparison_check in \
   'Candidate and classic chromium-live identifiers/outcomes differ.' \
-  'candidate.length !== 22 || passed !== 21 || skipped.length !== 1' \
+  'Candidate and classic configured-style snapshots differ.' \
+  'candidate.length !== 23 || passed !== 22 || skipped.length !== 1' \
   'privacy masking failure UX works on the deployed production widget'; do
   grep -Fq "$comparison_check" <<< "$comparison" ||
     fail "paired chromium-live comparison is missing: $comparison_check"
@@ -528,15 +535,25 @@ require_count "$failure_artifact" 'path: |' 1 'preview report uploader path list
 require_count "$failure_artifact" 'playwright-report/' 1 'preview HTML failure report'
 candidate_json_report='${{ runner.temp }}/chromium-live-candidate-${{ github.run_id }}-${{ github.run_attempt }}.json'
 classic_json_report='${{ runner.temp }}/chromium-live-classic-${{ github.run_id }}-${{ github.run_attempt }}.json'
+candidate_style_report='${{ runner.temp }}/chromium-live-candidate-style-${{ github.run_id }}-${{ github.run_attempt }}.json'
+classic_style_report='${{ runner.temp }}/chromium-live-classic-style-${{ github.run_id }}-${{ github.run_attempt }}.json'
 require_count "$failure_artifact" "$candidate_json_report" 1 \
   'candidate run-attempt JSON failure report'
 require_count "$failure_artifact" "$classic_json_report" 1 \
   'classic run-attempt JSON failure report'
+require_count "$failure_artifact" "$candidate_style_report" 1 \
+  'candidate configured-style failure report'
+require_count "$failure_artifact" "$classic_style_report" 1 \
+  'classic configured-style failure report'
 require_count "$failure_artifact" 'if-no-files-found: warn' 1 \
   'partial preview report availability'
-for available_report in "$candidate_json_report" "$classic_json_report"; do
+for available_report in \
+  "$candidate_json_report" "$classic_json_report" \
+  "$candidate_style_report" "$classic_style_report"; do
   matched_reports=0
-  for configured_report in "$candidate_json_report" "$classic_json_report"; do
+  for configured_report in \
+    "$candidate_json_report" "$classic_json_report" \
+    "$candidate_style_report" "$classic_style_report"; do
     [[ $available_report == "$configured_report" ]] && ((matched_reports += 1))
   done
   [[ $matched_reports -eq 1 ]] ||

@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises';
 import { expect, type Locator, type Page } from '@playwright/test';
 import {
   assertExactPreviewWidgetResponse,
@@ -52,9 +53,13 @@ async function mockInstalledRepo(page: Page) {
   });
 }
 
-async function loadDeployedWidgetFixture(page: Page, dataset: Record<string, string>) {
+async function loadDeployedWidgetFixture(
+  page: Page,
+  dataset: Record<string, string>,
+  options: { fixturePath?: string; bodyStyle?: string } = {}
+) {
   const widgetOrigin = expectedWidgetOrigin || 'https://bugdrop-preview.neonwatty.workers.dev';
-  const fixturePath = '/bugdrop-live-locale-fixture';
+  const fixturePath = options.fixturePath ?? '/bugdrop-live-locale-fixture';
   const dataAttributes = Object.entries(dataset)
     .map(([key, value]) => `data-${key}="${value}"`)
     .join('\n          ');
@@ -67,7 +72,7 @@ async function loadDeployedWidgetFixture(page: Page, dataset: Record<string, str
         <!doctype html>
         <html lang="en-US">
           <head><title>BugDrop live fixture</title></head>
-          <body>
+          <body style="${options.bodyStyle ?? ''}">
             <main>
               <h1>BugDrop live fixture</h1>
               <p>Fixture page for deployed widget smoke tests.</p>
@@ -84,6 +89,93 @@ async function loadDeployedWidgetFixture(page: Page, dataset: Record<string, str
   });
 
   await page.goto(fixturePath);
+}
+
+async function brandedAppearance(page: Page) {
+  return page.evaluate(() => {
+    const shadow = document.querySelector('#bugdrop-host')?.shadowRoot;
+    const root = shadow?.querySelector('.bd-root');
+    const trigger = shadow?.querySelector('.bd-trigger');
+    const modal = shadow?.querySelector('.bd-modal');
+    const title = shadow?.querySelector('.bd-title');
+    const primaryButton = shadow?.querySelector('.bd-btn-primary');
+    if (!(root && trigger)) throw new Error('Expected branded widget root and trigger');
+
+    const rootStyle = getComputedStyle(root);
+    const triggerStyle = getComputedStyle(trigger);
+    const modalStyle = modal ? getComputedStyle(modal) : null;
+    const titleStyle = title ? getComputedStyle(title) : null;
+    const buttonStyle = primaryButton ? getComputedStyle(primaryButton) : null;
+    return {
+      dark: root.classList.contains('bd-dark'),
+      variables: {
+        font: rootStyle.getPropertyValue('--bd-font').trim(),
+        primary: rootStyle.getPropertyValue('--bd-primary').trim(),
+        background: rootStyle.getPropertyValue('--bd-bg-primary').trim(),
+        text: rootStyle.getPropertyValue('--bd-text-primary').trim(),
+        borderWidth: rootStyle.getPropertyValue('--bd-border-width').trim(),
+        border: rootStyle.getPropertyValue('--bd-border').trim(),
+        shadow: rootStyle.getPropertyValue('--bd-shadow-lg').trim(),
+      },
+      trigger: {
+        background: triggerStyle.backgroundColor,
+        color: triggerStyle.color,
+        font: triggerStyle.fontFamily,
+        borderWidth: triggerStyle.borderTopWidth,
+        borderColor: triggerStyle.borderTopColor,
+        leftRadius: triggerStyle.borderTopLeftRadius,
+        rightRadius: triggerStyle.borderTopRightRadius,
+      },
+      modal: modalStyle
+        ? {
+            background: modalStyle.backgroundColor,
+            borderWidth: modalStyle.borderTopWidth,
+            borderColor: modalStyle.borderTopColor,
+            radius: modalStyle.borderTopLeftRadius,
+            shadow: modalStyle.boxShadow,
+          }
+        : null,
+      titleColor: titleStyle?.color ?? null,
+      primaryButtonBackground: buttonStyle?.backgroundColor ?? null,
+    };
+  });
+}
+
+function expectBrandedAppearance(
+  appearance: Awaited<ReturnType<typeof brandedAppearance>>,
+  options: { modal: boolean; fontVariable?: string; triggerFont?: string }
+) {
+  expect(appearance.variables).toEqual({
+    font: options.fontVariable ?? 'monospace, system-ui, sans-serif',
+    primary: '#b91c1c',
+    background: '#fef3c7',
+    text: '#422006',
+    borderWidth: '3px',
+    border: '#7c2d12',
+    shadow: '#7c2d12 calc(3px + 2px) calc(3px + 2px) 0 0',
+  });
+  expect(appearance.trigger).toEqual({
+    background: 'rgb(185, 28, 28)',
+    color: appearance.dark ? 'rgb(15, 23, 42)' : 'rgb(255, 255, 255)',
+    font: options.triggerFont ?? 'monospace, system-ui, sans-serif',
+    borderWidth: '3px',
+    borderColor: 'rgb(124, 45, 18)',
+    leftRadius: '0px',
+    rightRadius: '8px',
+  });
+  if (!options.modal) {
+    expect(appearance.modal).toBeNull();
+    return;
+  }
+  const { shadow: _shadow, ...modal } = appearance.modal;
+  expect(modal).toEqual({
+    background: 'rgb(254, 243, 199)',
+    borderWidth: '3px',
+    borderColor: 'rgb(124, 45, 18)',
+    radius: '8px',
+  });
+  expect(appearance.titleColor).toBe('rgb(66, 32, 6)');
+  expect(appearance.primaryButtonBackground).toBe('rgb(185, 28, 28)');
 }
 
 async function addCorsBlockedImage(page: Page) {
@@ -383,6 +475,108 @@ test.describe('Localization (Live)', () => {
 });
 
 test.describe('Feedback Button (Live)', () => {
+  test('preserves configured styling across the exact default-flow artifact', async ({ page }) => {
+    const appearances: Array<{
+      state: string;
+      appearance: Awaited<ReturnType<typeof brandedAppearance>>;
+    }> = [];
+    const recordAppearance = async (state: string, modal: boolean) => {
+      await page.mouse.move(0, 0);
+      await page.waitForTimeout(200);
+      const appearance = await brandedAppearance(page);
+      expectBrandedAppearance(appearance, { modal });
+      appearances.push({ state, appearance });
+    };
+    await mockInstalledRepo(page);
+    let attempts = 0;
+    await page.route('**/feedback', async route => {
+      attempts += 1;
+      await route.fulfill({
+        status: attempts === 1 ? 500 : 200,
+        contentType: 'application/json',
+        body: JSON.stringify(
+          attempts === 1
+            ? { success: false, error: 'Deliberate branded retry' }
+            : { success: true, issueNumber: 1, issueUrl: '#', isPublic: false }
+        ),
+      });
+    });
+    const brandedDataset = {
+      theme: 'light',
+      position: 'bottom-left',
+      color: '#b91c1c',
+      font: 'monospace',
+      radius: '4',
+      bg: '#fef3c7',
+      text: '#422006',
+      'border-width': '3',
+      'border-color': '#7c2d12',
+      shadow: 'hard',
+      icon: 'none',
+      label: 'Brand feedback',
+    };
+    await loadDeployedWidgetFixture(page, brandedDataset);
+
+    const host = page.locator('#bugdrop-host');
+    const trigger = host.locator('css=.bd-trigger');
+    await expect(trigger).toBeVisible({ timeout: 10_000 });
+    await expect(trigger.locator('css=.bd-trigger-label')).toHaveText('Brand feedback');
+    await expect(trigger.locator('css=.bd-trigger-icon')).toHaveCount(0);
+    await recordAppearance('trigger-light', false);
+
+    await page.evaluate(() => window.BugDrop?.setTheme('dark'));
+    await expect.poll(async () => (await brandedAppearance(page)).dark).toBe(true);
+    await recordAppearance('trigger-dark', false);
+    await page.evaluate(() => window.BugDrop?.setTheme('light'));
+
+    await trigger.click();
+    await expect(host.locator('css=[data-action="continue"]')).toBeVisible();
+    await recordAppearance('welcome', true);
+    await host.locator('css=[data-action="continue"]').click();
+
+    const title = host.locator('css=#title');
+    await expect(title).toBeVisible();
+    await host.locator('css=#submit-btn').click();
+    await expect(title).toBeFocused();
+    expect(await title.evaluate(element => element.matches(':invalid'))).toBe(true);
+    await expect(title).toHaveCSS('border-top-color', 'rgb(185, 28, 28)');
+    await recordAppearance('validation', true);
+
+    await title.fill('Branded compatibility');
+    await host.locator('css=#include-screenshot').uncheck();
+    await host.locator('css=#submit-btn').click();
+    await expect(host.locator('css=.bd-title')).toHaveText('Submission Failed');
+    await expect(host.locator('css=.bd-error-message__text')).toHaveText(
+      'Deliberate branded retry'
+    );
+    await recordAppearance('failure', true);
+
+    await host.locator('css=[data-action="retry"]').click();
+    await expect(host.locator('css=.bd-success-icon')).toBeVisible({ timeout: 10_000 });
+    expect(attempts).toBe(2);
+    await recordAppearance('success', true);
+
+    await loadDeployedWidgetFixture(
+      page,
+      { ...brandedDataset, font: 'inherit' },
+      {
+        fixturePath: '/bugdrop-live-inherited-font-fixture',
+        bodyStyle: 'font-family: Georgia, serif',
+      }
+    );
+    await expect(page.locator('#bugdrop-host').locator('css=.bd-trigger')).toBeVisible();
+    const inheritedAppearance = await brandedAppearance(page);
+    expectBrandedAppearance(inheritedAppearance, {
+      modal: false,
+      fontVariable: '',
+      triggerFont: 'Georgia, serif',
+    });
+    appearances.push({ state: 'font-inherit', appearance: inheritedAppearance });
+
+    const snapshotPath = process.env.BUGDROP_STYLE_SNAPSHOT_PATH?.trim();
+    if (snapshotPath) await writeFile(snapshotPath, `${JSON.stringify(appearances, null, 2)}\n`);
+  });
+
   test('feedback button is visible and clickable', async ({ page }) => {
     await page.goto(venuePath);
 

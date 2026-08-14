@@ -550,6 +550,7 @@ jobs:
         run: >-
           EXACT_WIDGET_FIXTURE_PATH="$EXACT_WIDGET_FIXTURE_PATH"
           EXPECTED_WIDGET_SHA256="$EXPECTED_WIDGET_SHA256"
+          BUGDROP_STYLE_SNAPSHOT_PATH="$RUNNER_TEMP/chromium-live-candidate-style-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
           PLAYWRIGHT_JSON_OUTPUT_NAME="$RUNNER_TEMP/chromium-live-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
           npx playwright test --project=chromium-live --workers=1 --retries=0 --reporter=json
         env:
@@ -559,6 +560,7 @@ jobs:
         run: >-
           EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"
           EXPECTED_WIDGET_SHA256="$EXPECTED_CLASSIC_WIDGET_SHA256"
+          BUGDROP_STYLE_SNAPSHOT_PATH="$RUNNER_TEMP/chromium-live-classic-style-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
           PLAYWRIGHT_JSON_OUTPUT_NAME="$RUNNER_TEMP/chromium-live-classic-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
           npx playwright test --project=chromium-live --workers=1 --retries=0 --reporter=json
         env:
@@ -595,15 +597,25 @@ jobs:
           const [candidate, classic] = reportPaths.map(path =>
             flatten(JSON.parse(fs.readFileSync(path, 'utf8')))
           );
+          const stylePaths = [
+            `${process.env.RUNNER_TEMP}/chromium-live-candidate-style-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}.json`,
+            `${process.env.RUNNER_TEMP}/chromium-live-classic-style-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}.json`,
+          ];
+          const [candidateStyle, classicStyle] = stylePaths.map(path =>
+            JSON.parse(fs.readFileSync(path, 'utf8'))
+          );
+          if (JSON.stringify(candidateStyle) !== JSON.stringify(classicStyle)) {
+            throw new Error('Candidate and classic configured-style snapshots differ.');
+          }
           const candidateJson = JSON.stringify(candidate);
           if (candidateJson !== JSON.stringify(classic)) {
             throw new Error('Candidate and classic chromium-live identifiers/outcomes differ.');
           }
           const passed = candidate.filter(test => test.status === 'expected').length;
           const skipped = candidate.filter(test => test.status === 'skipped');
-          if (candidate.length !== 22 || passed !== 21 || skipped.length !== 1) {
+          if (candidate.length !== 23 || passed !== 22 || skipped.length !== 1) {
             throw new Error(
-              `Expected 22 chromium-live tests with 21 passed and 1 skipped; got ${candidate.length}, ${passed}, ${skipped.length}.`
+              `Expected 23 chromium-live tests with 22 passed and 1 skipped; got ${candidate.length}, ${passed}, ${skipped.length}.`
             );
           }
           if (
@@ -740,6 +752,8 @@ jobs:
             playwright-report/
             ${{ runner.temp }}/chromium-live-candidate-${{ github.run_id }}-${{ github.run_attempt }}.json
             ${{ runner.temp }}/chromium-live-classic-${{ github.run_id }}-${{ github.run_attempt }}.json
+            ${{ runner.temp }}/chromium-live-candidate-style-${{ github.run_id }}-${{ github.run_attempt }}.json
+            ${{ runner.temp }}/chromium-live-classic-style-${{ github.run_id }}-${{ github.run_attempt }}.json
           if-no-files-found: warn
           retention-days: 7
 
