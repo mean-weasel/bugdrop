@@ -72,12 +72,15 @@ require_paired_lane() {
   local name=$1
   local fixture=$2
   local digest=$3
-  local command=$4
+  local command=${5:-$4}
   local block
   block=$(step_block "$ci_workflow" "$name")
   [[ -n "$block" ]] || fail "paired preview lane is missing: $name"
   require_count "$block" "EXACT_WIDGET_FIXTURE_PATH=\"\$$fixture\"" 1 "$name"
   require_count "$block" "EXPECTED_WIDGET_SHA256=\"\$$digest\"" 1 "$name"
+  if [[ $# -eq 5 ]]; then
+    require_count "$block" "$4" 1 "$name style snapshot"
+  fi
   require_count "$block" "$command" 1 "$name"
   if [[ $fixture == EXACT_WIDGET_FIXTURE_PATH ]] &&
     grep -Fq 'EXACT_CLASSIC_WIDGET_FIXTURE_PATH' <<< "$block"; then
