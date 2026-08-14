@@ -403,23 +403,62 @@ jobs:
         env:
           BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
 
-      - name: Build classic preview widget
+      - name: Build classic fixed-controller preview widget
         run: |
           CLASSIC_OUTPUT="$RUNNER_TEMP/classic-preview-widget"
-          BUGDROP_DEFAULT_FLOW_RUNTIME=fixed node scripts/build-widget.js \
+          node scripts/build-widget.js \
             --mode development \
             --source-dir . \
             --output-dir "$CLASSIC_OUTPUT" \
-            --development-id "merge-group-${GITHUB_SHA}-classic"
+            --development-id "merge-group-${GITHUB_SHA}-classic" \
+            --default-flow-runtime fixed
 
-      - name: Build all
-        run: BUGDROP_BUILD_MODE=development BUGDROP_DEVELOPMENT_ID="merge-group-${GITHUB_SHA}" make build-all
+      - name: Build normal flow-controller preview widget and application
+        run: BUGDROP_BUILD_MODE=development BUGDROP_DEVELOPMENT_ID="merge-group-${GITHUB_SHA}-candidate" make build-all
 
-      - name: Record expected preview widget hashes
+      - name: Validate and record dual-controller preview identities
         run: |
           cp "$RUNNER_TEMP/classic-preview-widget/widget.js" public/widget.classic.js
-          echo "EXPECTED_WIDGET_SHA256=$(shasum -a 256 public/widget.js | awk '{print $1}')" >> "$GITHUB_ENV"
-          echo "EXPECTED_CLASSIC_WIDGET_SHA256=$(shasum -a 256 public/widget.classic.js | awk '{print $1}')" >> "$GITHUB_ENV"
+          CANDIDATE_SHA256=$(shasum -a 256 public/widget.js | awk '{print $1}')
+          CLASSIC_SHA256=$(shasum -a 256 public/widget.classic.js | awk '{print $1}')
+          [[ "$CANDIDATE_SHA256" =~ ^[a-f0-9]{64}$ ]] || {
+            echo "Candidate widget SHA-256 is not a lowercase 64-character digest: $CANDIDATE_SHA256"
+            exit 1
+          }
+          [[ "$CLASSIC_SHA256" =~ ^[a-f0-9]{64}$ ]] || {
+            echo "Classic widget SHA-256 is not a lowercase 64-character digest: $CLASSIC_SHA256"
+            exit 1
+          }
+          [ "$CANDIDATE_SHA256" != "$CLASSIC_SHA256" ] || {
+            echo 'Candidate and classic widget hashes must differ.'
+            exit 1
+          }
+          grep -Fq "development:merge-group-${GITHUB_SHA}-candidate" public/widget.js || {
+            echo 'Candidate widget lacks its merge-group commit identity.'
+            exit 1
+          }
+          grep -Fq 'bugdrop-flow@1' public/widget.js || {
+            echo 'Candidate widget lacks the public FlowConfig compiler marker.'
+            exit 1
+          }
+          grep -Fq 'bugdrop-default@1' public/widget.js || {
+            echo 'Candidate widget lacks the built-in flow-default controller marker.'
+            exit 1
+          }
+          grep -Fq "development:merge-group-${GITHUB_SHA}-classic" public/widget.classic.js || {
+            echo 'Classic widget lacks its merge-group commit identity.'
+            exit 1
+          }
+          grep -Fq 'bugdrop-flow@1' public/widget.classic.js || {
+            echo 'Classic widget lacks the public FlowConfig compiler marker.'
+            exit 1
+          }
+          if grep -Fq 'bugdrop-default@1' public/widget.classic.js; then
+            echo 'Classic widget unexpectedly contains the built-in flow-default controller marker.'
+            exit 1
+          fi
+          echo "EXPECTED_WIDGET_SHA256=$CANDIDATE_SHA256" >> "$GITHUB_ENV"
+          echo "EXPECTED_CLASSIC_WIDGET_SHA256=$CLASSIC_SHA256" >> "$GITHUB_ENV"
 
       - name: Deploy to preview
         run: npx wrangler deploy --env preview --var "BUILD_SHA:$GITHUB_SHA"
@@ -507,16 +546,87 @@ jobs:
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
-      - name: Run classic live E2E tests
+      - name: Run candidate legacy and default live E2E tests
         run: >-
-          EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"
-          EXPECTED_WIDGET_SHA256="$EXPECTED_CLASSIC_WIDGET_SHA256"
-          npx playwright test --project=chromium-live --workers=1 --retries=0
+          EXACT_WIDGET_FIXTURE_PATH="$EXACT_WIDGET_FIXTURE_PATH"
+          EXPECTED_WIDGET_SHA256="$EXPECTED_WIDGET_SHA256"
+          PLAYWRIGHT_JSON_OUTPUT_NAME="$RUNNER_TEMP/chromium-live-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          npx playwright test --project=chromium-live --workers=1 --retries=0 --reporter=json
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
+      - name: Run classic legacy and default live E2E tests
+        run: >-
+          EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"
+          EXPECTED_WIDGET_SHA256="$EXPECTED_CLASSIC_WIDGET_SHA256"
+          PLAYWRIGHT_JSON_OUTPUT_NAME="$RUNNER_TEMP/chromium-live-classic-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          npx playwright test --project=chromium-live --workers=1 --retries=0 --reporter=json
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+      - name: Require identical candidate and classic legacy outcomes
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+
+          const reportPaths = [
+            `${process.env.RUNNER_TEMP}/chromium-live-candidate-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}.json`,
+            `${process.env.RUNNER_TEMP}/chromium-live-classic-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}.json`,
+          ];
+          const flatten = report => {
+            const records = [];
+            const visit = suite => {
+              for (const spec of suite.specs || []) {
+                for (const test of spec.tests || []) {
+                  records.push({
+                    id: spec.id,
+                    file: spec.file,
+                    title: spec.title,
+                    expectedStatus: test.expectedStatus,
+                    status: test.status,
+                  });
+                }
+              }
+              for (const child of suite.suites || []) visit(child);
+            };
+            for (const suite of report.suites || []) visit(suite);
+            return records.sort((left, right) => left.id.localeCompare(right.id));
+          };
+          const [candidate, classic] = reportPaths.map(path =>
+            flatten(JSON.parse(fs.readFileSync(path, 'utf8')))
+          );
+          const candidateJson = JSON.stringify(candidate);
+          if (candidateJson !== JSON.stringify(classic)) {
+            throw new Error('Candidate and classic chromium-live identifiers/outcomes differ.');
+          }
+          const passed = candidate.filter(test => test.status === 'expected').length;
+          const skipped = candidate.filter(test => test.status === 'skipped');
+          if (candidate.length !== 22 || passed !== 21 || skipped.length !== 1) {
+            throw new Error(
+              `Expected 22 chromium-live tests with 21 passed and 1 skipped; got ${candidate.length}, ${passed}, ${skipped.length}.`
+            );
+          }
+          if (
+            skipped[0].title !==
+            'privacy masking failure UX works on the deployed production widget'
+          ) {
+            throw new Error(`Unexpected chromium-live skip: ${skipped[0].title}`);
+          }
+          NODE
+
       - name: Run composable FlowConfig live E2E tests
-        run: npx playwright test --project=chromium-flow-live --workers=1 --retries=0
+        run: >-
+          EXACT_WIDGET_FIXTURE_PATH="$EXACT_WIDGET_FIXTURE_PATH"
+          EXPECTED_WIDGET_SHA256="$EXPECTED_WIDGET_SHA256"
+          npx playwright test --project=chromium-flow-live --workers=1 --retries=0
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+      - name: Run candidate live Radix E2E tests
+        run: >-
+          EXACT_WIDGET_FIXTURE_PATH="$EXACT_WIDGET_FIXTURE_PATH"
+          EXPECTED_WIDGET_SHA256="$EXPECTED_WIDGET_SHA256"
+          make test-live-radix
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
@@ -528,6 +638,14 @@ jobs:
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
+      - name: Run candidate Chromium live cross-browser smoke
+        run: >-
+          EXACT_WIDGET_FIXTURE_PATH="$EXACT_WIDGET_FIXTURE_PATH"
+          EXPECTED_WIDGET_SHA256="$EXPECTED_WIDGET_SHA256"
+          make test-live-cross-browser BROWSER=chromium
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
       - name: Run classic Chromium live cross-browser smoke
         run: >-
           EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"
@@ -536,11 +654,27 @@ jobs:
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
+      - name: Run candidate Firefox live cross-browser smoke
+        run: >-
+          EXACT_WIDGET_FIXTURE_PATH="$EXACT_WIDGET_FIXTURE_PATH"
+          EXPECTED_WIDGET_SHA256="$EXPECTED_WIDGET_SHA256"
+          make test-live-cross-browser BROWSER=firefox
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
       - name: Run classic Firefox live cross-browser smoke
         run: >-
           EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"
           EXPECTED_WIDGET_SHA256="$EXPECTED_CLASSIC_WIDGET_SHA256"
           make test-live-cross-browser BROWSER=firefox
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+      - name: Run candidate WebKit live cross-browser smoke
+        run: >-
+          EXACT_WIDGET_FIXTURE_PATH="$EXACT_WIDGET_FIXTURE_PATH"
+          EXPECTED_WIDGET_SHA256="$EXPECTED_WIDGET_SHA256"
+          make test-live-cross-browser BROWSER=webkit
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
@@ -556,8 +690,8 @@ jobs:
         run: |
           mkdir -p "$(dirname "$BUGDROP_CANARY_ATTEMPT_FILE")"
           : > "$BUGDROP_CANARY_ATTEMPT_FILE"
-          EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH" \
-          EXPECTED_WIDGET_SHA256="$EXPECTED_CLASSIC_WIDGET_SHA256" \
+          EXACT_WIDGET_FIXTURE_PATH="$EXACT_WIDGET_FIXTURE_PATH" \
+          EXPECTED_WIDGET_SHA256="$EXPECTED_WIDGET_SHA256" \
             npx playwright test e2e/widget.issue-canary.spec.ts --project=chromium-issue-canary --workers=1 --retries=0
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
@@ -602,7 +736,11 @@ jobs:
         if: failure()
         with:
           name: playwright-preview-critical-report
-          path: playwright-report/
+          path: |
+            playwright-report/
+            ${{ runner.temp }}/chromium-live-candidate-${{ github.run_id }}-${{ github.run_attempt }}.json
+            ${{ runner.temp }}/chromium-live-classic-${{ github.run_id }}-${{ github.run_attempt }}.json
+          if-no-files-found: warn
           retention-days: 7
 
   # Required-check bridge: fail closed if the merge-group critical section did not succeed.
