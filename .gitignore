@@ -4,6 +4,7 @@ node_modules/
 # Build outputs
 dist/
 public/widget.js
+public/widget.classic.js
 public/widget.v*.js
 public/versions.json
 

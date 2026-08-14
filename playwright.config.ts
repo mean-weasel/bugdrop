@@ -4,6 +4,7 @@ const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8787';
 const issueCanaryProject = 'chromium-issue-canary';
 const liveProjects = [
   'chromium-live',
+  'chromium-flow-live',
   'chromium-live-radix',
   'chromium-cross-browser-live',
   'firefox-cross-browser-live',
@@ -63,7 +64,7 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
       testIgnore: [
-        /.*\.(?:live|live-radix|cross-browser-live|issue-canary|radix)\.spec\.ts$/,
+        /.*\.(?:live|flow-live|live-radix|cross-browser-live|issue-canary|radix)\.spec\.ts$/,
         /default-flow-production\.spec\.ts$/,
       ],
     },
@@ -89,6 +90,15 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
       },
       testMatch: liveTestMatch(/.*\.live\.spec\.ts/),
+      timeout: 60_000,
+    },
+    {
+      name: 'chromium-flow-live',
+      fullyParallel: false,
+      use: {
+        ...devices['Desktop Chrome'],
+      },
+      testMatch: liveTestMatch(/.*\.flow-live\.spec\.ts/),
       timeout: 60_000,
     },
     {
