@@ -15,18 +15,22 @@ export function createRatingController(field: RatingField, instanceId: string): 
 
   const buttons: HTMLButtonElement[] = [];
   let selected: number | null = null;
+  let previewed: number | null = null;
 
   const renderSelection = () => {
     for (const [index, button] of buttons.entries()) {
       const value = index + 1;
-      const active = selected !== null && value <= selected;
+      const active = previewed === null && selected !== null && value <= selected;
+      const preview = previewed !== null && value <= previewed;
       button.classList.toggle('bdv-rating-option--active', active);
+      button.classList.toggle('bdv-rating-option--preview', preview);
       button.setAttribute('aria-checked', String(value === selected));
       button.tabIndex = value === (selected ?? 1) ? 0 : -1;
     }
   };
   const select = (value: number, focus = false) => {
     selected = value;
+    previewed = null;
     renderSelection();
     if (focus) buttons[value - 1]?.focus();
   };
@@ -34,7 +38,18 @@ export function createRatingController(field: RatingField, instanceId: string): 
     button: HTMLButtonElement;
     click: () => void;
     keydown: (event: KeyboardEvent) => void;
+    pointerenter: () => void;
   }> = [];
+  const clearPreview = () => {
+    if (previewed === null) return;
+    previewed = null;
+    renderSelection();
+  };
+  const handleGroupPointerMove = (event: PointerEvent) => {
+    const target = event.target;
+    if (target instanceof HTMLButtonElement && buttons.includes(target) && !target.disabled) return;
+    clearPreview();
+  };
 
   for (let value = 1; value <= scale; value += 1) {
     const button = document.createElement('button');
@@ -44,6 +59,11 @@ export function createRatingController(field: RatingField, instanceId: string): 
     button.setAttribute('aria-label', `${value} ${value === 1 ? 'star' : 'stars'}`);
     button.textContent = field.icon === 'number' ? String(value) : '★';
     const click = () => select(value);
+    const pointerenter = () => {
+      if (button.disabled) return;
+      previewed = value;
+      renderSelection();
+    };
     const keydown = (event: KeyboardEvent) => {
       let next: number | null = null;
       if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
@@ -63,10 +83,13 @@ export function createRatingController(field: RatingField, instanceId: string): 
     };
     button.addEventListener('click', click);
     button.addEventListener('keydown', keydown);
-    listeners.push({ button, click, keydown });
+    button.addEventListener('pointerenter', pointerenter);
+    listeners.push({ button, click, keydown, pointerenter });
     buttons.push(button);
     group.appendChild(button);
   }
+  group.addEventListener('pointermove', handleGroupPointerMove);
+  group.addEventListener('pointerleave', clearPreview);
   scaffold.wrapper.insertBefore(group, scaffold.wrapper.querySelector('.bdv-error'));
 
   if (field.lowLabel || field.highLabel) {
@@ -90,19 +113,25 @@ export function createRatingController(field: RatingField, instanceId: string): 
         Number.isInteger(value) && (value as number) >= 1 && (value as number) <= scale
           ? (value as number)
           : null;
+      previewed = null;
       renderSelection();
     },
     setError: message => scaffold.setError(group, message),
     setDisabled(disabled) {
       for (const button of buttons) button.disabled = disabled;
+      if (disabled) clearPreview();
     },
     focus() {
       buttons[(selected ?? 1) - 1]?.focus();
     },
     dispose() {
+      clearPreview();
+      group.removeEventListener('pointermove', handleGroupPointerMove);
+      group.removeEventListener('pointerleave', clearPreview);
       for (const listener of listeners) {
         listener.button.removeEventListener('click', listener.click);
         listener.button.removeEventListener('keydown', listener.keydown);
+        listener.button.removeEventListener('pointerenter', listener.pointerenter);
       }
     },
   };

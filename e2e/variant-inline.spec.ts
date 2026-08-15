@@ -76,7 +76,112 @@ test.describe('rendered inline variants', () => {
       'aria-checked',
       'true'
     );
+    const stars = rating.getByRole('radio');
+    const selectedStyle = await stars.nth(1).evaluate(element => {
+      const style = getComputedStyle(element);
+      return `${style.color}|${style.borderColor}|${style.backgroundColor}`;
+    });
+    const idleStyle = await stars.nth(4).evaluate(element => {
+      const style = getComputedStyle(element);
+      return `${style.color}|${style.borderColor}|${style.backgroundColor}`;
+    });
+    await rating.getByRole('radio', { name: '4 stars' }).hover();
+    await expect(stars.nth(0)).toHaveClass(/bdv-rating-option--preview/);
+    await expect(stars.nth(1)).toHaveClass(/bdv-rating-option--preview/);
+    await expect(stars.nth(2)).toHaveClass(/bdv-rating-option--preview/);
+    await expect(stars.nth(3)).toHaveClass(/bdv-rating-option--preview/);
+    await expect(stars.nth(4)).not.toHaveClass(/bdv-rating-option--preview/);
+    await expect(rating.getByRole('radio', { name: '2 stars' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+    const previewStyle = await stars.nth(3).evaluate(element => {
+      const style = getComputedStyle(element);
+      return `${style.color}|${style.borderColor}|${style.backgroundColor}`;
+    });
+    expect(previewStyle).not.toBe(idleStyle);
+    expect(previewStyle).not.toBe(selectedStyle);
+
+    await rating.getByRole('radio', { name: '5 stars' }).click();
+    await page.mouse.move(0, 0);
+    for (let index = 0; index < 5; index += 1) {
+      await expect(stars.nth(index)).not.toHaveClass(/bdv-rating-option--preview/);
+      await expect(stars.nth(index)).toHaveClass(/bdv-rating-option--active/);
+    }
+    await expect(rating.getByRole('radio', { name: '5 stars' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+
+    await rating.getByRole('radio', { name: '2 stars' }).hover();
+    for (let index = 0; index < 2; index += 1) {
+      await expect(stars.nth(index)).toHaveClass(/bdv-rating-option--preview/);
+    }
+    for (let index = 2; index < 5; index += 1) {
+      await expect(stars.nth(index)).not.toHaveClass(/bdv-rating-option--preview/);
+    }
+    for (let index = 0; index < 5; index += 1) {
+      await expect(stars.nth(index)).not.toHaveClass(/bdv-rating-option--active/);
+    }
+    await expect(rating.getByRole('radio', { name: '5 stars' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+    await expect(rating.getByRole('radio', { name: '5 stars' })).toHaveAttribute('tabindex', '0');
+    const secondStarBox = await stars.nth(1).boundingBox();
+    const thirdStarBox = await stars.nth(2).boundingBox();
+    expect(secondStarBox).not.toBeNull();
+    expect(thirdStarBox).not.toBeNull();
+    const gapWidth = thirdStarBox!.x - (secondStarBox!.x + secondStarBox!.width);
+    expect(gapWidth).toBeCloseTo(6, 0);
+    const gapX = secondStarBox!.x + secondStarBox!.width + gapWidth / 2;
+    const gapY = secondStarBox!.y + secondStarBox!.height / 2;
+    await page.mouse.move(gapX, gapY);
+    for (let index = 0; index < 5; index += 1) {
+      await expect(stars.nth(index)).not.toHaveClass(/bdv-rating-option--preview/);
+      await expect(stars.nth(index)).toHaveClass(/bdv-rating-option--active/);
+    }
+    await expect(rating.getByRole('radio', { name: '5 stars' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+    await expect(rating.getByRole('radio', { name: '5 stars' })).toHaveAttribute('tabindex', '0');
+
+    await rating.getByRole('radio', { name: '3 stars' }).hover();
+    for (let index = 0; index < 3; index += 1) {
+      await expect(stars.nth(index)).toHaveClass(/bdv-rating-option--preview/);
+    }
+    for (let index = 3; index < 5; index += 1) {
+      await expect(stars.nth(index)).not.toHaveClass(/bdv-rating-option--preview/);
+    }
+    const ratingBox = await rating.boundingBox();
+    const lastStarBox = await stars.nth(4).boundingBox();
+    expect(ratingBox).not.toBeNull();
+    expect(lastStarBox).not.toBeNull();
+    const trailingX = ratingBox!.x + ratingBox!.width - 1;
+    expect(trailingX).toBeGreaterThan(lastStarBox!.x + lastStarBox!.width);
+    await page.mouse.move(trailingX, ratingBox!.y + ratingBox!.height / 2);
+    for (let index = 0; index < 5; index += 1) {
+      await expect(stars.nth(index)).not.toHaveClass(/bdv-rating-option--preview/);
+      await expect(stars.nth(index)).toHaveClass(/bdv-rating-option--active/);
+    }
+    await expect(rating.getByRole('radio', { name: '5 stars' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+    await expect(rating.getByRole('radio', { name: '5 stars' })).toHaveAttribute('tabindex', '0');
+
     await rating.getByRole('radio', { name: '4 stars' }).click();
+    await page.mouse.move(0, 0);
+    await expect(rating.getByRole('radio', { name: '4 stars' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+    const clickedStyle = await stars.nth(3).evaluate(element => {
+      const style = getComputedStyle(element);
+      return `${style.color}|${style.borderColor}|${style.backgroundColor}`;
+    });
+    expect(clickedStyle).not.toBe(previewStyle);
     expect(submissions).toHaveLength(0);
     await host.getByRole('textbox', { name: 'Anything else?' }).fill('  Fast and clear.  ');
     expect(submissions).toHaveLength(0);
@@ -97,7 +202,7 @@ test.describe('rendered inline variants', () => {
           { heading: 'Comment', value: 'Fast and clear.', format: 'text' },
         ],
       },
-      metadata: { url: 'http://localhost:8787/test/' },
+      metadata: { url: new URL('/test/', page.url()).href },
     });
     expect(submissions[0]?.submissionId).toEqual(expect.any(String));
     expect(submissions[0]).not.toHaveProperty('labels');
@@ -217,6 +322,15 @@ test.describe('rendered inline variants', () => {
     await expect(page.locator('#first-review-slot > [data-bugdrop-owned]')).toHaveCount(0);
     const second = page.locator('#second-review-slot > [data-bugdrop-owned]');
     await expect(second).toHaveAttribute('data-bugdrop-instance', instances.second);
+    await expect(second.getByRole('radio', { name: '5 stars' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+    await second.getByRole('radio', { name: '2 stars' }).hover();
+    const secondStars = second.getByRole('radio');
+    await expect(secondStars.nth(0)).toHaveClass(/bdv-rating-option--preview/);
+    await expect(secondStars.nth(1)).toHaveClass(/bdv-rating-option--preview/);
+    await expect(secondStars.nth(2)).not.toHaveClass(/bdv-rating-option--preview/);
     await expect(second.getByRole('radio', { name: '5 stars' })).toHaveAttribute(
       'aria-checked',
       'true'

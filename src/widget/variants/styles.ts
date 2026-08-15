@@ -144,8 +144,16 @@ const VARIANT_CSS = `
     font-size: 1.4rem;
     line-height: 1;
   }
-  .bdv-rating-option:hover,
-  .bdv-rating-option--active { color: var(--bdv-accent); border-color: var(--bdv-accent); }
+  .bdv-rating-option--active {
+    color: var(--bdv-accent);
+    border-color: var(--bdv-accent);
+    background: color-mix(in srgb, var(--bdv-accent) 18%, var(--bdv-bg-muted));
+  }
+  .bdv-rating-option--preview {
+    color: color-mix(in srgb, var(--bdv-accent) 70%, var(--bdv-text-muted));
+    border-color: color-mix(in srgb, var(--bdv-accent) 55%, var(--bdv-border));
+    background: color-mix(in srgb, var(--bdv-accent) 8%, var(--bdv-bg-muted));
+  }
   .bdv-rating-option:disabled { cursor: wait; opacity: .65; }
   .bdv-rating-labels {
     display: flex;
