@@ -59,7 +59,7 @@ describe('rendered variant field controllers', () => {
     expect(short.element.querySelector('input')?.hasAttribute('aria-invalid')).toBe(false);
   });
 
-  it('supports pointer and keyboard rating selection without a form submit control', () => {
+  it('previews cumulative pointer ratings without changing the selected radio value', () => {
     const rating = createFieldController(
       {
         id: 'rating',
@@ -77,17 +77,112 @@ describe('rendered variant field controllers', () => {
     expect(buttons).toHaveLength(5);
     expect(buttons.every(button => button.type === 'button')).toBe(true);
 
-    buttons[2]?.click();
-    expect(rating.getValue()).toBe(3);
-    buttons[2]?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    buttons[3]?.dispatchEvent(new Event('pointerenter'));
+    expect(buttons.map(button => button.classList.contains('bdv-rating-option--preview'))).toEqual([
+      true,
+      true,
+      true,
+      true,
+      false,
+    ]);
+    expect(rating.getValue()).toBe('');
+    expect(buttons.map(button => button.getAttribute('aria-checked'))).toEqual([
+      'false',
+      'false',
+      'false',
+      'false',
+      'false',
+    ]);
+
+    buttons[3]?.click();
     expect(rating.getValue()).toBe(4);
     expect(buttons[3]?.getAttribute('aria-checked')).toBe('true');
+    expect(buttons.map(button => button.classList.contains('bdv-rating-option--active'))).toEqual([
+      true,
+      true,
+      true,
+      true,
+      false,
+    ]);
+    expect(buttons.some(button => button.classList.contains('bdv-rating-option--preview'))).toBe(
+      false
+    );
+
+    buttons[3]?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(rating.getValue()).toBe(5);
+    expect(buttons[4]?.getAttribute('aria-checked')).toBe('true');
+
+    buttons[1]?.dispatchEvent(new Event('pointerenter'));
+    expect(rating.getValue()).toBe(5);
+    expect(buttons.map(button => button.classList.contains('bdv-rating-option--preview'))).toEqual([
+      true,
+      true,
+      false,
+      false,
+      false,
+    ]);
+    expect(buttons.map(button => button.classList.contains('bdv-rating-option--active'))).toEqual([
+      false,
+      false,
+      false,
+      false,
+      false,
+    ]);
+    expect(buttons.map(button => button.getAttribute('aria-checked'))).toEqual([
+      'false',
+      'false',
+      'false',
+      'false',
+      'true',
+    ]);
+    expect(buttons.map(button => button.tabIndex)).toEqual([-1, -1, -1, -1, 0]);
+    buttons[2]?.dispatchEvent(new Event('pointerenter'));
+    expect(buttons.map(button => button.classList.contains('bdv-rating-option--preview'))).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+    ]);
+    const group = rating.element.querySelector('.bdv-rating');
+    group?.dispatchEvent(new Event('pointermove', { bubbles: true }));
+    expect(buttons.some(button => button.classList.contains('bdv-rating-option--preview'))).toBe(
+      false
+    );
+    expect(buttons.map(button => button.classList.contains('bdv-rating-option--active'))).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+    ]);
+    expect(rating.getValue()).toBe(5);
+    expect(buttons[4]?.getAttribute('aria-checked')).toBe('true');
 
     rating.setDisabled(true);
     expect(buttons.every(button => button.disabled)).toBe(true);
+    buttons[2]?.dispatchEvent(new Event('pointerenter'));
+    expect(buttons.some(button => button.classList.contains('bdv-rating-option--preview'))).toBe(
+      false
+    );
+    rating.setDisabled(false);
+    buttons[2]?.dispatchEvent(new Event('pointerenter'));
+    expect(buttons[2]?.classList.contains('bdv-rating-option--preview')).toBe(true);
+    group?.dispatchEvent(new Event('pointerleave'));
+    expect(buttons.some(button => button.classList.contains('bdv-rating-option--preview'))).toBe(
+      false
+    );
     rating.setValue('invalid');
     expect(rating.getValue()).toBe('');
+    buttons[2]?.dispatchEvent(new Event('pointerenter'));
     rating.dispose();
+    expect(buttons.some(button => button.classList.contains('bdv-rating-option--preview'))).toBe(
+      false
+    );
+    buttons[2]?.dispatchEvent(new Event('pointerenter'));
+    expect(buttons.some(button => button.classList.contains('bdv-rating-option--preview'))).toBe(
+      false
+    );
   });
 
   it.each(['radio', 'cards', 'buttons'] as const)(
