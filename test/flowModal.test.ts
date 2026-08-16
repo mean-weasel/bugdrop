@@ -12,7 +12,7 @@ describe('flow modal runtime states', () => {
     document.body.replaceChildren();
     vi.stubGlobal('crypto', { randomUUID: () => 'runtime-id' });
   });
-  it('keeps named dialog ownership through preflight, submission, and success and restores overflow priority', async () => {
+  it('suppresses duplicate submit while busy and keeps named dialog ownership through success', async () => {
     document.body.style.setProperty('overflow', 'clip', 'important');
     const value = {
       issueNumber: 1,
@@ -20,9 +20,10 @@ describe('flow modal runtime states', () => {
       isPublic: false,
     };
     let resolveSubmit!: (result: typeof value) => void;
-    const submit = new Promise<typeof value>(resolve => {
+    const submitResult = new Promise<typeof value>(resolve => {
       resolveSubmit = resolve;
     });
+    const submit = vi.fn(() => submitResult);
     const opened = openFlowModal(
       normalizeFlowDefinition(validateAndFreezeFlowConfig(flowConfig())),
       { initialAnswers: { 'triage.kind': 'idea', 'triage.summary': 'Idea' } },
@@ -34,18 +35,22 @@ describe('flow modal runtime states', () => {
           fullElementSelector: null,
           returnToForm: false,
         }),
-        submit: () => submit,
+        submit,
       }
     );
     await Promise.resolve();
     const host = document.querySelector<HTMLElement>('[data-bugdrop-flow]')!;
     const dialog = () => host.shadowRoot?.querySelector<HTMLElement>('[role="dialog"]');
     expect(dialog()?.getAttribute('aria-labelledby')).toBeTruthy();
-    host.shadowRoot?.querySelector<HTMLButtonElement>('.bdv-submit')?.click();
+    const advance = host.shadowRoot?.querySelector<HTMLButtonElement>('.bdv-submit');
+    advance?.click();
     await Promise.resolve();
-    host.shadowRoot?.querySelector<HTMLButtonElement>('.bdv-submit')?.click();
+    const submitButton = host.shadowRoot?.querySelector<HTMLButtonElement>('.bdv-submit');
+    submitButton?.click();
+    submitButton?.click();
     await Promise.resolve();
     await Promise.resolve();
+    expect(submit).toHaveBeenCalledOnce();
     expect(dialog()?.getAttribute('aria-busy')).toBe('true');
     resolveSubmit(value);
     await Promise.resolve();
@@ -54,6 +59,54 @@ describe('flow modal runtime states', () => {
     opened.close();
     expect(document.body.style.getPropertyValue('overflow')).toBe('clip');
     expect(document.body.style.getPropertyPriority('overflow')).toBe('important');
+  });
+
+  it('contains Tab and Shift+Tab focus and restores the invoking control', async () => {
+    const trigger = document.createElement('button');
+    document.body.appendChild(trigger);
+    trigger.focus();
+    const opened = openFlowModal(
+      normalizeFlowDefinition(validateAndFreezeFlowConfig(flowConfig())),
+      undefined,
+      {
+        preflight: async () => ({ status: 'installed' }),
+        capture: async () => ({
+          screenshot: null,
+          elementSelector: null,
+          fullElementSelector: null,
+          returnToForm: false,
+        }),
+        submit: async () => ({
+          issueNumber: 1,
+          issueUrl: 'https://github.com/owner/repo/issues/1',
+          isPublic: false,
+        }),
+      }
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const shadow = document.querySelector<HTMLElement>('[data-bugdrop-flow]')!.shadowRoot!;
+    const close = shadow.querySelector<HTMLButtonElement>('.bdv-close')!;
+    const continueButton = shadow.querySelector<HTMLButtonElement>('.bdv-submit')!;
+    continueButton.focus();
+    continueButton.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, composed: true, cancelable: true })
+    );
+    expect(shadow.activeElement).toBe(close);
+
+    close.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Tab',
+        shiftKey: true,
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      })
+    );
+    expect(shadow.activeElement).toBe(continueButton);
+    opened.close();
+    expect(document.activeElement).toBe(trigger);
   });
 
   it('allows a new modal owner to close a flow while it is submitting', async () => {

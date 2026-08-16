@@ -3,6 +3,42 @@ import { compileFlowIssueDraft } from '../src/widget/flows/issue-draft';
 import { flowConfig } from './flowConfig.test';
 
 describe('flow Issue mapping', () => {
+  it('compiles every supported output format and omits only empty sections', () => {
+    const config = flowConfig();
+    config.forms[0]!.fields.push({
+      id: 'score',
+      type: 'rating',
+      label: 'Score',
+      scale: 5,
+    });
+    config.issue.sections = [
+      { heading: 'Text', answer: 'triage.summary', format: 'text' },
+      { heading: 'Quote', answer: 'detail.description', format: 'quote' },
+      { heading: 'Code', context: 'build', format: 'code' },
+      { heading: 'Stars', answer: 'triage.score', format: 'stars' },
+      { heading: 'Choice', answer: 'triage.kind', format: 'choice' },
+      { heading: 'Undefined', context: 'missing', omitWhenEmpty: true },
+      { heading: 'Null', context: 'emptyNull', omitWhenEmpty: true },
+      { heading: 'Empty string', answer: 'detail.empty', omitWhenEmpty: true },
+    ];
+
+    expect(
+      compileFlowIssueDraft(
+        config,
+        {
+          'triage.summary': 'Crash',
+          'triage.kind': 'bug',
+          'triage.score': 3,
+          'detail.description': 'first\nsecond',
+          'detail.empty': '',
+        },
+        { build: 'sha`123', emptyNull: null }
+      ).description
+    ).toBe(
+      '## Text\n\nCrash\n\n## Quote\n\n> first\n> second\n\n## Code\n\n``sha`123``\n\n## Stars\n\n★★★☆☆ (3/5)\n\n## Choice\n\nBug'
+    );
+  });
+
   it('maps namespaced answers and context without HTML execution', () => {
     const config = flowConfig();
     config.issue.sections = [

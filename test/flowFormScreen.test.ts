@@ -21,6 +21,122 @@ const form: FlowForm = {
 };
 
 describe('flow form screen', () => {
+  it('applies every inherited field control through the thin FlowForm adapter', async () => {
+    const inherited: FlowForm = {
+      id: 'inherited',
+      title: 'Inherited controls',
+      fields: [
+        {
+          id: 'summary',
+          type: 'shortText',
+          label: 'Summary',
+          helpText: 'Keep it concise',
+          placeholder: 'A short summary',
+          minLength: 3,
+          maxLength: 40,
+        },
+        {
+          id: 'detail',
+          type: 'longText',
+          label: 'Detail',
+          placeholder: 'What happened?',
+          rows: 7,
+          minLength: 5,
+          maxLength: 500,
+        },
+        {
+          id: 'choice',
+          type: 'singleChoice',
+          label: 'Choice',
+          options: [
+            { value: 'first', label: 'First', description: 'The first described option' },
+            { value: 'second', label: 'Second' },
+          ],
+        },
+        {
+          id: 'enabled',
+          type: 'checkbox',
+          label: 'Enabled by default',
+          initialValue: true,
+        },
+      ],
+    };
+    const controller = createFlowFormScreen(inherited, 'adapter', {});
+    const summary = controller.element.querySelector<HTMLInputElement>('#adapter-summary')!;
+    const detail = controller.element.querySelector<HTMLTextAreaElement>('#adapter-detail')!;
+    const choice = controller.element.querySelector<HTMLElement>('[data-bugdrop-field="choice"]')!;
+    const enabled = controller.element.querySelector<HTMLInputElement>('#adapter-enabled')!;
+
+    expect(summary.placeholder).toBe('A short summary');
+    expect(summary.minLength).toBe(3);
+    expect(summary.maxLength).toBe(40);
+    expect(summary.getAttribute('aria-describedby')).toContain('adapter-summary-help');
+    expect(controller.element.querySelector('#adapter-summary-help')?.textContent).toBe(
+      'Keep it concise'
+    );
+    expect(detail.placeholder).toBe('What happened?');
+    expect(detail.rows).toBe(7);
+    expect(detail.minLength).toBe(5);
+    expect(detail.maxLength).toBe(500);
+    expect(choice.querySelector('.bdv-help')?.textContent).toBe('The first described option');
+    expect(enabled.checked).toBe(true);
+    await expect(controller.snapshot()).resolves.toMatchObject({ enabled: true });
+  });
+
+  it('focuses the first invalid shared or extra field', async () => {
+    const requiredForm: FlowForm = {
+      ...form,
+      fields: form.fields.map(field =>
+        field.id === 'first' ? { ...field, required: true } : field
+      ),
+    };
+    const controller = createFlowFormScreen(requiredForm, 'required', {});
+    document.body.appendChild(controller.element);
+
+    await expect(controller.collect()).resolves.toBeNull();
+    const first = controller.element.querySelector<HTMLInputElement>('#required-first')!;
+    expect(first.getAttribute('aria-invalid')).toBe('true');
+    expect(document.activeElement).toBe(first);
+    const firstError = controller.element.querySelector<HTMLElement>('#required-first-error')!;
+    expect(firstError.getAttribute('aria-live')).toBe('polite');
+    expect(firstError.hidden).toBe(false);
+    expect(firstError.textContent).toBe('is required');
+    expect(first.getAttribute('aria-describedby')).toContain(firstError.id);
+
+    first.value = 'Complete';
+    await expect(controller.collect()).resolves.toBeNull();
+    const agree = controller.element.querySelector<HTMLInputElement>('#required-agree')!;
+    expect(agree.getAttribute('aria-invalid')).toBe('true');
+    expect(document.activeElement).toBe(agree);
+    const agreeError = controller.element.querySelector<HTMLElement>('#required-agree-error')!;
+    expect(agreeError.getAttribute('aria-live')).toBe('polite');
+    expect(agreeError.hidden).toBe(false);
+    expect(agreeError.textContent).toBe('This checkbox is required.');
+    expect(agree.getAttribute('aria-describedby')).toContain(agreeError.id);
+  });
+
+  it('reads an accepted attachment and exposes its stable evidence envelope', async () => {
+    const controller = createFlowFormScreen(form, 'accepted', { 'details.agree': true });
+    const input = controller.element.querySelector<HTMLInputElement>('#accepted-files')!;
+    Object.defineProperty(input, 'files', {
+      value: [new File(['trace'], 'trace.png', { type: 'image/png' })],
+    });
+    input.dispatchEvent(new Event('change'));
+
+    await expect(controller.collect()).resolves.toMatchObject({
+      agree: true,
+      files: [
+        {
+          name: 'trace.png',
+          type: 'image/png',
+          size: 5,
+          dataUrl: expect.stringMatching(/^data:image\/png;base64,/),
+        },
+      ],
+    });
+    expect(controller.element.querySelector('.bdf-file-list')?.textContent).toBe('trace.png');
+  });
+
   it('preserves declared order, layout, help relationships, and snapshots without required validation', async () => {
     const controller = createFlowFormScreen(form, 'instance', {
       'details.first': 'One',
@@ -45,38 +161,45 @@ describe('flow form screen', () => {
     expect(checkbox.getAttribute('aria-invalid')).toBeNull();
   });
 
-  it('waits for file reads and exposes accessible read errors', async () => {
+  it('enforces selected attachment count, type, size, and latest-read race behavior', async () => {
     const fileForm: FlowForm = {
       ...form,
       fields: form.fields.map(field =>
-        field.id === 'files' ? { ...field, maxFileSize: 1 } : field
+        field.id === 'files'
+          ? { ...field, maxFiles: 1, maxFileSize: 1, accept: ['image/png'] }
+          : field
       ),
     };
-    const controller = createFlowFormScreen(fileForm, 'instance', { 'details.agree': true });
-    const input = controller.element.querySelector<HTMLInputElement>('#instance-files')!;
+    const constrained = createFlowFormScreen(fileForm, 'constrained', { 'details.agree': true });
+    const input = constrained.element.querySelector<HTMLInputElement>('#constrained-files')!;
     Object.defineProperty(input, 'files', {
-      value: [new File(['too large'], 'large.png', { type: 'image/png' })],
+      configurable: true,
+      value: [
+        new File(['a'], 'a.png', { type: 'image/png' }),
+        new File(['b'], 'b.png', { type: 'image/png' }),
+      ],
     });
     input.dispatchEvent(new Event('change'));
-    await expect(controller.collect()).resolves.toBeNull();
+    await expect(constrained.collect()).resolves.toBeNull();
     expect(input.getAttribute('aria-invalid')).toBe('true');
-    expect(controller.element.textContent).toContain('too large');
-    vi.restoreAllMocks();
-  });
-
-  it('rejects unsupported selected attachment types before reading them', async () => {
-    const controller = createFlowFormScreen(form, 'instance', { 'details.agree': true });
-    const input = controller.element.querySelector<HTMLInputElement>('#instance-files')!;
+    expect(constrained.element.textContent).toContain('Select at most 1 attachment');
     Object.defineProperty(input, 'files', {
+      configurable: true,
       value: [new File(['archive'], 'archive.zip', { type: 'application/zip' })],
     });
     input.dispatchEvent(new Event('change'));
-    await expect(controller.collect()).resolves.toBeNull();
+    await expect(constrained.collect()).resolves.toBeNull();
     expect(input.getAttribute('aria-invalid')).toBe('true');
-    expect(controller.element.textContent).toContain('unsupported file type');
-  });
+    expect(constrained.element.textContent).toContain('unsupported file type');
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: [new File(['ab'], 'large.png', { type: 'image/png' })],
+    });
+    input.dispatchEvent(new Event('change'));
+    await expect(constrained.collect()).resolves.toBeNull();
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(constrained.element.textContent).toContain('large.png is too large');
 
-  it('does not let an older file read overwrite a newer selection', async () => {
     const readers: Array<{ file?: File; resolve(): void }> = [];
     class ControlledReader {
       result: string | ArrayBuffer | null = null;
@@ -96,23 +219,23 @@ describe('flow form screen', () => {
       }
     }
     vi.stubGlobal('FileReader', ControlledReader);
-    const controller = createFlowFormScreen(form, 'instance', { 'details.agree': true });
-    const input = controller.element.querySelector<HTMLInputElement>('#instance-files')!;
-    Object.defineProperty(input, 'files', {
+    const raced = createFlowFormScreen(form, 'raced', { 'details.agree': true });
+    const racedInput = raced.element.querySelector<HTMLInputElement>('#raced-files')!;
+    Object.defineProperty(racedInput, 'files', {
       configurable: true,
       value: [new File(['a'], 'old.png', { type: 'image/png' })],
     });
-    input.dispatchEvent(new Event('change'));
-    Object.defineProperty(input, 'files', {
+    racedInput.dispatchEvent(new Event('change'));
+    Object.defineProperty(racedInput, 'files', {
       configurable: true,
       value: [new File(['b'], 'new.png', { type: 'image/png' })],
     });
-    input.dispatchEvent(new Event('change'));
+    racedInput.dispatchEvent(new Event('change'));
     readers[1]!.resolve();
     await Promise.resolve();
     readers[0]!.resolve();
     await Promise.resolve();
-    await expect(controller.collect()).resolves.toMatchObject({ files: [{ name: 'new.png' }] });
+    await expect(raced.collect()).resolves.toMatchObject({ files: [{ name: 'new.png' }] });
     vi.unstubAllGlobals();
   });
 

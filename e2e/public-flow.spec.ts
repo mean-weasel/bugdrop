@@ -1,6 +1,46 @@
 import { expect, test, type Page } from '@playwright/test';
+import type { FlowConfig, FlowOpenOptions } from '../src/widget/flows/public-types';
+import { flowRecipes, type FlowRecipeId } from '../test/fixtures/flow-recipes';
 
-async function ready(page: Page) {
+type Payload = Record<string, unknown> & {
+  title: string;
+  description: string;
+  category: string;
+  screenshot: string | null;
+  attachments: Array<Record<string, unknown>>;
+  consoleLogs?: Array<{ message?: string }>;
+  submitter?: { name?: string; email?: string };
+  metadata: Record<string, unknown>;
+};
+
+const stubPng =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+function expectValidPngDataUrl(value: unknown): void {
+  expect(value).toEqual(expect.stringMatching(/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/));
+  const bytes = Buffer.from((value as string).split(',')[1]!, 'base64');
+  expect(bytes.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+}
+
+function materialPayload(payload: Payload): Payload {
+  const metadata = { ...payload.metadata };
+  delete metadata.timestamp;
+  return { ...payload, metadata };
+}
+
+async function ready(page: Page, capture = false) {
+  if (capture) {
+    await page.addInitScript(png => {
+      const target = window as Window & {
+        __bugdropMockToPng?: () => Promise<string>;
+        __captureCount?: number;
+      };
+      target.__bugdropMockToPng = () => {
+        target.__captureCount = (target.__captureCount ?? 0) + 1;
+        return Promise.resolve(png);
+      };
+    }, stubPng);
+  }
   await page.route('**/api/check/**', route =>
     route.fulfill({
       status: 200,
@@ -14,172 +54,514 @@ async function ready(page: Page) {
     .toBe('function');
 }
 
-async function register(page: Page) {
-  await page.evaluate(() => {
-    const opened = window
-      .BugDrop!.registerFlow({
-        configVersion: 1,
-        id: 'public-triage',
-        presentation: { kind: 'modal' },
-        forms: [
-          {
-            id: 'triage',
-            title: 'Classify your feedback',
-            fields: [
-              {
-                id: 'kind',
-                type: 'singleChoice',
-                label: 'Type',
-                required: true,
-                options: [
-                  { value: 'bug', label: 'Bug' },
-                  { value: 'idea', label: 'Idea' },
-                ],
-              },
-              { id: 'summary', type: 'shortText', label: 'Summary', required: true },
-            ],
-          },
-          {
-            id: 'detail',
-            title: 'Describe the bug',
-            fields: [{ id: 'description', type: 'longText', label: 'Steps' }],
-          },
-        ],
-        screens: [
-          {
-            id: 'intro',
-            type: 'message',
-            title: 'Help us improve',
-            when: { context: 'surface', equals: 'browser-test' },
-          },
-          { id: 'triage-screen', type: 'form', form: 'triage' },
-          {
-            id: 'detail-screen',
-            type: 'form',
-            form: 'detail',
-            when: { answer: 'triage.kind', equals: 'bug' },
-          },
-          {
-            id: 'screenshot',
-            type: 'screenshot',
-            mode: 'optional',
-            when: { answer: 'triage.kind', equals: 'bug' },
-          },
-        ],
-        issue: {
-          classification: 'bug',
-          title: '{{triage.summary}}',
-          sections: [{ heading: 'Steps', answer: 'detail.description', omitWhenEmpty: true }],
-        },
-      })
-      .open({ context: { surface: 'browser-test' } });
-    (window as Window & { __publicFlow?: typeof opened }).__publicFlow = opened;
-  });
+async function openConfig(page: Page, config: FlowConfig, openOptions?: FlowOpenOptions) {
+  await page.evaluate(
+    ({ recipe, options }) => {
+      const opened = window.BugDrop!.registerFlow(recipe).open(options);
+      (window as Window & { __publicFlow?: typeof opened }).__publicFlow = opened;
+    },
+    { recipe: config, options: openOptions }
+  );
+  return page.locator(`body > [data-bugdrop-flow="${config.id}"]`);
 }
 
-test.describe('public modal FlowConfig V1', () => {
-  test('navigates conditionally, retains Back values, submits the legacy recipe, retries, and restores focus', async ({
-    page,
-  }) => {
-    const submissions: Array<Record<string, unknown>> = [];
-    let attempt = 0;
-    await page.route('**/api/feedback', route => {
-      submissions.push(route.request().postDataJSON() as Record<string, unknown>);
-      attempt += 1;
-      return route.fulfill(
-        attempt === 1
-          ? {
-              status: 500,
-              contentType: 'application/json',
-              body: JSON.stringify({ error: 'Temporary failure' }),
-            }
-          : {
-              status: 200,
-              contentType: 'application/json',
-              body: JSON.stringify({
-                success: true,
-                issueNumber: 44,
-                issueUrl: 'https://github.com/mean-weasel/bugdrop-widget-test/issues/44',
-                isPublic: false,
-              }),
-            }
-      );
+async function openRecipe(page: Page, id: FlowRecipeId) {
+  const recipe = flowRecipes[id];
+  return openConfig(page, recipe.config, recipe.openOptions);
+}
+
+async function mockFeedback(page: Page, issueNumber: number, failFirst = false) {
+  const payloads: Payload[] = [];
+  let attempts = 0;
+  await page.route('**/api/feedback', route => {
+    payloads.push(route.request().postDataJSON() as Payload);
+    attempts += 1;
+    if (failFirst && attempts === 1) {
+      return route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Temporary failure' }),
+      });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        issueNumber,
+        issueUrl: `https://github.com/mean-weasel/bugdrop-widget-test/issues/${issueNumber}`,
+        isPublic: false,
+      }),
     });
-    await ready(page);
+  });
+  return payloads;
+}
+
+test.describe('public modal FlowConfig V1 representative recipes', () => {
+  test('bug-report completes its natural composable journey', async ({ page }) => {
+    const payloads = await mockFeedback(page, 51, true);
+    await ready(page, true);
+    const canonicalPageUrl = new URL(page.url());
+    canonicalPageUrl.search = '';
+    canonicalPageUrl.hash = '';
+    await page.evaluate(() => console.info('bug-report-log-marker'));
     const trigger = page.getByRole('button', { name: /feedback/i });
     await trigger.focus();
-    await register(page);
-    const host = page.locator('body > [data-bugdrop-flow="public-triage"]');
-    await expect(host.getByRole('heading', { name: 'Help us improve' })).toBeVisible();
-    await host.getByRole('button', { name: 'Continue' }).click();
-    await host.getByLabel('Bug').click();
+    const host = await openRecipe(page, 'bug-report');
+    const root = host.locator('.bdv-root');
+
+    await expect(root).toHaveAttribute('data-size', 'default');
+    await expect(root).toHaveAttribute('data-columns', '2');
+    await expect(root).toHaveAttribute('data-density', 'comfortable');
+    await expect(root).not.toHaveClass(/bdv-dark/);
+    expect(await root.evaluate(element => element.style.getPropertyValue('--bdv-accent'))).toBe(
+      '#2563eb'
+    );
+    await expect(host.getByRole('heading', { name: 'Report a problem' })).toBeVisible();
+    await expect(host.getByText('This takes about a minute.')).toBeVisible();
+    await expect(host.getByText('Step 1 of 4')).toBeVisible();
+    await host.getByRole('button', { name: 'Start report' }).click();
+    await host.getByRole('button', { name: 'Add evidence' }).click();
+    await expect(host.getByLabel('Summary')).toBeFocused();
+    await expect(host.getByLabel('Summary')).toHaveAttribute('aria-invalid', 'true');
+    await expect(host.locator('[data-bugdrop-field="summary"]')).toHaveAttribute('data-span', '2');
+    await expect(host.locator('[data-bugdrop-field="steps"]')).toHaveAttribute('data-span', '2');
     await host.getByLabel('Summary').fill('Save crashes');
-    await host.getByRole('button', { name: 'Continue' }).click();
-    await host.getByLabel('Steps').fill('Click save twice');
-    await host.getByRole('button', { name: 'Back' }).click();
-    await expect(host.getByLabel('Summary')).toHaveValue('Save crashes');
-    await host.getByRole('button', { name: 'Continue' }).click();
-    await expect(host.getByLabel('Steps')).toHaveValue('Click save twice');
-    await host.getByRole('button', { name: 'Continue' }).click();
-    await host.getByLabel('Include a screenshot', { exact: true }).click();
-    await host.getByRole('button', { name: 'Submit' }).click();
-    await expect(host.getByText('Temporary failure')).toBeVisible();
-    await host.getByRole('button', { name: 'Try again' }).click();
-    await expect(host.getByRole('heading', { name: 'Thanks for your feedback!' })).toBeVisible();
-    expect(submissions).toHaveLength(2);
-    expect(submissions[0]).toMatchObject({
-      repo: 'mean-weasel/bugdrop-widget-test',
-      title: 'Save crashes',
-      description: '## Steps\n\nClick save twice',
-      screenshot: null,
-      attachments: [],
+    await host.getByLabel('Steps to reproduce').fill('Open settings\nClick save');
+    await host.getByRole('button', { name: 'Add evidence' }).click();
+    await expect(host.locator('[data-bugdrop-field="files"]')).toHaveAttribute('data-span', '2');
+    await host.getByLabel('Attachments').setInputFiles({
+      name: 'trace.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('local trace'),
     });
-    expect(submissions[0]?.kind).toBeUndefined();
+    await expect(host.getByText('trace.png')).toBeVisible();
+    await expect(host.getByLabel('Include console logs')).toBeChecked();
+    await host.getByLabel('Your name').fill(' Ada ');
+    await host.getByLabel('Email').fill(' ada@example.com ');
+    await host.getByRole('button', { name: 'Continue' }).click();
+    await expect(host.getByRole('heading', { name: 'Show us the problem' })).toBeVisible();
+    await expect(host.getByLabel('Include a screenshot')).toHaveCount(0);
+    await host.getByRole('button', { name: 'Submit' }).click();
+
+    const capture = page.locator('#bugdrop-host');
+    await expect(capture.getByRole('heading', { name: 'Capture Screenshot' })).toBeVisible();
+    await expect(capture.getByRole('button', { name: /skip screenshot/i })).toHaveCount(0);
+    await capture.locator('[data-action="capture"]').focus();
+    await page.keyboard.press('Enter');
+    await expect(capture.locator('#annotation-canvas canvas')).toBeVisible();
+    await capture.locator('[data-action="done"]').focus();
+    await page.keyboard.press('Enter');
+    await expect(host.getByText('Temporary failure')).toBeVisible();
+    await expect(host.getByRole('button', { name: 'Discard report' })).toBeVisible();
+    await host.getByRole('button', { name: 'Try again' }).click();
+    await expect(host.getByRole('heading', { name: 'Report received' })).toBeVisible();
+    await expect(host.getByText('Thanks for helping us fix this.')).toBeVisible();
+
+    expect(payloads).toHaveLength(2);
+    expect(payloads[0]).toMatchObject({
+      title: 'Bug: Save crashes',
+      category: 'bug',
+      submitter: { name: 'Ada', email: 'ada@example.com' },
+      attachments: [
+        expect.objectContaining({
+          name: 'trace.png',
+          type: 'image/png',
+          dataUrl: expect.stringMatching(/^data:image\/png;base64,/),
+        }),
+      ],
+      metadata: {
+        url: canonicalPageUrl.toString(),
+        elementSelector: null,
+        fullElementSelector: null,
+      },
+    });
+    expectValidPngDataUrl(payloads[0].screenshot);
+    expect(materialPayload(payloads[1]!)).toEqual(materialPayload(payloads[0]!));
+    expect(payloads[0].description).toContain('> Open settings\n> Click save');
+    expect(payloads[0].consoleLogs?.some(entry => entry.message === 'bug-report-log-marker')).toBe(
+      true
+    );
+    expect(
+      await page.evaluate(
+        () =>
+          (window as Window & { __publicFlow?: { result: Promise<unknown> } }).__publicFlow?.result
+      )
+    ).toEqual({
+      status: 'submitted',
+      result: {
+        issueNumber: 51,
+        issueUrl: 'https://github.com/mean-weasel/bugdrop-widget-test/issues/51',
+        isPublic: false,
+      },
+    });
     await host.getByRole('button', { name: 'Done' }).click();
     await expect(trigger).toBeFocused();
   });
 
-  test('clears hidden answers after predicate changes and shares modal ownership', async ({
+  test('registerFlow two-column modal stays contained and collapses at narrow viewports', async ({
     page,
   }) => {
-    const submissions: Array<Record<string, unknown>> = [];
-    await page.route('**/api/feedback', route => {
-      submissions.push(route.request().postDataJSON() as Record<string, unknown>);
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          success: true,
-          issueNumber: 45,
-          issueUrl: 'https://github.com/mean-weasel/bugdrop-widget-test/issues/45',
-          isPublic: false,
-        }),
-      });
-    });
+    await page.setViewportSize({ width: 800, height: 700 });
     await ready(page);
-    await register(page);
-    const host = page.locator('body > [data-bugdrop-flow="public-triage"]');
+    const config: FlowConfig = {
+      configVersion: 1,
+      id: 'responsive-two-column-proof',
+      presentation: { kind: 'modal', size: 'wide', columns: 2 },
+      forms: [
+        {
+          id: 'details',
+          title: 'Responsive details',
+          fields: [
+            { id: 'summary', type: 'shortText', label: 'Summary' },
+            { id: 'owner', type: 'shortText', label: 'Owner' },
+          ],
+        },
+      ],
+      screens: [{ id: 'details-screen', type: 'form', form: 'details' }],
+      issue: { title: 'Responsive proof' },
+    };
+    const host = await openConfig(page, config);
+    const root = host.locator('.bdv-root');
+    const surface = host.locator('.bdv-surface');
+    const fields = host.locator('.bdv-field');
+
+    await expect(root).toHaveAttribute('data-columns', '2');
+    await expect
+      .poll(() =>
+        host
+          .locator('.bdv-fields')
+          .evaluate(
+            element =>
+              getComputedStyle(element).gridTemplateColumns.split(' ').filter(Boolean).length
+          )
+      )
+      .toBe(2);
+    const wideFirst = await fields.nth(0).boundingBox();
+    const wideSecond = await fields.nth(1).boundingBox();
+    expect(wideFirst).not.toBeNull();
+    expect(wideSecond).not.toBeNull();
+    expect(wideSecond!.y).toBe(wideFirst!.y);
+    expect(wideSecond!.x).toBeGreaterThan(wideFirst!.x);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect
+      .poll(() =>
+        host
+          .locator('.bdv-fields')
+          .evaluate(
+            element =>
+              getComputedStyle(element).gridTemplateColumns.split(' ').filter(Boolean).length
+          )
+      )
+      .toBe(1);
+    const narrowFirst = await fields.nth(0).boundingBox();
+    const narrowSecond = await fields.nth(1).boundingBox();
+    const surfaceBox = await surface.boundingBox();
+    expect(narrowFirst).not.toBeNull();
+    expect(narrowSecond).not.toBeNull();
+    expect(surfaceBox).not.toBeNull();
+    expect(narrowSecond!.y).toBeGreaterThan(narrowFirst!.y);
+    expect(surfaceBox!.x).toBeGreaterThanOrEqual(0);
+    expect(surfaceBox!.x + surfaceBox!.width).toBeLessThanOrEqual(390);
+    const surfaceWidths = await surface.evaluate(element => ({
+      client: element.clientWidth,
+      scroll: element.scrollWidth,
+    }));
+    expect(surfaceWidths.scroll).toBeLessThanOrEqual(surfaceWidths.client);
+  });
+
+  test('registerFlow reduced motion removes Flow surface and control motion', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await mockFeedback(page, 56);
+    await ready(page);
+    const config: FlowConfig = {
+      configVersion: 1,
+      id: 'reduced-motion-proof',
+      presentation: { kind: 'modal' },
+      forms: [
+        {
+          id: 'details',
+          title: 'Reduced motion details',
+          fields: [{ id: 'summary', type: 'shortText', label: 'Summary', required: true }],
+        },
+      ],
+      screens: [{ id: 'details-screen', type: 'form', form: 'details' }],
+      issue: { title: '{{details.summary}}' },
+    };
+    const host = await openConfig(page, config);
+    const surface = host.locator('.bdv-surface');
+    const input = host.getByLabel('Summary');
+    const submit = host.getByRole('button', { name: 'Submit' });
+
+    expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(
+      true
+    );
+    await expect(surface).toBeVisible();
+    expect(
+      await Promise.all(
+        [surface, input, submit].map(locator =>
+          locator.evaluate(element => {
+            const style = getComputedStyle(element);
+            return {
+              animationName: style.animationName,
+              animationDuration: style.animationDuration,
+              transitionDuration: style.transitionDuration,
+            };
+          })
+        )
+      )
+    ).toEqual([
+      { animationName: 'none', animationDuration: '0s', transitionDuration: '0s' },
+      { animationName: 'none', animationDuration: '0s', transitionDuration: '0s' },
+      { animationName: 'none', animationDuration: '0s', transitionDuration: '0s' },
+    ]);
+    await input.fill('No animated transition');
+    await submit.click();
+    await expect(host.getByRole('heading', { name: 'Thanks for your feedback!' })).toBeVisible();
+    await expect(host.getByRole('button', { name: 'Done' })).toHaveCSS('transition-duration', '0s');
+  });
+
+  test('registerFlow remains interactive inside Radix-style host dismissal and focus traps', async ({
+    page,
+  }) => {
+    await ready(page);
+    await page.evaluate(() => {
+      const hostDialog = document.createElement('div');
+      hostDialog.id = 'flow-host-dialog';
+      hostDialog.tabIndex = -1;
+      document.body.appendChild(hostDialog);
+      hostDialog.focus();
+      const state = window as Window & {
+        __flowHostDismissed?: boolean;
+        __flowHostDismissEvents?: string[];
+      };
+      state.__flowHostDismissed = false;
+      state.__flowHostDismissEvents = [];
+      document.addEventListener(
+        'pointerdown',
+        event => {
+          const owned = document.querySelector('[data-bugdrop-flow="radix-flow-proof"]');
+          if (!owned || !event.composedPath().includes(owned)) return;
+          for (const eventType of [
+            'dismissableLayer.pointerDownOutside',
+            'dismissableLayer.interactOutside',
+          ]) {
+            const outside = new CustomEvent(eventType, {
+              bubbles: true,
+              cancelable: true,
+              composed: true,
+              detail: { originalEvent: event },
+            });
+            state.__flowHostDismissEvents?.push(eventType);
+            document.dispatchEvent(outside);
+            if (!outside.defaultPrevented) state.__flowHostDismissed = true;
+          }
+        },
+        true
+      );
+      document.addEventListener(
+        'focusin',
+        event => {
+          const owned = document.querySelector('[data-bugdrop-flow="radix-flow-proof"]');
+          if (owned && event.composedPath().includes(owned)) hostDialog.focus();
+        },
+        true
+      );
+    });
+    const config: FlowConfig = {
+      configVersion: 1,
+      id: 'radix-flow-proof',
+      presentation: { kind: 'modal' },
+      forms: [
+        {
+          id: 'answer',
+          title: 'Radix Flow proof',
+          fields: [{ id: 'detail', type: 'longText', label: 'Your answer', required: true }],
+        },
+      ],
+      screens: [{ id: 'answer-screen', type: 'form', form: 'answer' }],
+      issue: { title: 'Radix Flow proof' },
+    };
+    const host = await openConfig(page, config);
+    const answer = host.getByRole('textbox', { name: 'Your answer' });
+
+    await answer.click();
+    await answer.fill('OpenStack');
+    await expect(answer).toHaveValue('OpenStack');
+    await expect(answer).toBeFocused();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => (window as Window & { __flowHostDismissEvents?: string[] }).__flowHostDismissEvents
+        )
+      )
+      .toEqual(['dismissableLayer.pointerDownOutside', 'dismissableLayer.interactOutside']);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => (window as Window & { __flowHostDismissed?: boolean }).__flowHostDismissed
+        )
+      )
+      .toBe(false);
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.id))
+      .not.toBe('flow-host-dialog');
+  });
+
+  test('product-triage completes its natural composable journey', async ({ page }) => {
+    const payloads = await mockFeedback(page, 52);
+    await ready(page);
+    const host = await openRecipe(page, 'product-triage');
+    const root = host.locator('.bdv-root');
+    await expect(root).toHaveAttribute('data-size', 'wide');
+    await expect(root).toHaveAttribute('data-columns', '2');
+    await expect(root).toHaveAttribute('data-density', 'compact');
+    await expect(root).toHaveClass(/bdv-dark/);
+    expect(await root.evaluate(element => element.style.getPropertyValue('--bdv-accent'))).toBe(
+      '#f97316'
+    );
+
     await host.getByRole('button', { name: 'Continue' }).click();
     await host.getByLabel('Bug').click();
-    await host.getByLabel('Summary').fill('First');
+    await host.getByRole('radio', { name: '2 stars' }).click();
+    await host.getByLabel('Summary').fill('Checkout stalls');
+    await expect(host.getByText('Step 2 of 4')).toBeVisible();
     await host.getByRole('button', { name: 'Continue' }).click();
-    await host.getByLabel('Steps').fill('Secret stale detail');
+    await host.getByLabel('What happened?').fill('Spinner never stops');
+    await host.getByLabel('Chromium').click();
+    await host.getByRole('button', { name: 'Continue' }).click();
     await host.getByRole('button', { name: 'Back' }).click();
-    await host.getByLabel('Idea').click();
-    await host.getByLabel('Summary').fill('Idea title');
+    await expect(host.getByLabel('What happened?')).toHaveValue('Spinner never stops');
+    await expect(host.getByLabel('Chromium')).toBeChecked();
+    await host.getByRole('button', { name: 'Back' }).click();
+    await expect(host.getByLabel('Summary')).toHaveValue('Checkout stalls');
+    await expect(host.getByRole('radio', { name: '2 stars' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+    await host.getByRole('radio', { name: '4 stars' }).click();
+    await host.getByRole('button', { name: 'Continue' }).click();
+    await expect(host.getByText('Step 3 of 3')).toBeVisible();
+    await host.getByLabel('Include a screenshot').uncheck();
     await host.getByRole('button', { name: 'Submit' }).click();
     await expect(host.getByRole('heading', { name: 'Thanks for your feedback!' })).toBeVisible();
-    expect(submissions[0]).toMatchObject({ title: 'Idea title', description: '' });
+
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]).toMatchObject({
+      title: 'Triage: Checkout stalls',
+      category: 'feature',
+      screenshot: null,
+      attachments: [],
+      description: '## Type\n\nBug\n\n## Experience\n\n★★★★☆ (4/5)',
+    });
+    expect(payloads[0].description).not.toContain('Spinner never stops');
+  });
+
+  test('customer-pulse completes its natural composable journey', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.emulateMedia({ colorScheme: 'dark' });
+    const payloads = await mockFeedback(page, 53, true);
+    await ready(page);
+    const host = await openRecipe(page, 'customer-pulse');
+    const root = host.locator('.bdv-root');
+    await expect(root).toHaveAttribute('data-size', 'compact');
+    await expect(root).toHaveAttribute('data-columns', '1');
+    await expect(root).toHaveAttribute('data-density', 'comfortable');
+    await expect(root).toHaveClass(/bdv-dark/);
+    expect((await host.boundingBox())?.width).toBeLessThanOrEqual(390);
+
+    const scoreGroup = host.getByRole('radiogroup', { name: 'Ease score' });
+    const scoreControls = scoreGroup.getByRole('radio');
+    await expect(scoreControls).toHaveCount(10);
+    expect(await scoreControls.allTextContents()).toEqual([
+      '1',
+      '2',
+      '3',
+      '4',
+      '5',
+      '6',
+      '7',
+      '8',
+      '9',
+      '10',
+    ]);
+    await expect(host.getByText('Difficult', { exact: true })).toBeVisible();
+    await expect(host.getByText('Easy', { exact: true })).toBeVisible();
+
+    await host.getByRole('radio', { name: '3 stars' }).click();
+    await host.getByRole('button', { name: 'Continue' }).click();
+    await expect(host.getByRole('button', { name: 'Change score' })).toBeVisible();
+    await host.getByRole('button', { name: 'Change score' }).click();
+    await expect(host.getByRole('radio', { name: '3 stars' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+    await host.getByRole('button', { name: 'Continue' }).click();
+    await host.getByLabel('What made this difficult?').fill('Invoice filters reset');
+    await host.getByLabel('Yes').click();
+    await host.getByLabel('I consent to a product follow-up').check();
+    await host.getByRole('button', { name: 'Send pulse' }).click();
+    await expect(host.getByText('Temporary failure')).toBeVisible();
+    await expect(host.getByRole('button', { name: 'Not now' })).toBeVisible();
+    await host.getByRole('button', { name: 'Try again' }).click();
+    await expect(host.getByRole('heading', { name: 'Pulse recorded' })).toBeVisible();
+    await expect(host.getByText('Thanks for sharing how billing feels today.')).toBeVisible();
+
+    expect(payloads).toHaveLength(2);
+    expect(payloads[0]).toEqual(
+      expect.objectContaining({
+        title: 'Billing pulse 3/10',
+        category: 'question',
+        screenshot: null,
+        attachments: [],
+        description:
+          '## Score\n\n3\n\n## Follow-up\n\nInvoice filters reset\n\n## Contact\n\nYes\n\n## Consent\n\ntrue',
+      })
+    );
+  });
+
+  test('auto screenshot captures once without showing chooser or annotation', async ({ page }) => {
+    const payloads = await mockFeedback(page, 54);
+    await ready(page, true);
+    const config: FlowConfig = {
+      configVersion: 1,
+      id: 'auto-capture-proof',
+      presentation: { kind: 'modal' },
+      forms: [
+        {
+          id: 'report',
+          title: 'Automatic evidence',
+          fields: [{ id: 'summary', type: 'shortText', label: 'Summary', required: true }],
+        },
+      ],
+      screens: [
+        { id: 'report-screen', type: 'form', form: 'report' },
+        { id: 'capture', type: 'screenshot', mode: 'auto' },
+      ],
+      issue: { title: '{{report.summary}}' },
+    };
+    const host = await openConfig(page, config);
+    await host.getByLabel('Summary').fill('Automatic proof');
+    await host.getByRole('button', { name: 'Continue' }).click();
+    await host.getByRole('button', { name: 'Submit' }).click();
+    await expect(host.getByRole('heading', { name: 'Thanks for your feedback!' })).toBeVisible();
+    await expect(page.locator('#bugdrop-host [data-action="capture"]')).toHaveCount(0);
+    await expect(page.locator('#bugdrop-host #annotation-canvas')).toHaveCount(0);
+    expect(
+      await page.evaluate(() => (window as Window & { __captureCount?: number }).__captureCount)
+    ).toBe(1);
+    expect(payloads[0]).toMatchObject({ title: 'Automatic proof', screenshot: stubPng });
   });
 
   test('close tears down an in-progress screenshot chooser', async ({ page }) => {
+    await mockFeedback(page, 55);
     await ready(page);
-    await register(page);
-    const host = page.locator('body > [data-bugdrop-flow="public-triage"]');
+    const host = await openRecipe(page, 'product-triage');
     await host.getByRole('button', { name: 'Continue' }).click();
     await host.getByLabel('Bug').click();
+    await host.getByRole('radio', { name: '4 stars' }).click();
     await host.getByLabel('Summary').fill('Close capture');
-    await host.getByRole('button', { name: 'Continue' }).click();
     await host.getByRole('button', { name: 'Continue' }).click();
     await host.getByRole('button', { name: 'Submit' }).click();
     const chooser = page.locator('#bugdrop-host .bd-overlay');

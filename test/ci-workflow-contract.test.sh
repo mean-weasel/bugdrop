@@ -14,6 +14,11 @@ live_spec="$repo_root/e2e/widget.live.spec.ts"
 variant_live_spec="$repo_root/e2e/variant.live.spec.ts"
 variant_accessibility_spec="$repo_root/e2e/variant-accessibility.radix.spec.ts"
 variant_conformance_spec="$repo_root/test/variantFieldConformance.test.ts"
+flow_coverage_spec="$repo_root/test/flowCoverageMatrix.test.ts"
+flow_recipe_spec="$repo_root/test/flowRecipeConformance.test.ts"
+flow_recipe_fixture="$repo_root/test/fixtures/flow-recipes.ts"
+local_flow_spec="$repo_root/e2e/public-flow.spec.ts"
+live_flow_spec="$repo_root/e2e/public-flow.flow-live.spec.ts"
 variant_inline_spec="$repo_root/e2e/widget.spec.ts"
 live_radix_spec="$repo_root/e2e/widget.live-radix.spec.ts"
 cross_browser_live_spec="$repo_root/e2e/widget.cross-browser-live.spec.ts"
@@ -249,6 +254,18 @@ local_discovery=$(env -u LIVE_TARGET -u PLAYWRIGHT_BASE_URL \
   npx playwright test --list --reporter=line 2>&1) ||
   fail 'local Playwright discovery failed without live inputs'
 grep -Fq '[chromium]' <<< "$local_discovery" || fail 'local Chromium project was not discovered'
+for local_flow_test in \
+  'bug-report completes its natural composable journey' \
+  'product-triage completes its natural composable journey' \
+  'customer-pulse completes its natural composable journey' \
+  'registerFlow two-column modal stays contained and collapses at narrow viewports' \
+  'registerFlow reduced motion removes Flow surface and control motion' \
+  'registerFlow remains interactive inside Radix-style host dismissal and focus traps' \
+  'auto screenshot captures once without showing chooser or annotation'; do
+  grep -Fq "$local_flow_test" <<< "$local_discovery" ||
+    fail "ordinary local Playwright discovery omitted composable proof: $local_flow_test"
+  require_literal "$local_flow_spec" "$local_flow_test"
+done
 for excluded_project in \
   chromium-live \
   chromium-flow-live \
@@ -472,9 +489,26 @@ done
 require_paired_lane 'Run composable FlowConfig live E2E tests' \
   EXACT_WIDGET_FIXTURE_PATH EXPECTED_WIDGET_SHA256 \
   'npx playwright test --project=chromium-flow-live --workers=1 --retries=0'
-grep -Fq 'runs a conditional multi-screen FlowConfig through the exact preview widget' \
-  "$repo_root/e2e/public-flow.flow-live.spec.ts" ||
-  fail 'the candidate-only custom FlowConfig lane lost its conditional multi-screen assertion'
+flow_live_discovery=$(LIVE_TARGET=preview PLAYWRIGHT_BASE_URL=https://example.invalid \
+  npx playwright test "$live_flow_spec" --project=chromium-flow-live --list --reporter=line 2>&1) ||
+  fail 'candidate-only composable preview discovery failed'
+for preview_flow_test in \
+  'Bug Report completes its exact candidate preview journey' \
+  'Product Triage completes its exact candidate preview journey' \
+  'Customer Pulse completes its exact candidate preview journey'; do
+  require_literal "$live_flow_spec" "$preview_flow_test"
+  grep -Fq "$preview_flow_test" <<< "$flow_live_discovery" ||
+    fail "candidate-only composable preview discovery omitted: $preview_flow_test"
+done
+[[ $(grep -Fc '[chromium-flow-live]' <<< "$flow_live_discovery") -eq 3 ]] ||
+  fail 'candidate-only composable preview lane must discover exactly three journeys'
+require_literal "$live_flow_spec" "from '../test/fixtures/flow-recipes'"
+require_literal "$live_flow_spec" "page.route('**/api/check/**'"
+require_literal "$live_flow_spec" "page.route('**/api/feedback'"
+require_literal "$live_flow_spec" 'await loadExactFlowWidget(page)'
+require_literal "$live_flow_spec" 'await assertExactPreviewWidgetResponse(await response, expectedWidgetSha256)'
+require_absent "$live_flow_spec" 'merge-queue-composable-flow'
+require_absent "$live_flow_spec" 'runs a conditional multi-screen FlowConfig through the exact preview widget'
 
 require_paired_lane 'Run one structured real-Issue canary' \
   EXACT_WIDGET_FIXTURE_PATH EXPECTED_WIDGET_SHA256 \
@@ -653,6 +687,14 @@ require_literal "$variant_conformance_spec" 'short text'
 require_literal "$variant_conformance_spec" 'long text'
 require_literal "$variant_conformance_spec" 'rating'
 require_literal "$variant_conformance_spec" 'single choice'
+require_literal "$flow_coverage_spec" 'canonical composable flow coverage matrix'
+require_literal "$flow_coverage_spec" 'records true multi-select as deferred product work'
+require_literal "$flow_recipe_spec" 'representative FlowConfig recipe conformance'
+require_literal "$repo_root/test/flowFormScreen.test.ts" 'applies every inherited field control through the thin FlowForm adapter'
+require_literal "$repo_root/test/flowManager.test.ts" 'renders valid initial answers in the opened Flow UI and routed runtime'
+for recipe_id in bug-report product-triage customer-pulse; do
+  require_literal "$flow_recipe_fixture" "id: '$recipe_id'"
+done
 require_literal "$variant_inline_spec" 'simultaneous inline variants isolate answers, submission IDs, reset, disposal, and legacy state'
 require_literal "$cross_browser_live_spec" 'submits a compact suggestion from the exact preview widget without a real Issue'
 require_literal "$makefile" 'npx playwright test e2e/widget.radix.spec.ts e2e/variant-modal.radix.spec.ts e2e/variant-accessibility.radix.spec.ts --project=$(BROWSER)-radix --workers=1 --retries=0'
