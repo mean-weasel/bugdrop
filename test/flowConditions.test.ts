@@ -5,6 +5,7 @@ import type { FlowCondition } from '../src/widget/flows/public-types';
 describe('flow conditions', () => {
   it('evaluates answer, context, all, and any predicates', () => {
     expect(evaluateCondition({ answer: 'a.b', equals: false }, { 'a.b': false }, {})).toBe(true);
+    expect(evaluateCondition({ answer: 'a.b', equals: 1 }, { 'a.b': 2 }, {})).toBe(false);
     expect(evaluateCondition({ answer: 'missing.value', equals: null }, {}, {})).toBe(false);
     expect(
       evaluateCondition(
