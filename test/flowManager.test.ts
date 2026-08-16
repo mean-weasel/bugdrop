@@ -26,6 +26,19 @@ describe('flow manager and modal', () => {
     manager.register(flowConfig());
     expect(() => manager.register(flowConfig())).toThrow('already registered');
   });
+  it('returns configured FlowHandle.id and generated OpenedFlow.instanceId', async () => {
+    const handle = createFlowManager({ repo: 'owner/repo', apiUrl: '/api' }, ports).register(
+      flowConfig()
+    );
+    expect(handle.id).toBe('product-triage');
+
+    const opened = handle.open();
+    expect(opened.instanceId).toBe('product-triage-runtime-id');
+    opened.close();
+
+    await expect(opened.result).resolves.toEqual({ status: 'closed' });
+    expect(document.body.childElementCount).toBe(0);
+  });
   it('returns busy while the legacy modal owns the surface', async () => {
     const opened = createFlowManager({ repo: 'owner/repo', apiUrl: '/api' }, ports, {
       isLegacyModalOpen: () => true,
@@ -132,6 +145,41 @@ describe('flow manager and modal', () => {
     ).toThrow('dataUrl');
     expect(preflight).not.toHaveBeenCalled();
     expect(document.body.childElementCount).toBe(0);
+  });
+  it('renders valid initial answers in the opened Flow UI and routed runtime', async () => {
+    const config = flowConfig();
+    config.screens = config.screens.slice(1);
+    const opened = createFlowManager({ repo: 'owner/repo', apiUrl: '/api' }, ports)
+      .register(config)
+      .open({
+        initialAnswers: {
+          'triage.kind': 'bug',
+          'triage.summary': 'Seeded summary',
+          'detail.description': 'Seeded details',
+          'detail.logs': true,
+        },
+      });
+    await Promise.resolve();
+    await Promise.resolve();
+    const host = document.querySelector<HTMLElement>('[data-bugdrop-flow="product-triage"]')!;
+    const triage = host.shadowRoot!;
+    expect(triage.querySelector<HTMLInputElement>('input[value="bug"]')?.checked).toBe(true);
+    expect(
+      triage.querySelector<HTMLInputElement>('#product-triage-runtime-id-summary')?.value
+    ).toBe('Seeded summary');
+
+    triage.querySelector<HTMLButtonElement>('.bdv-submit')?.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(
+      host.shadowRoot?.querySelector<HTMLTextAreaElement>('#product-triage-runtime-id-description')
+        ?.value
+    ).toBe('Seeded details');
+    expect(
+      host.shadowRoot?.querySelector<HTMLInputElement>('#product-triage-runtime-id-logs')?.checked
+    ).toBe(true);
+    expect(host.shadowRoot?.querySelector('.bdv-title')?.textContent).toBe('Add details');
+    opened.close();
   });
   it('retries installation preflight without closing the opened flow', async () => {
     const preflight = vi

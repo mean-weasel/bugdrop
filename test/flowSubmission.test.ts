@@ -54,7 +54,10 @@ describe('flow legacy submission', () => {
       screenshot: 'data:image/png;base64,x',
       attachments: [{ name: 'trace.txt' }],
       submitter: { name: 'Ada' },
-      metadata: { elementSelector: '#save' },
+      metadata: {
+        elementSelector: '#save',
+        fullElementSelector: 'html body #save',
+      },
     });
     expect(body.kind).toBeUndefined();
     await expect(

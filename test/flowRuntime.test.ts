@@ -64,4 +64,42 @@ describe('flow runtime', () => {
     expect(runtime.answers['detail.description']).toBe('Retained');
     expect(runtime.current()?.id).toBe('triage-step');
   });
+
+  it('recovers to the nearest visible screen after cascading branch changes', () => {
+    const config = flowConfig();
+    config.screens = [
+      { id: 'triage-step', type: 'form', form: 'triage' },
+      {
+        id: 'detail-step',
+        type: 'form',
+        form: 'detail',
+        when: { answer: 'triage.kind', equals: 'bug' },
+      },
+      {
+        id: 'evidence',
+        type: 'screenshot',
+        mode: 'optional',
+        when: { answer: 'detail.description', equals: 'show' },
+      },
+    ];
+    const runtime = new FlowRuntime(
+      normalizeFlowDefinition(validateAndFreezeFlowConfig(config)),
+      {}
+    );
+    runtime.setFormAnswers('triage', { kind: 'bug', summary: 'Broken' });
+    runtime.next();
+    runtime.setFormAnswers('detail', { description: 'show', logs: false, files: [] });
+    runtime.next();
+    runtime.capture = {
+      screenshot: 'data:image/png;base64,x',
+      elementSelector: null,
+      fullElementSelector: null,
+    };
+
+    runtime.setFormAnswers('triage', { kind: 'idea', summary: 'Better' });
+    expect(runtime.current()?.id).toBe('triage-step');
+    expect(runtime.answers['detail.description']).toBeUndefined();
+    expect(runtime.capture).toBeNull();
+    expect(runtime.route()).toMatchObject({ position: 1, total: 1, canGoBack: false });
+  });
 });
