@@ -118,6 +118,35 @@ const defaultFlow = window.BugDrop.registerFlow({
 defaultFlow.open();
 ```
 
+Screens replace one another immediately when `presentation.screenTransition` is omitted or set to
+`{ kind: 'none' }`. Built-in motion kinds are `slide-horizontal`, `slide-vertical`, `fade`, and
+`scale-fade`; directional strategies reverse on Back. Horizontal slide defaults to 700ms. Every
+animated strategy accepts an integer `durationMs` from 100–1000, and BugDrop automatically uses
+immediate replacement when the visitor prefers reduced motion.
+
+Custom motion stays serializable and safe inside the widget's shadow DOM. Describe the incoming
+screen's starting frame and outgoing screen's ending frame for both navigation directions. Opacity,
+pixel translations, and scale can be combined without injecting CSS:
+
+```js
+presentation: {
+  kind: 'modal',
+  screenTransition: {
+    kind: 'custom',
+    durationMs: 600,
+    easing: 'ease-in-out',
+    forward: {
+      enterFrom: { opacity: 0, translateY: 40, scale: 0.95 },
+      exitTo: { opacity: 0, translateY: -20 },
+    },
+    backward: {
+      enterFrom: { opacity: 0, translateY: -20 },
+      exitTo: { opacity: 0, translateY: 40, scale: 0.95 },
+    },
+  },
+}
+```
+
 A materially different product-triage flow can show follow-up and screenshot screens only for a
 bug or a low rating. Conditions are serializable and reference answers from earlier forms:
 
@@ -132,7 +161,10 @@ const needsEvidence = {
 const triageFlow = window.BugDrop.registerFlow({
   configVersion: 1,
   id: 'product-triage',
-  presentation: { kind: 'modal' },
+  presentation: {
+    kind: 'modal',
+    screenTransition: { kind: 'slide-horizontal' },
+  },
   forms: [
     {
       id: 'triage',

@@ -295,6 +295,30 @@ export const canonicalFlowCoverage: readonly FlowCoverageRow[] = Object.freeze([
     'e2e/public-flow.spec.ts#registerFlow two-column modal stays contained and collapses at narrow viewports',
     'configured columns render as two tracks at wide width and collapse to one track when narrow'
   ),
+  focused(
+    'presentation.screen-transition.immediate',
+    'omitted or none FlowScreenTransition',
+    'test/flowModal.test.ts#keeps immediate route replacement when transition is omitted or none',
+    'route changes retain the legacy one-surface immediate replacement behavior'
+  ),
+  browser(
+    'presentation.screen-transition.slide-horizontal',
+    'slide-horizontal FlowScreenTransition',
+    'e2e/public-flow.spec.ts#registerFlow applies opt-in horizontal screen motion in both directions',
+    'forward route changes animate horizontally and Back reverses the direction'
+  ),
+  focused(
+    'presentation.screen-transition.additional-built-ins',
+    'vertical slide, fade, and scale-fade FlowScreenTransition kinds',
+    'test/flowScreenTransition.test.ts#applies the %s built-in strategy',
+    'each additional built-in resolves its own classes and default duration'
+  ),
+  focused(
+    'presentation.screen-transition.custom',
+    'declarative custom FlowScreenTransition frames',
+    'test/flowScreenTransition.test.ts#maps custom forward and backward frames into the generic strategy',
+    'validated directional frames, duration, and easing become isolated animation properties'
+  ),
   recipe(
     'appearance.theme.light',
     'appearance theme light',

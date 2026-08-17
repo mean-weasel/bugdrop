@@ -145,7 +145,7 @@ export function focusable(root: HTMLElement): HTMLElement[] {
     root.querySelectorAll<HTMLElement>(
       'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])'
     )
-  ).filter(element => !element.hidden && element.getAttribute('aria-hidden') !== 'true');
+  ).filter(element => !element.hidden && !element.closest('[inert], [aria-hidden="true"]'));
 }
 
 function button(label: string, className: string): HTMLButtonElement {

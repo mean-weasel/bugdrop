@@ -73,6 +73,32 @@ export interface ScreenshotScreen extends BaseScreen {
 
 export type FlowScreen = MessageScreen | FormScreen | ScreenshotScreen;
 
+export interface FlowScreenTransitionFrame {
+  opacity?: number;
+  translateX?: number;
+  translateY?: number;
+  scale?: number;
+}
+
+export interface FlowScreenTransitionMotion {
+  enterFrom: FlowScreenTransitionFrame;
+  exitTo: FlowScreenTransitionFrame;
+}
+
+export type FlowScreenTransition =
+  | { kind: 'none' }
+  | {
+      kind: 'slide-horizontal' | 'slide-vertical' | 'fade' | 'scale-fade';
+      durationMs?: number;
+    }
+  | {
+      kind: 'custom';
+      durationMs?: number;
+      easing?: 'standard' | 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out';
+      forward: FlowScreenTransitionMotion;
+      backward: FlowScreenTransitionMotion;
+    };
+
 export type FlowIssueSection =
   | {
       heading: string;
@@ -90,7 +116,12 @@ export type FlowIssueSection =
 export interface FlowConfig {
   configVersion: 1;
   id: string;
-  presentation: { kind: 'modal'; size?: 'compact' | 'default' | 'wide'; columns?: 1 | 2 };
+  presentation: {
+    kind: 'modal';
+    size?: 'compact' | 'default' | 'wide';
+    columns?: 1 | 2;
+    screenTransition?: FlowScreenTransition;
+  };
   appearance?: {
     theme?: VariantTheme;
     accentColor?: string;
