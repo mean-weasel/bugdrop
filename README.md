@@ -120,7 +120,7 @@ defaultFlow.open();
 
 Screens replace one another immediately when `presentation.screenTransition` is omitted or set to
 `{ kind: 'none' }`. Built-in motion kinds are `slide-horizontal`, `slide-vertical`, `fade`, and
-`scale-fade`; directional strategies reverse on Back. Horizontal slide defaults to 700ms. Every
+`scale-fade`; directional strategies reverse on Back. Horizontal slide defaults to 500ms. Every
 animated strategy accepts an integer `durationMs` from 100–1000, and BugDrop automatically uses
 immediate replacement when the visitor prefers reduced motion.
 

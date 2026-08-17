@@ -16,7 +16,7 @@ interface FlowScreenTransitionStrategy {
 
 const TRANSITION_STRATEGIES: Record<BuiltInTransitionKind, FlowScreenTransitionStrategy> = {
   'slide-horizontal': {
-    defaultDurationMs: 700,
+    defaultDurationMs: 500,
     classes: direction => ({
       enter: `bdf-slide-${direction}-enter`,
       exit: `bdf-slide-${direction}-exit`,

@@ -23,10 +23,10 @@ export function createStyledFlowRoot(shadow: ShadowRoot, config: Readonly<FlowCo
     .bdf-back { order: -1; }
     .bdf-transitioning { overflow: hidden; }
     .bdf-transitioning > .bdv-surface { grid-area: 1 / 1; }
-    .bdf-slide-forward-enter { animation: bdf-slide-from-right var(--bdf-screen-transition-duration, 700ms) cubic-bezier(.2, .8, .2, 1); }
-    .bdf-slide-forward-exit { animation: bdf-slide-to-left var(--bdf-screen-transition-duration, 700ms) cubic-bezier(.2, .8, .2, 1); }
-    .bdf-slide-backward-enter { animation: bdf-slide-from-left var(--bdf-screen-transition-duration, 700ms) cubic-bezier(.2, .8, .2, 1); }
-    .bdf-slide-backward-exit { animation: bdf-slide-to-right var(--bdf-screen-transition-duration, 700ms) cubic-bezier(.2, .8, .2, 1); }
+    .bdf-slide-forward-enter { animation: bdf-slide-from-right var(--bdf-screen-transition-duration, 500ms) cubic-bezier(.2, .8, .2, 1); }
+    .bdf-slide-forward-exit { animation: bdf-slide-to-left var(--bdf-screen-transition-duration, 500ms) cubic-bezier(.2, .8, .2, 1); }
+    .bdf-slide-backward-enter { animation: bdf-slide-from-left var(--bdf-screen-transition-duration, 500ms) cubic-bezier(.2, .8, .2, 1); }
+    .bdf-slide-backward-exit { animation: bdf-slide-to-right var(--bdf-screen-transition-duration, 500ms) cubic-bezier(.2, .8, .2, 1); }
     .bdf-slide-vertical-forward-enter { animation: bdf-slide-from-bottom var(--bdf-screen-transition-duration, 500ms) cubic-bezier(.2, .8, .2, 1); }
     .bdf-slide-vertical-forward-exit { animation: bdf-slide-to-top var(--bdf-screen-transition-duration, 500ms) cubic-bezier(.2, .8, .2, 1); }
     .bdf-slide-vertical-backward-enter { animation: bdf-slide-from-top var(--bdf-screen-transition-duration, 500ms) cubic-bezier(.2, .8, .2, 1); }

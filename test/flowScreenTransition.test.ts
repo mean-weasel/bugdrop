@@ -24,7 +24,7 @@ describe('flow screen transition controller', () => {
     const transition = createFlowScreenTransition(overlay, { kind: 'slide-horizontal' });
 
     transition.show(second, 'forward');
-    expect(overlay.style.getPropertyValue('--bdf-screen-transition-duration')).toBe('700ms');
+    expect(overlay.style.getPropertyValue('--bdf-screen-transition-duration')).toBe('500ms');
     transition.show(third, 'backward');
 
     expect(overlay.querySelectorAll('.bdv-surface')).toHaveLength(2);
