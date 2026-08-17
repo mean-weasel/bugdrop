@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BugDrop Flow Transition Preview</title>
+    <style>
+      :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+      body { min-height: 100vh; margin: 0; display: grid; place-items: center; background: #09090b; color: #fafafa; }
+      main { width: min(680px, calc(100% - 40px)); }
+      h1 { margin-bottom: 8px; }
+      p { color: #a1a1aa; line-height: 1.55; }
+      .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+      button { border: 1px solid #3f3f46; border-radius: 10px; padding: 12px 18px; background: #18181b; color: inherit; font: inherit; cursor: pointer; }
+      button:hover { border-color: #8b5cf6; }
+      .timing { display: grid; gap: 10px; margin-top: 24px; color: #d4d4d8; }
+      input[type='range'] { width: min(420px, 100%); accent-color: #8b5cf6; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p>Local SDK comparison</p>
+      <h1>Flow screen transitions</h1>
+      <p>
+        Open either version, then use Continue and Back. Both use the same FlowConfig; only the
+        screen-transition strategy changes.
+      </p>
+      <label class="timing">
+        Preview duration: <output id="duration-output">500ms</output>
+        <input id="duration" type="range" min="100" max="1000" step="50" value="500" />
+        <small>This shared control overrides each strategy's SDK default for comparison.</small>
+      </label>
+      <div class="actions">
+        <button id="open-immediate" type="button">Open immediate</button>
+        <button id="open-slide" type="button">Open horizontal slide</button>
+        <button id="open-vertical" type="button">Open vertical slide</button>
+        <button id="open-fade" type="button">Open fade</button>
+        <button id="open-scale" type="button">Open scale + fade</button>
+        <button id="open-custom" type="button">Open custom float</button>
+      </div>
+    </main>
+    <script src="/test/load-widget.js"></script>
+    <script>
+      function config(id, screenTransition) {
+        return {
+          configVersion: 1,
+          id,
+          presentation: { kind: 'modal', screenTransition },
+          appearance: { theme: 'dark', accentColor: '#8b5cf6' },
+          forms: [
+            {
+              id: 'triage',
+              title: 'What should we look at?',
+              description: 'A concise product-feedback step.',
+              fields: [
+                {
+                  id: 'kind',
+                  type: 'singleChoice',
+                  label: 'Feedback type',
+                  required: true,
+                  options: [
+                    { value: 'bug', label: 'Bug' },
+                    { value: 'idea', label: 'Idea' },
+                  ],
+                },
+                { id: 'summary', type: 'shortText', label: 'One-line summary', required: true },
+              ],
+            },
+          ],
+          screens: [
+            {
+              id: 'intro',
+              type: 'message',
+              title: 'See the transition in context',
+              description: 'Continue to move forward. Use Back to reverse direction.',
+              continueLabel: 'Show me',
+            },
+            { id: 'triage-screen', type: 'form', form: 'triage' },
+            {
+              id: 'finish',
+              type: 'message',
+              title: 'One more screen',
+              description: 'Go Back to compare the reverse transition.',
+              continueLabel: 'Submit',
+            },
+          ],
+          issue: {
+            classification: 'bug',
+            title: '{{triage.summary}}',
+            sections: [{ heading: 'Type', answer: 'triage.kind', format: 'choice' }],
+          },
+        };
+      }
+
+      window.addEventListener('bugdrop:ready', () => {
+        const immediate = window.BugDrop.registerFlow(config('transition-immediate', { kind: 'none' }));
+        const duration = document.querySelector('#duration');
+        const durationOutput = document.querySelector('#duration-output');
+        let previewCount = 0;
+        duration.addEventListener('input', () => {
+          durationOutput.value = `${duration.value}ms`;
+        });
+        document.querySelector('#open-immediate').addEventListener('click', () => immediate.open());
+        function openTransition(name, screenTransition) {
+          previewCount += 1;
+          window.BugDrop.registerFlow(
+            config(`transition-${name}-${previewCount}`, {
+              ...screenTransition,
+              durationMs: Number(duration.value),
+            })
+          ).open();
+        }
+        document
+          .querySelector('#open-slide')
+          .addEventListener('click', () => openTransition('horizontal', { kind: 'slide-horizontal' }));
+        document
+          .querySelector('#open-vertical')
+          .addEventListener('click', () => openTransition('vertical', { kind: 'slide-vertical' }));
+        document
+          .querySelector('#open-fade')
+          .addEventListener('click', () => openTransition('fade', { kind: 'fade' }));
+        document
+          .querySelector('#open-scale')
+          .addEventListener('click', () => openTransition('scale', { kind: 'scale-fade' }));
+        document.querySelector('#open-custom').addEventListener('click', () =>
+          openTransition('custom', {
+            kind: 'custom',
+            easing: 'ease-in-out',
+            forward: {
+              enterFrom: { opacity: 0, translateX: 80, translateY: 40, scale: 0.9 },
+              exitTo: { opacity: 0, translateX: -40, translateY: -20, scale: 1.05 },
+            },
+            backward: {
+              enterFrom: { opacity: 0, translateX: -40, translateY: -20, scale: 1.05 },
+              exitTo: { opacity: 0, translateX: 80, translateY: 40, scale: 0.9 },
+            },
+          })
+        );
+      });
+
+      window.loadBugDropTestWidget({ dataset: { button: 'false' } });
+    </script>
+  </body>
+</html>

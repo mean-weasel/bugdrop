@@ -6,6 +6,7 @@ import type {
   FlowOpenOptions,
   FlowScalar,
 } from './public-types';
+import { validateFlowScreenTransition } from './screen-transition-config';
 
 export interface FlowAttachment {
   name: string;
@@ -25,9 +26,8 @@ const ALLOWED_ATTACHMENT_TYPES = new Set([
   'video/quicktime',
 ]);
 
-export function isAllowedFlowAttachmentType(value: string): boolean {
-  return ALLOWED_ATTACHMENT_TYPES.has(value);
-}
+export const isAllowedFlowAttachmentType = (value: string): boolean =>
+  ALLOWED_ATTACHMENT_TYPES.has(value);
 
 interface NormalizedFlowOpenOptions {
   context: Readonly<Record<string, FlowScalar>>;
@@ -86,19 +86,20 @@ export function validateFlowConditionValue(field: FlowField, value: FlowScalar):
 export function validateFlowShell(config: FlowConfig): void {
   const { presentation, appearance, content } = config;
   if (!isObject(presentation)) fail('presentation must be an object');
-  assertOnlyKeys(presentation, new Set(['kind', 'size', 'columns']), 'presentation');
+  assertOnlyKeys(
+    presentation,
+    new Set(['kind', 'size', 'columns', 'screenTransition']),
+    'presentation'
+  );
   if (presentation.kind !== 'modal') fail('presentation kind must be modal');
   if (
     presentation.size !== undefined &&
     !['compact', 'default', 'wide'].includes(presentation.size)
   )
     fail('modal size is invalid');
-  if (
-    presentation.columns !== undefined &&
-    presentation.columns !== 1 &&
-    presentation.columns !== 2
-  )
+  if (presentation.columns !== undefined && ![1, 2].includes(presentation.columns))
     fail('presentation columns must be 1 or 2');
+  validateFlowScreenTransition(presentation.screenTransition);
   if (appearance !== undefined) {
     if (!isObject(appearance)) fail('appearance must be an object');
     assertOnlyKeys(appearance, new Set(['theme', 'accentColor', 'density']), 'appearance');

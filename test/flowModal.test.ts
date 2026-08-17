@@ -1,16 +1,142 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizeFlowDefinition } from '../src/widget/flows/definition';
 import { openFlowModal } from '../src/widget/flows/modal';
-import { addNavigation, createStatusSurface } from '../src/widget/flows/modal-view';
+import { addNavigation, createStatusSurface, focusable } from '../src/widget/flows/modal-view';
+import type { FlowConfig } from '../src/widget/flows/public-types';
 import type { FlowRoute } from '../src/widget/flows/runtime';
 import { validateAndFreezeFlowConfig } from '../src/widget/flows/validate-config';
 import { flowConfig } from './flowConfig.test';
+
+type FlowConfigWithTransition = FlowConfig & {
+  presentation: FlowConfig['presentation'] & {
+    screenTransition: { kind: 'slide-horizontal' };
+  };
+};
 
 describe('flow modal runtime states', () => {
   beforeEach(() => {
     document.body.replaceChildren();
     vi.stubGlobal('crypto', { randomUUID: () => 'runtime-id' });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('keeps immediate route replacement when transition is omitted or none', async () => {
+    for (const screenTransition of [undefined, { kind: 'none' } as const]) {
+      const config = flowConfig();
+      config.presentation.screenTransition = screenTransition;
+      const opened = openFlowModal(
+        normalizeFlowDefinition(validateAndFreezeFlowConfig(config)),
+        undefined,
+        {
+          preflight: async () => ({ status: 'installed' }),
+          capture: async () => ({
+            screenshot: null,
+            elementSelector: null,
+            fullElementSelector: null,
+            returnToForm: false,
+          }),
+          submit: async () => ({ issueNumber: 1, issueUrl: '', isPublic: false }),
+        }
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      const shadow = document.querySelector<HTMLElement>('[data-bugdrop-flow]')!.shadowRoot!;
+      shadow.querySelector<HTMLButtonElement>('.bdv-submit')!.click();
+      await Promise.resolve();
+      expect(shadow.querySelectorAll('.bdv-surface')).toHaveLength(1);
+      expect(shadow.querySelector('.bdf-transitioning')).toBeNull();
+      opened.close();
+    }
+  });
+
+  it('animates horizontal route changes and reverses the Back direction', async () => {
+    vi.useFakeTimers();
+    const config = flowConfig() as FlowConfigWithTransition;
+    config.presentation.screenTransition = { kind: 'slide-horizontal' };
+    const opened = openFlowModal(
+      normalizeFlowDefinition(validateAndFreezeFlowConfig(config)),
+      undefined,
+      {
+        preflight: async () => ({ status: 'installed' }),
+        capture: async () => ({
+          screenshot: null,
+          elementSelector: null,
+          fullElementSelector: null,
+          returnToForm: false,
+        }),
+        submit: async () => ({ issueNumber: 1, issueUrl: '', isPublic: false }),
+      }
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    const shadow = document.querySelector<HTMLElement>('[data-bugdrop-flow]')!.shadowRoot!;
+    shadow.querySelector<HTMLButtonElement>('.bdv-submit')!.click();
+    await Promise.resolve();
+
+    const forwardSurfaces = shadow.querySelectorAll<HTMLElement>('.bdv-surface');
+    expect(forwardSurfaces).toHaveLength(2);
+    const outgoingLabel = forwardSurfaces[0]?.getAttribute('aria-labelledby');
+    const incomingLabel = forwardSurfaces[1]?.getAttribute('aria-labelledby');
+    expect(incomingLabel).not.toBe(outgoingLabel);
+    expect(forwardSurfaces[1]?.querySelector(`#${incomingLabel}`)?.textContent).toBe(
+      'Tell us what happened'
+    );
+    expect(forwardSurfaces[0]?.getAttribute('aria-hidden')).toBe('true');
+    expect(forwardSurfaces[0]?.hasAttribute('inert')).toBe(true);
+    expect(forwardSurfaces[0]?.classList.contains('bdf-slide-forward-exit')).toBe(true);
+    expect(forwardSurfaces[1]?.classList.contains('bdf-slide-forward-enter')).toBe(true);
+    expect(focusable(shadow.querySelector<HTMLElement>('.bdv-overlay')!)).not.toContain(
+      forwardSurfaces[0]?.querySelector('.bdv-close')
+    );
+    forwardSurfaces[1]?.dispatchEvent(new Event('animationend', { bubbles: true }));
+    expect(shadow.querySelectorAll('.bdv-surface')).toHaveLength(1);
+
+    shadow.querySelector<HTMLButtonElement>('.bdf-back')!.click();
+    await Promise.resolve();
+    const backwardSurfaces = shadow.querySelectorAll<HTMLElement>('.bdv-surface');
+    expect(backwardSurfaces).toHaveLength(2);
+    expect(backwardSurfaces[0]?.classList.contains('bdf-slide-backward-exit')).toBe(true);
+    expect(backwardSurfaces[1]?.classList.contains('bdf-slide-backward-enter')).toBe(true);
+    vi.advanceTimersByTime(760);
+    expect(shadow.querySelectorAll('.bdv-surface')).toHaveLength(1);
+    expect(shadow.querySelector('.bdf-transitioning')).toBeNull();
+    opened.close();
+  });
+
+  it('uses immediate replacement for reduced-motion users even when slide is configured', async () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+    const config = flowConfig() as FlowConfigWithTransition;
+    config.presentation.screenTransition = { kind: 'slide-horizontal' };
+    const opened = openFlowModal(
+      normalizeFlowDefinition(validateAndFreezeFlowConfig(config)),
+      undefined,
+      {
+        preflight: async () => ({ status: 'installed' }),
+        capture: async () => ({
+          screenshot: null,
+          elementSelector: null,
+          fullElementSelector: null,
+          returnToForm: false,
+        }),
+        submit: async () => ({ issueNumber: 1, issueUrl: '', isPublic: false }),
+      }
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    const shadow = document.querySelector<HTMLElement>('[data-bugdrop-flow]')!.shadowRoot!;
+    shadow.querySelector<HTMLButtonElement>('.bdv-submit')!.click();
+    await Promise.resolve();
+    expect(shadow.querySelectorAll('.bdv-surface')).toHaveLength(1);
+    expect(shadow.querySelector('.bdf-transitioning')).toBeNull();
+    opened.close();
   });
   it('suppresses duplicate submit while busy and keeps named dialog ownership through success', async () => {
     document.body.style.setProperty('overflow', 'clip', 'important');

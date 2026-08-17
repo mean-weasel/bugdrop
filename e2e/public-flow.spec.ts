@@ -278,7 +278,10 @@ test.describe('public modal FlowConfig V1 representative recipes', () => {
     const config: FlowConfig = {
       configVersion: 1,
       id: 'reduced-motion-proof',
-      presentation: { kind: 'modal' },
+      presentation: {
+        kind: 'modal',
+        screenTransition: { kind: 'slide-horizontal', durationMs: 420 },
+      },
       forms: [
         {
           id: 'details',
@@ -320,6 +323,155 @@ test.describe('public modal FlowConfig V1 representative recipes', () => {
     await submit.click();
     await expect(host.getByRole('heading', { name: 'Thanks for your feedback!' })).toBeVisible();
     await expect(host.getByRole('button', { name: 'Done' })).toHaveCSS('transition-duration', '0s');
+  });
+
+  test('registerFlow applies opt-in horizontal screen motion in both directions', async ({
+    page,
+  }) => {
+    await ready(page);
+    const config: FlowConfig = {
+      configVersion: 1,
+      id: 'horizontal-transition-proof',
+      presentation: {
+        kind: 'modal',
+        screenTransition: { kind: 'slide-horizontal', durationMs: 420 },
+      },
+      forms: [
+        {
+          id: 'details',
+          title: 'Transition details',
+          fields: [{ id: 'summary', type: 'shortText', label: 'Summary', required: true }],
+        },
+      ],
+      screens: [
+        { id: 'intro', type: 'message', title: 'Transition introduction' },
+        { id: 'details-screen', type: 'form', form: 'details' },
+      ],
+      issue: { title: '{{details.summary}}' },
+    };
+    const host = await openConfig(page, config);
+
+    const forwardState = await host.evaluate(element => {
+      const root = element.shadowRoot!;
+      root.querySelector<HTMLButtonElement>('.bdv-submit')!.click();
+      return Array.from(root.querySelectorAll('.bdv-surface')).map(surface => ({
+        className: surface.className,
+        labelledBy: surface.getAttribute('aria-labelledby'),
+        labelledTitle: root.getElementById(surface.getAttribute('aria-labelledby') ?? '')
+          ?.textContent,
+        animationName: getComputedStyle(surface).animationName,
+        animationDuration: getComputedStyle(surface).animationDuration,
+      }));
+    });
+    expect(forwardState).toEqual([
+      {
+        className: expect.stringContaining('bdf-slide-forward-exit'),
+        labelledBy: expect.stringMatching(/-surface-\d+-title$/),
+        labelledTitle: 'Transition introduction',
+        animationName: 'bdf-slide-to-left',
+        animationDuration: '0.42s',
+      },
+      {
+        className: expect.stringContaining('bdf-slide-forward-enter'),
+        labelledBy: expect.stringMatching(/-surface-\d+-title$/),
+        labelledTitle: 'Transition details',
+        animationName: 'bdf-slide-from-right',
+        animationDuration: '0.42s',
+      },
+    ]);
+    expect(forwardState[0]?.labelledBy).not.toBe(forwardState[1]?.labelledBy);
+    await expect(host.getByRole('heading', { name: 'Transition details' })).toBeVisible();
+
+    await expect(host.getByRole('button', { name: 'Back' })).toBeVisible();
+    await host.getByRole('button', { name: 'Back' }).click();
+    await expect
+      .poll(() =>
+        host.evaluate(element =>
+          Array.from(element.shadowRoot!.querySelectorAll('.bdv-surface')).map(
+            surface => surface.className
+          )
+        )
+      )
+      .toEqual([
+        expect.stringContaining('bdf-slide-backward-exit'),
+        expect.stringContaining('bdf-slide-backward-enter'),
+      ]);
+    await expect(host.getByRole('heading', { name: 'Transition introduction' })).toBeVisible();
+  });
+
+  test('registerFlow applies declarative custom motion inside the shadow root', async ({
+    page,
+  }) => {
+    await ready(page);
+    const config: FlowConfig = {
+      configVersion: 1,
+      id: 'custom-transition-proof',
+      presentation: {
+        kind: 'modal',
+        screenTransition: {
+          kind: 'custom',
+          durationMs: 640,
+          easing: 'linear',
+          forward: {
+            enterFrom: { opacity: 0.2, translateY: 40, scale: 0.9 },
+            exitTo: { opacity: 0, translateY: -20 },
+          },
+          backward: {
+            enterFrom: { opacity: 0.4, translateX: -30 },
+            exitTo: { opacity: 0.1, translateX: 50, scale: 1.1 },
+          },
+        },
+      },
+      forms: [
+        {
+          id: 'details',
+          title: 'Custom motion details',
+          fields: [{ id: 'summary', type: 'shortText', label: 'Summary', required: true }],
+        },
+      ],
+      screens: [
+        { id: 'intro', type: 'message', title: 'Custom motion introduction' },
+        { id: 'details-screen', type: 'form', form: 'details' },
+      ],
+      issue: { title: '{{details.summary}}' },
+    };
+    const host = await openConfig(page, config);
+
+    const forward = await host.evaluate(element => {
+      const root = element.shadowRoot!;
+      root.querySelector<HTMLButtonElement>('.bdv-submit')!.click();
+      const overlay = root.querySelector<HTMLElement>('.bdv-overlay')!;
+      const incoming = root.querySelectorAll<HTMLElement>('.bdv-surface')[1]!;
+      return {
+        animationName: getComputedStyle(incoming).animationName,
+        animationDuration: getComputedStyle(incoming).animationDuration,
+        enterY: overlay.style.getPropertyValue('--bdf-custom-enter-y'),
+        enterScale: overlay.style.getPropertyValue('--bdf-custom-enter-scale'),
+        easing: overlay.style.getPropertyValue('--bdf-screen-transition-easing'),
+      };
+    });
+    expect(forward).toEqual({
+      animationName: 'bdf-custom-in',
+      animationDuration: '0.64s',
+      enterY: '40px',
+      enterScale: '0.9',
+      easing: 'linear',
+    });
+    await expect(host.getByRole('heading', { name: 'Custom motion details' })).toBeVisible();
+
+    await host.getByRole('button', { name: 'Back' }).click();
+    await expect
+      .poll(() =>
+        host.evaluate(element => {
+          const overlay = element.shadowRoot!.querySelector<HTMLElement>('.bdv-overlay')!;
+          return [
+            overlay.style.getPropertyValue('--bdf-custom-enter-x'),
+            overlay.style.getPropertyValue('--bdf-custom-exit-x'),
+          ];
+        })
+      )
+      .toEqual(['-30px', '50px']);
+    await expect(host.getByRole('heading', { name: 'Custom motion introduction' })).toBeVisible();
   });
 
   test('registerFlow remains interactive inside Radix-style host dismissal and focus traps', async ({

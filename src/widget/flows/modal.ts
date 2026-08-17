@@ -20,6 +20,11 @@ import {
 } from './modal-view';
 import type { FlowOpenOptions, FlowOutcome, OpenedFlow, ScreenshotScreen } from './public-types';
 import { FlowRuntime, type CaptureEvidence } from './runtime';
+import {
+  createFlowScreenTransition,
+  type FlowScreenDirection,
+  type FlowScreenTransitionController,
+} from './screen-transition';
 import { createStyledFlowRoot } from './styles';
 export interface FlowModalPorts {
   preflight(): Promise<{ status: 'installed' | 'not_installed' | 'unreachable'; appName?: string }>;
@@ -46,10 +51,12 @@ class FlowModalController {
   private readonly result: Promise<FlowOutcome>;
   private resolveOutcome!: (outcome: FlowOutcome) => void;
   private readonly state: FlowModalState;
+  private readonly screenTransition: FlowScreenTransitionController;
   private currentForm: FlowFormController | null = null;
   private settled = false;
   private closed = false;
   private busy = false;
+  private dialogVersion = 0;
   private routePreviewVersion = 0;
   private preflightVersion = 0;
   private captureAbortController: AbortController | null = null;
@@ -71,6 +78,10 @@ class FlowModalController {
       shadow => createStyledFlowRoot(shadow, definition.config),
       event => this.onKeydown(event),
       event => this.onBackdrop(event)
+    );
+    this.screenTransition = createFlowScreenTransition(
+      this.state.overlay,
+      definition.config.presentation.screenTransition
     );
   }
 
@@ -110,7 +121,7 @@ class FlowModalController {
     }
   }
 
-  private render(): void {
+  private render(direction?: FlowScreenDirection): void {
     this.disposeForm();
     const route = this.runtime.route();
     const screen = route.screen;
@@ -125,7 +136,6 @@ class FlowModalController {
       this.currentForm = createFlowFormScreen(form, this.instanceId, this.runtime.answers);
       surface = this.currentForm.element;
     } else surface = createScreenshotPrompt(screen);
-    prepareDialog(surface, this.instanceId, this.definition.config.presentation.size ?? 'default');
     addNavigation(
       surface,
       route,
@@ -138,7 +148,7 @@ class FlowModalController {
       surface.addEventListener('input', preview);
       surface.addEventListener('change', preview);
     }
-    this.show(surface);
+    this.show(surface, direction);
   }
 
   private async previewFormRoute(formId: string, surface: HTMLElement): Promise<void> {
@@ -169,7 +179,7 @@ class FlowModalController {
     }
     this.runtime.back();
     this.busy = false;
-    this.render();
+    this.render('backward');
   }
 
   private async advance(
@@ -196,7 +206,7 @@ class FlowModalController {
       await this.finish();
     } else {
       this.busy = false;
-      this.render();
+      this.render('forward');
     }
   }
 
@@ -208,9 +218,11 @@ class FlowModalController {
     this.state.host.hidden = true;
     const abortController = new AbortController();
     this.captureAbortController = abortController;
+    let direction: FlowScreenDirection;
     try {
       const capture = await this.ports.capture(screen, include, abortController.signal);
       if (this.closed) return;
+      direction = capture.returnToForm ? 'backward' : 'forward';
       if (capture.returnToForm) this.runtime.back();
       else {
         this.runtime.capture = capture;
@@ -225,7 +237,7 @@ class FlowModalController {
       this.busy = false;
       this.state.host.hidden = false;
     }
-    if (!this.closed) this.render();
+    if (!this.closed) this.render(direction);
   }
 
   private async finish(): Promise<void> {
@@ -261,9 +273,13 @@ class FlowModalController {
     );
   }
 
-  private show(surface: HTMLElement): void {
-    prepareDialog(surface, this.instanceId, this.definition.config.presentation.size ?? 'default');
-    this.state.overlay.replaceChildren(surface);
+  private show(surface: HTMLElement, direction?: FlowScreenDirection): void {
+    prepareDialog(
+      surface,
+      `${this.instanceId}-surface-${++this.dialogVersion}`,
+      this.definition.config.presentation.size ?? 'default'
+    );
+    this.screenTransition.show(surface, direction);
     queueMicrotask(() => (firstFocusable(surface) ?? surface).focus());
   }
 
@@ -275,6 +291,7 @@ class FlowModalController {
     this.captureAbortController = null;
     if (settleClosed) this.settle({ status: 'closed' });
     this.disposeForm();
+    this.screenTransition.dispose();
     this.state.dispose();
     if (this.previousFocus?.isConnected) this.previousFocus.focus();
   }

@@ -60,6 +60,101 @@ export function flowConfig(): FlowConfig {
 }
 
 describe('FlowConfig validation', () => {
+  it('defaults screen transitions to immediate replacement and accepts extensible strategies', () => {
+    const immediate = flowConfig();
+    expect(validateAndFreezeFlowConfig(immediate).presentation.screenTransition).toBeUndefined();
+
+    const none = flowConfig() as FlowConfig & {
+      presentation: FlowConfig['presentation'] & {
+        screenTransition: { kind: 'none' };
+      };
+    };
+    none.presentation.screenTransition = { kind: 'none' };
+    expect(validateAndFreezeFlowConfig(none).presentation.screenTransition).toEqual({
+      kind: 'none',
+    });
+
+    const slide = flowConfig() as FlowConfig & {
+      presentation: FlowConfig['presentation'] & {
+        screenTransition: { kind: 'slide-horizontal'; durationMs?: number };
+      };
+    };
+    slide.presentation.screenTransition = { kind: 'slide-horizontal', durationMs: 450 };
+    expect(validateAndFreezeFlowConfig(slide).presentation.screenTransition).toEqual({
+      kind: 'slide-horizontal',
+      durationMs: 450,
+    });
+
+    for (const kind of ['slide-vertical', 'fade', 'scale-fade'] as const) {
+      const builtIn = flowConfig();
+      builtIn.presentation.screenTransition = { kind };
+      expect(validateAndFreezeFlowConfig(builtIn).presentation.screenTransition).toEqual({ kind });
+    }
+
+    const custom = flowConfig();
+    custom.presentation.screenTransition = {
+      kind: 'custom',
+      durationMs: 600,
+      easing: 'ease-in-out',
+      forward: {
+        enterFrom: { opacity: 0, translateY: 40, scale: 0.95 },
+        exitTo: {},
+      },
+      backward: {
+        enterFrom: { opacity: 0, translateY: -20 },
+        exitTo: { opacity: 0, translateY: 40, scale: 0.95 },
+      },
+    };
+    expect(validateAndFreezeFlowConfig(custom).presentation.screenTransition).toEqual(
+      custom.presentation.screenTransition
+    );
+  });
+
+  it('rejects unknown screen transition strategies and properties', () => {
+    const unknownKind = flowConfig() as FlowConfig & {
+      presentation: FlowConfig['presentation'] & {
+        screenTransition: { kind: string };
+      };
+    };
+    unknownKind.presentation.screenTransition = { kind: 'zoom' };
+    expect(() => validateAndFreezeFlowConfig(unknownKind)).toThrow('screen transition');
+
+    const unknownProperty = flowConfig() as FlowConfig & {
+      presentation: FlowConfig['presentation'] & {
+        screenTransition: { kind: 'none'; duration: number };
+      };
+    };
+    unknownProperty.presentation.screenTransition = { kind: 'none', duration: 500 };
+    expect(() => validateAndFreezeFlowConfig(unknownProperty)).toThrow('screen transition');
+
+    for (const durationMs of [99, 1_001, 250.5, Number.NaN]) {
+      const invalidDuration = flowConfig() as FlowConfig;
+      invalidDuration.presentation.screenTransition = {
+        kind: 'slide-horizontal',
+        durationMs,
+      };
+      expect(() => validateAndFreezeFlowConfig(invalidDuration)).toThrow('durationMs');
+    }
+
+    const invalidCustom = flowConfig() as FlowConfig;
+    invalidCustom.presentation.screenTransition = {
+      kind: 'custom',
+      easing: 'standard',
+      forward: { enterFrom: { opacity: 2 }, exitTo: { translateX: -20 } },
+      backward: { enterFrom: { translateX: -20 }, exitTo: { translateX: 20 } },
+    };
+    expect(() => validateAndFreezeFlowConfig(invalidCustom)).toThrow('opacity');
+
+    const incompleteCustom = flowConfig() as FlowConfig & {
+      presentation: FlowConfig['presentation'] & { screenTransition: unknown };
+    };
+    incompleteCustom.presentation.screenTransition = {
+      kind: 'custom',
+      forward: { enterFrom: { opacity: 0 }, exitTo: { opacity: 0 } },
+    };
+    expect(() => validateAndFreezeFlowConfig(incompleteCustom)).toThrow('backward');
+  });
+
   it('clones and deeply freezes a complete V1 config', () => {
     const source = flowConfig();
     const frozen = validateAndFreezeFlowConfig(source);
