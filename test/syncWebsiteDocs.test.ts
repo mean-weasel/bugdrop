@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { FLOW_CAPABILITIES } from '../docs/website/flow-capabilities';
-import { syncWebsiteDocs } from '../scripts/sync-website-docs.mjs';
+import { isWebsiteDocName, syncWebsiteDocs } from '../scripts/sync-website-docs.mjs';
 
 const temporaryRoots: string[] = [];
 
@@ -71,6 +71,54 @@ describe('website documentation sync', () => {
     );
   });
 
+  it('binds documented flow-wide validation boundaries to the released validator source', async () => {
+    const validationSource = await readFile('src/widget/flows/validate-config.ts', 'utf8');
+    const conditionSource = await readFile('src/widget/flows/conditions.ts', 'utf8');
+    const constraints = FLOW_CAPABILITIES.validation;
+
+    expect(validationSource).toContain('input.forms.length === 0');
+    expect(validationSource).toContain(`input.forms.length > ${constraints.forms.maximum}`);
+    expect(validationSource).toContain('input.screens.length === 0');
+    expect(validationSource).toContain(`input.screens.length > ${constraints.screens.maximum}`);
+    expect(validationSource).toContain('form.fields.length === 0');
+    expect(validationSource).toContain(`form.fields.length > ${constraints.fieldsPerForm.maximum}`);
+    expect(validationSource).toContain(`++screenshots > ${constraints.screenshotScreens.maximum}`);
+    expect(validationSource).toContain(
+      `issue.sections.length > ${constraints.issueSections.maximum}`
+    );
+    expect(conditionSource).toContain(
+      `const MAX_CONDITION_DEPTH = ${constraints.conditionDepth.maximum}`
+    );
+    expect(conditionSource).toContain(
+      `const MAX_CONDITION_NODES = ${constraints.conditionNodes.maximum}`
+    );
+    expect(validationSource).toContain(
+      `children.length > ${constraints.conditionGroupEntries.maximum}`
+    );
+    expect(validationSource).toContain('children.length < 1');
+    expect(validationSource).toContain('may be referenced only once');
+    expect(validationSource).toContain('at least one screen must be unconditional');
+    expect(validationSource).toContain('condition answer must reference an earlier field');
+    expect(validationSource).toContain(
+      'issue title must contain text or reference a required answer'
+    );
+  });
+
+  it('keeps the copyable styling flow backed by a guaranteed title answer', async () => {
+    const styling = await readFile('docs/website/styling.mdx', 'utf8');
+    expect(styling).toMatch(
+      /id: 'summary',[\s\S]*?required: true,[\s\S]*?issue: \{ title: '\{\{feedback\.summary\}\}' \}/
+    );
+  });
+
+  it('uses the same safe filename grammar for discovery and retirement', () => {
+    expect(isWebsiteDocName('flow-reference.mdx')).toBe(true);
+    expect(isWebsiteDocName('api_v2.mdx')).toBe(true);
+    expect(isWebsiteDocName('Flow-Reference.mdx')).toBe(true);
+    expect(isWebsiteDocName('../flow-reference.mdx')).toBe(false);
+    expect(isWebsiteDocName('nested/flow-reference.mdx')).toBe(false);
+  });
+
   it('stages both documentation and the canonical capability manifest', async () => {
     const workflow = await readFile('.github/workflows/sync-docs.yml', 'utf8');
     expect(workflow).toContain('git add src/content/docs/ src/lib/flow-capabilities.ts');
@@ -98,14 +146,14 @@ describe('website documentation sync', () => {
   it('removes only retired files previously owned by the manifest', async () => {
     const target = await temporaryWebsite();
     await syncWebsiteDocs(target, 'first');
-    const retired = 'src/content/docs/retired-flow.mdx';
+    const retired = 'src/content/docs/api_v2.mdx';
     const unrelated = 'src/content/docs/website-only.mdx';
     await writeFile(path.join(target, retired), 'retired');
     await writeFile(path.join(target, unrelated), 'website only');
     const manifestPath = path.join(target, 'src/content/docs/.widget-docs-source.json');
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     manifest.files.push({
-      source: 'docs/website/retired-flow.mdx',
+      source: 'docs/website/api_v2.mdx',
       target: retired,
       sha256: '0'.repeat(64),
     });

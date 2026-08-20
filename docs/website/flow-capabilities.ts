@@ -55,8 +55,8 @@ const TRANSITION_KINDS = [
 ] as const;
 
 /**
- * The single documentation inventory for the released BugDrop Flow API.
- * Exact declaration and runtime-source parity is enforced by the fixture test.
+ * The canonical documentation inventory for the released BugDrop Flow API.
+ * Fixture tests bind the documented runtime bounds below to released source.
  */
 export const FLOW_CAPABILITIES = {
   versionKey: 'v1.56.3@47a392d1e7b1a8d8adeff1692f6bbbd84696280d',
@@ -132,6 +132,22 @@ export const FLOW_CAPABILITIES = {
   configProperties: {
     required: ['configVersion', 'id', 'presentation', 'forms', 'screens', 'issue'],
     optional: ['appearance', 'content', 'evidence'],
+  },
+  validation: {
+    forms: { minimum: 1, maximum: 12 },
+    screens: { minimum: 1, maximum: 20 },
+    fieldsPerForm: { minimum: 1, maximum: 20 },
+    screenshotScreens: { maximum: 1 },
+    conditionGroupEntries: { minimum: 1, maximum: 8 },
+    conditionDepth: { maximum: 4 },
+    conditionNodes: { maximum: 32 },
+    issueSections: { maximum: 20 },
+    structuralRules: [
+      'every form must be referenced by exactly one form screen',
+      'at least one screen must be unconditional',
+      'answer conditions may reference only fields from earlier form screens',
+      'a placeholder-only Issue title must reference an unconditional required answer',
+    ],
   },
   fields: {
     types: Object.keys(FIELD_CONTRACTS),

@@ -63,6 +63,21 @@ const opened = productQuestion.open({
 
 Keep private or privileged values out of both inputs. Values mapped into an issue or captured as evidence can leave the browser when the user submits.
 
+## Stay within the validation boundaries
+
+`registerFlow()` validates the complete configuration before returning a handle. A flow may contain
+1–12 forms and 1–20 screens; each form may contain 1–20 fields. Every form must be referenced by
+exactly one form screen, at least one screen must be unconditional, and a flow may contain at most one
+screenshot screen.
+
+Conditions may contain 1–8 entries per `all` or `any` group, nest up to four levels deep, and contain
+at most 32 nodes in total. Answer conditions can reference only fields from earlier form screens. Issue
+output may contain at most 20 sections. If an Issue title contains only answer placeholders and no
+literal text, at least one placeholder must reference a required field on an unconditional form screen.
+
+These boundaries are part of the canonical [Flow Reference](/docs/flow-reference). Treat a synchronous
+registration error as a configuration error and correct it before calling `open()`.
+
 ## Add motion intentionally
 
 Set `presentation.screenTransition` to immediate replacement, a built-in transition, or custom declarative motion. Back navigation uses the reverse direction. BugDrop replaces motion immediately when the user prefers reduced motion.

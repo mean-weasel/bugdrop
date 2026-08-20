@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sourceDirectory = path.join(repositoryRoot, 'docs/website');
 const manifestTarget = 'src/content/docs/.widget-docs-source.json';
+const WEBSITE_DOC_NAME = /^[^/\\]+\.mdx$/;
 
 function targetPath(targetRoot, relativePath) {
   const resolvedRoot = path.resolve(targetRoot);
@@ -19,8 +20,13 @@ function targetPath(targetRoot, relativePath) {
 function isOwnedTarget(relativePath) {
   return (
     relativePath === 'src/lib/flow-capabilities.ts' ||
-    /^src\/content\/docs\/[a-z0-9-]+\.mdx$/.test(relativePath)
+    (relativePath.startsWith('src/content/docs/') &&
+      isWebsiteDocName(relativePath.slice('src/content/docs/'.length)))
   );
+}
+
+export function isWebsiteDocName(name) {
+  return WEBSITE_DOC_NAME.test(name);
 }
 
 function sha256(value) {
@@ -45,7 +51,7 @@ export async function syncWebsiteDocs(targetRoot, sourceRevision) {
     throw new TypeError('Website documentation can only sync into the bugdrop-web repository');
   }
 
-  const mdxNames = (await readdir(sourceDirectory)).filter(name => name.endsWith('.mdx')).sort();
+  const mdxNames = (await readdir(sourceDirectory)).filter(isWebsiteDocName).sort();
   const files = [
     ...mdxNames.map(name => ({
       source: `docs/website/${name}`,
