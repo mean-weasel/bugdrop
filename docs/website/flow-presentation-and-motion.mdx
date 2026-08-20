@@ -1,0 +1,49 @@
+# Flow Presentation & Motion
+
+import { FlowCapabilityReference } from "@/components/docs/flow-capability-reference";
+
+Custom flows open as modals. Presentation controls their size and layout, appearance helps them fit your app, and an optional screen transition controls how one step gives way to the next.
+
+## Choose a transition
+
+Omit `screenTransition` or use `{ kind: 'none' }` for immediate screen replacement. The four built-in animations need only a `kind`:
+
+| Transition | Effect | Default duration |
+|------------|--------|------------------|
+| `slide-horizontal` | Slides between steps from side to side | 500 ms |
+| `slide-vertical` | Slides between steps vertically | 500 ms |
+| `fade` | Crossfades between steps | 350 ms |
+| `scale-fade` | Combines a subtle scale change with a fade | 450 ms |
+
+```js
+presentation: {
+  kind: 'modal',
+  size: 'default',
+  columns: 1,
+  screenTransition: { kind: 'slide-horizontal', durationMs: 500 },
+}
+```
+
+`durationMs` is optional and accepts an integer from 100 through 1,000 milliseconds. Forward and Back navigation use their corresponding directions. The first screen appears immediately because there is no outgoing screen to animate.
+
+## Respect reduced motion
+
+When a user prefers reduced motion, BugDrop replaces screens immediately even when a transition is configured. You do not need to add a separate media-query implementation.
+
+## Add custom motion
+
+Use `kind: 'custom'` when the built-ins do not fit. Custom motion declares separate `forward` and `backward` frames, plus an optional duration and easing. Each direction specifies where the incoming screen starts (`enterFrom`) and where the outgoing screen ends (`exitTo`). The released frame controls are opacity, horizontal and vertical translation, and scale.
+
+Keep custom motion short and restrained, and verify both directions. The [Flow Examples](/docs/flow-examples) page lets you compare every built-in and a custom example before choosing one.
+
+## Match your app
+
+Use `size`, `columns`, `theme`, `accentColor`, and `density` to align the flow with its host application. These declarative controls are the supported styling boundary; custom flows do not expose arbitrary class names, CSS injection, or inline mounting.
+
+## Exact reference
+
+The tables below are the exact released presentation, appearance, content, and screen-transition contracts for BugDrop v1.56.3, including custom motion and reduced-motion behavior.
+
+<FlowCapabilityReference section="presentation-and-motion" />
+
+Try these choices interactively in [Flow Examples](/docs/flow-examples), then match the rest of the widget in [Styling](/docs/styling#custom-flow-appearance).

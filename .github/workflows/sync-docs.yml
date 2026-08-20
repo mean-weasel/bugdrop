@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'docs/website/**'
+      - 'scripts/sync-website-docs.mjs'
+      - '.github/workflows/sync-docs.yml'
 
 permissions: {}
 
@@ -28,11 +30,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.BUGDROP_WEB_TOKEN }}
         run: |
-          cp docs/website/*.mdx bugdrop-web/src/content/docs/
+          node scripts/sync-website-docs.mjs bugdrop-web "$GITHUB_SHA"
           cd bugdrop-web
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add src/content/docs/
+          git add src/content/docs/ src/lib/flow-capabilities.ts
           if git diff --cached --quiet; then
             echo "No documentation changes to sync"
           else
@@ -42,6 +44,6 @@ jobs:
             git push -u origin "$BRANCH"
             gh pr create --repo mean-weasel/bugdrop-web \
               --title "docs: sync documentation from bugdrop repo" \
-              --body "Automated sync of docs/website/*.mdx from mean-weasel/bugdrop." \
+              --body "Automated sync of canonical website documentation and the released Flow capability manifest from mean-weasel/bugdrop at $GITHUB_SHA." \
               --base main --head "$BRANCH"
           fi

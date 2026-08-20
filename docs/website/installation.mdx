@@ -1,5 +1,7 @@
 # Installation
 
+import { WidgetInstallSnippet } from "@/components/widget-install-snippet";
+
 Getting BugDrop running on your site takes about 30 seconds. There are only two steps: install the GitHub App and add a script tag. No npm packages, no build configuration, no backend setup required.
 
 ## Step 1: Install the GitHub App
@@ -23,12 +25,7 @@ These are the minimum permissions required for BugDrop to function. The app does
 
 Add the BugDrop script tag to your HTML, just before the closing `</body>` tag:
 
-```html
-<script
-  src="https://bugdrop.neonwatty.workers.dev/widget.js"
-  data-repo="your-username/your-repo"
-></script>
-```
+<WidgetInstallSnippet repo="your-username/your-repo" />
 
 Replace `your-username/your-repo` with your actual GitHub repository path (e.g., `acme-corp/my-website`).
 
@@ -89,7 +86,7 @@ BugDrop to visually cover in supported screenshot modes, mark those elements wit
 
 BugDrop covers each marked element with an opaque rectangle on supported captured screenshots.
 Password inputs and credit-card autocomplete fields are masked automatically. See
-[Screenshot masking](/security#screenshot-masking) on the Security page for details.
+[Screenshot masking](/docs/security#screenshot-masking) on the Security page for details.
 
 ## Step 3: You Are Done
 
@@ -97,18 +94,11 @@ That is it. Load your page and you will see the BugDrop button in the corner of 
 
 ## Important Notes
 
-### Do Not Use async or defer
+### Preserve the widget's loading contract
 
-The BugDrop script tag should **not** include the `async` or `defer` attributes. The widget needs to load synchronously to properly initialize:
+Use a normal script element without `async` or `defer`. The widget reads configuration from the executing script element, so changing execution order can separate initialization from its `data-*` attributes. This is the contract in the [official BugDrop README](https://github.com/mean-weasel/bugdrop#quick-start) and the same contract used by BugDrop's own website.
 
-```html
-<!-- Correct -->
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js" data-repo="owner/repo"></script>
-
-<!-- Incorrect - do NOT do this -->
-<script async src="https://bugdrop.neonwatty.workers.dev/widget.js" data-repo="owner/repo"></script>
-<script defer src="https://bugdrop.neonwatty.workers.dev/widget.js" data-repo="owner/repo"></script>
-```
+<WidgetInstallSnippet />
 
 ### Content Security Policy (CSP)
 
@@ -135,7 +125,7 @@ Without this, screenshot uploads will fail silently, though the issue itself wil
 
 ### Framework-Specific Notes
 
-**React / Next.js**: Add the script tag to your `index.html`, or use a `<Script>` component. For Next.js App Router, place it in your root layout:
+**Next.js App Router**: Render the normal script element near the end of the root layout body. Do not use `next/script`, because its loading strategies intentionally change when the script is injected or executed. Place the widget in one shared layout, not both a root and nested layout:
 
 ```tsx
 // app/layout.tsx
@@ -154,26 +144,18 @@ export default function RootLayout({ children }) {
 }
 ```
 
-**Vue / Nuxt**: Add the script tag to your `index.html` or use the Nuxt `useHead` composable.
-
-**Svelte / SvelteKit**: Add to your `app.html` template.
-
-**Static sites (Hugo, Jekyll, Astro)**: Add to your base layout template, before the closing `</body>` tag.
+For a preview-only Vercel workflow, render this element only when the server-side `VERCEL_ENV` value is `preview`; see the [tested Vercel preview guide](/use-cases/vercel-preview-feedback).
 
 ## Verifying the Installation
 
-After adding the script tag, open your browser's developer console. You should see:
-
-```
-[BugDrop] Widget initialized
-```
+After adding the script tag, verify the current public contract: `window` emits `bugdrop:ready`, the page contains `#bugdrop-host`, and its open Shadow DOM contains `.bd-trigger`. The [CI testing guide](/docs/ci-testing) has an executable Playwright check.
 
 If you see any errors, check that:
 
 1. The `data-repo` attribute matches your GitHub repository path exactly
 2. The GitHub App is installed on that repository
 3. Your CSP (if any) allows the required domains
-4. The script tag does not have `async` or `defer`
+4. The script request returns JavaScript rather than an HTML error page
 
 You can also test by clicking the bug button and submitting a test report. Check your GitHub repository's Issues tab to confirm it was created successfully.
 

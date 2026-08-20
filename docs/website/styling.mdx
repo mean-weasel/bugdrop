@@ -1,10 +1,10 @@
 # Styling
 
-BugDrop is designed to blend seamlessly into any website. Beyond the core theme and color options, a full set of styling attributes gives you fine-grained control over fonts, border radius, backgrounds, text colors, borders, and shadows. The widget renders inside a Shadow DOM, so your site's styles never leak in and the widget's styles never leak out.
+BugDrop is designed to blend seamlessly into any website. The default feedback flow uses script attributes for fonts, border radius, backgrounds, text colors, borders, and shadows. Custom flows add supported `appearance` and `presentation` configuration for each registered journey. The widget renders inside a Shadow DOM, so your site's styles never leak in and the widget's styles never leak out.
 
 ## Styling Attributes
 
-All styling is done through data attributes on the script tag. No CSS files to import, no class names to override.
+The default feedback flow is styled through data attributes on the script tag. No CSS files to import, no class names to override.
 
 | Attribute | Default | Description |
 |-----------|---------|-------------|
@@ -17,6 +17,62 @@ All styling is done through data attributes on the script tag. No CSS files to i
 | `data-shadow` | `"0 8px 30px rgba(0,0,0,0.12)"` | Box shadow of the form container |
 
 These same visual settings are also used by Select Element screenshots. When a user selects an element, BugDrop draws a border-only rounded highlight around that element using `data-color`, `data-radius`, and `data-border-width`. The captured highlight includes a small 2px inner gap so the border does not sit directly on top of the selected element. The GitHub issue caption mentions the exact resolved highlight color.
+
+## Custom-flow appearance
+
+A registered custom flow can select a theme, accent color, and density through `appearance`. Its
+`presentation` controls the modal size, the number of form columns, and optional screen motion:
+
+```js
+const brandedFlow = window.BugDrop.registerFlow({
+  configVersion: 1,
+  id: 'branded-feedback',
+  presentation: {
+    kind: 'modal',
+    size: 'wide',
+    columns: 2,
+    screenTransition: { kind: 'fade' },
+  },
+  appearance: {
+    theme: 'auto',
+    accentColor: '#7c3aed',
+    density: 'comfortable',
+  },
+  forms: [
+    {
+      id: 'feedback',
+      title: 'Share feedback',
+      fields: [
+        {
+          id: 'summary',
+          type: 'shortText',
+          label: 'Summary',
+          required: true,
+          layout: { span: 2 },
+        },
+      ],
+    },
+  ],
+  screens: [{ id: 'feedback-screen', type: 'form', form: 'feedback' }],
+  issue: { title: '{{feedback.summary}}' },
+});
+```
+
+`theme: 'auto'` follows the runtime's automatic theme behavior. `accentColor` accepts a color string.
+Density changes the spacing of the flow controls. Modal size and columns shape the available layout,
+while an individual field's `layout.span` chooses whether it occupies one or two columns.
+
+These configuration properties are the public styling boundary for custom flows. The released Flow
+contract is modal-only; inline mounting belongs to the separate Variant contract. BugDrop does not
+expose arbitrary class names, style hooks, or CSS injection through the Shadow DOM. Use the exact
+[appearance and presentation values](/docs/flow-presentation-and-motion#presentation-and-appearance) and
+[screen transition values](/docs/flow-presentation-and-motion#screen-transitions) from the manifest-driven Flow
+Reference.
+
+Try the [live released examples](/docs/flow-examples) to compare a product-dark,
+editorial-light, and compact-console host application. Each preset changes only released
+`appearance`, `presentation`, and field-span controls; the surrounding preview card demonstrates
+the host application, while its CSS remains outside BugDrop's Shadow DOM.
 
 ### Defaults by Theme
 
@@ -200,5 +256,7 @@ Combine a custom icon with a text label for maximum clarity:
 ## Next Steps
 
 - [Configure widget behavior](/docs/configuration) with all available attributes
+- [Build a custom flow](/docs/custom-flows) with per-flow appearance and presentation
+- [Check the Flow styling contract](/docs/flow-presentation-and-motion#presentation-and-appearance)
 - [Use the JavaScript API](/docs/javascript-api) for programmatic control
 - [Test your configuration](/docs/ci-testing) with automated Playwright tests

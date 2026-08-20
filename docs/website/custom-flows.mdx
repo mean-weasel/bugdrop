@@ -1,0 +1,59 @@
+# Custom Flows
+
+The default feedback flow is still the fastest way to collect a bug report with a screenshot, annotations, browser details, and privacy controls. Custom flows use the same BugDrop runtime and submission path, but let you collect different information in a journey that fits a particular part of your product.
+
+## Choose your path
+
+- **Build your first flow below** when you want the smallest working example.
+- Use [Flow Design](/docs/flow-design) for screens, branching, context, issue output, and evidence.
+- Try the [Flow Examples](/docs/flow-examples) to combine released components, motion, and styling without leaving the page.
+- Use the [Flow Reference](/docs/flow-reference) for the released v1.56.3 shapes, values, and validation boundaries.
+
+## Register a first flow
+
+Register once after `bugdrop:ready`, keep the returned handle, and open it from your product UI:
+
+```js
+window.addEventListener('bugdrop:ready', () => {
+  const productQuestion = window.BugDrop.registerFlow({
+    configVersion: 1,
+    id: 'product-question',
+    presentation: { kind: 'modal', size: 'compact' },
+    appearance: { theme: 'auto', accentColor: '#7c3aed' },
+    forms: [{
+      id: 'question',
+      title: 'Help us choose what to build',
+      fields: [{
+        id: 'answer',
+        type: 'longText',
+        label: 'What would improve your workflow?',
+        required: true,
+        maxLength: 1000,
+      }],
+    }],
+    screens: [{ id: 'question-screen', type: 'form', form: 'question' }],
+    issue: {
+      classification: 'question',
+      title: 'Product question response',
+      sections: [
+        { heading: 'Response', answer: 'question.answer' },
+        { heading: 'Surface', context: 'surface', format: 'code' },
+      ],
+    },
+  });
+
+  document.querySelector('#product-question').addEventListener('click', async () => {
+    const opened = productQuestion.open({ context: { surface: 'settings' } });
+    console.log((await opened.result).status);
+  });
+});
+```
+
+Registration returns a `FlowHandle`. Each `open()` creates an `OpenedFlow` with its own `instanceId`, `result` promise, and `close()` method. See [JavaScript API: custom-flow lifecycle](/docs/javascript-api#custom-flow-lifecycle) for result handling.
+
+## Next steps
+
+- Design a multi-screen journey in [Flow Design](/docs/flow-design)
+- See the released API working in [Flow Examples](/docs/flow-examples)
+- Match the widget to your application with [Styling](/docs/styling)
+- Keep production behavior predictable with [Version Pinning](/docs/version-pinning)

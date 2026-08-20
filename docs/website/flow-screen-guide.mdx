@@ -1,0 +1,43 @@
+# Flow Screen Guide
+
+import { FlowBuildingBlockPreview } from "@/components/docs/flow-building-block-preview";
+
+Screens arrange the steps someone moves through. They appear in the order you define and can be shown conditionally based on an earlier answer or application context.
+
+## Message screen
+
+Presents a title and optional explanation without collecting a field response.
+
+<FlowBuildingBlockPreview kind="message-screen" />
+
+```js
+{ id: 'intro', type: 'message', title: 'Help us improve', description: 'This takes about a minute.', continueLabel: 'Start' }
+```
+
+Use the title and description to explain the flow. You can customize the continue label and add a condition that determines whether the screen appears.
+
+## Form screen
+
+Displays one of the reusable forms defined in the flow configuration.
+
+<FlowBuildingBlockPreview kind="form-screen" />
+
+```js
+{ id: 'feedback-screen', type: 'form', form: 'feedback', continueLabel: 'Continue', backLabel: 'Back' }
+```
+
+The `form` value points to a form ID. You can customize the forward and back labels and add a condition that determines whether the screen appears.
+
+## Screenshot screen
+
+Guides someone through screenshot capture as a dedicated step.
+
+<FlowBuildingBlockPreview kind="screenshot-screen" />
+
+```js
+{ id: 'screenshot', type: 'screenshot', mode: 'optional', title: 'Add a screenshot', description: 'Show us what you saw.' }
+```
+
+Screenshot capture can be optional, automatic, or required. You can customize the title, description, forward and back labels, and add a condition that determines whether the screen appears.
+
+For every exact property and allowed value, see the [Fields & Screens Reference](/docs/flow-fields-and-screens-reference).

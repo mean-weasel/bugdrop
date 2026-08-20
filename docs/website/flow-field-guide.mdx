@@ -1,0 +1,91 @@
+# Flow Field Guide
+
+import { FlowBuildingBlockPreview } from "@/components/docs/flow-building-block-preview";
+
+Fields collect information inside a form. Every field has an `id`, `type`, and visible `label`; fields may also be required, include help text, and span one or two columns.
+
+## Short text
+
+Collects a brief response on one line.
+
+<FlowBuildingBlockPreview kind="short-text" />
+
+```js
+{ id: 'summary', type: 'shortText', label: 'What happened?', required: true, maxLength: 120 }
+```
+
+You can add help text and placeholder copy, set minimum and maximum lengths, and control its column span.
+
+## Long text
+
+Collects a response that may need multiple lines.
+
+<FlowBuildingBlockPreview kind="long-text" />
+
+```js
+{ id: 'details', type: 'longText', label: 'Tell us more', rows: 5, maxLength: 1000 }
+```
+
+You can add help text and placeholder copy, set the visible row count, set minimum and maximum lengths, require a response, and control its column span.
+
+## Rating
+
+Collects a score on a five- or ten-point scale using stars or numbers.
+
+<FlowBuildingBlockPreview kind="rating" />
+
+```js
+{ id: 'score', type: 'rating', label: 'How was this experience?', scale: 5, icon: 'star', lowLabel: 'Poor', highLabel: 'Great' }
+```
+
+You can choose the scale and icon, label both ends of the scale, add help text, require a rating, and control its column span.
+
+## Single choice
+
+Lets someone select exactly one option.
+
+<FlowBuildingBlockPreview kind="single-choice" />
+
+```js
+{
+  id: 'priority',
+  type: 'singleChoice',
+  label: 'How important is this?',
+  display: 'cards',
+  options: [
+    { value: 'low', label: 'Low' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'high', label: 'High', description: 'Blocking important work' },
+  ],
+}
+```
+
+Options require a stored value and visible label, and may include a description. The choices can appear as radio controls, cards, or buttons. You can also add help text, require a selection, and control the field's column span.
+
+## Checkbox
+
+Collects one checked-or-unchecked answer.
+
+<FlowBuildingBlockPreview kind="checkbox" />
+
+```js
+{ id: 'contact', type: 'checkbox', label: 'You may contact me about this feedback', initialValue: false }
+```
+
+You can set its initial state, add help text, require it to be checked, and control its column span.
+
+## Attachments
+
+Lets someone add supporting files to the feedback submission.
+
+<FlowBuildingBlockPreview kind="attachments" />
+
+```js
+{ id: 'files', type: 'attachments', label: 'Add supporting files', maxFiles: 3, accept: ['image/png', 'image/jpeg'] }
+```
+
+You can limit the number and size of files, restrict accepted file types, add help text, require an attachment, and control the field's column span.
+
+`maxFileSize` is measured in bytes. Each attachment value contains its file name, MIME type, byte size, and data URL; most flows should map the field through `evidence.attachments` instead of rendering it as ordinary Issue text.
+
+For every exact property and allowed value, see the [Fields & Screens Reference](/docs/flow-fields-and-screens-reference).
