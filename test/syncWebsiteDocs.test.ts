@@ -111,6 +111,20 @@ describe('website documentation sync', () => {
     );
   });
 
+  it('keeps distribution and gallery guidance aligned with supported release paths', async () => {
+    const api = await readFile('docs/website/javascript-api.mdx', 'utf8');
+    const examples = await readFile('docs/website/flow-examples.mdx', 'utf8');
+    const customFlows = await readFile('docs/website/custom-flows.mdx', 'utf8');
+    const motion = await readFile('docs/website/flow-presentation-and-motion.mdx', 'utf8');
+
+    expect(api).toContain('BugDrop does not currently publish an npm package');
+    expect(api).not.toContain('from the `bugdrop` package');
+    expect(examples).toContain('interactive launcher is enabled only in local development');
+    expect(examples).toContain('Deployed documentation never loads the preview runtime');
+    expect(customFlows).toContain('local development also enables the interactive launcher');
+    expect(motion).toContain('preview them interactively in local development');
+  });
+
   it('uses the same safe filename grammar for discovery and retirement', () => {
     expect(isWebsiteDocName('flow-reference.mdx')).toBe(true);
     expect(isWebsiteDocName('api_v2.mdx')).toBe(true);
