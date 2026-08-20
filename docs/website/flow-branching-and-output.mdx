@@ -1,0 +1,59 @@
+# Flow Branching & Output
+
+import { FlowCapabilityReference } from "@/components/docs/flow-capability-reference";
+
+Branching lets one flow adapt to what a user has already answered or to context supplied by your app. Output mappings then turn the answers that remain relevant into a useful GitHub Issue and supporting evidence.
+
+## Show the right screens
+
+Add `when` to a screen to show it only when a value matches. An `answer` condition refers to an earlier field by its `formId.fieldId` path. A `context` condition refers to a key supplied through `open({ context })`. Matching uses exact equality, including the value type: the number `5` is different from the string `'5'`.
+
+```js
+{
+  id: 'diagnostics-screen',
+  type: 'form',
+  form: 'diagnostics',
+  when: {
+    any: [
+      { answer: 'triage.kind', equals: 'bug' },
+      { context: 'supportPlan', equals: 'priority' },
+    ],
+  },
+}
+```
+
+Use `all` when every nested condition must match and `any` when one match is enough. Groups can contain other groups for more involved routes.
+
+When an answer change hides a screen, BugDrop removes the answers and screenshot evidence owned by that screen. This prevents information from a route the user abandoned from appearing in the final Issue. Going Back to a screen that remains visible keeps its answers.
+
+## Know the stored answer values
+
+Answer and initial-answer paths use these values:
+
+| Field | Stored value |
+|-------|--------------|
+| Short text or long text | A trimmed string |
+| Rating | An integer from `1` through the configured scale |
+| Single choice | The selected option's configured `value` string |
+| Checkbox | `true` or `false` |
+| Attachments | An array of attachment records |
+
+Attachments can be mapped as evidence, but they cannot be used as scalar condition values, Issue-title placeholders, or ordinary Issue sections.
+
+## Shape the GitHub Issue
+
+Issue titles can interpolate answer paths such as `{{report.summary}}`. Ordered sections can read either an answer or a context key and format it as text, a quote, stars, a choice label, or code where supported. Set `omitWhenEmpty: true` when an optional section should disappear instead of leaving an empty heading.
+
+Evidence mappings have narrower jobs: an attachments field supplies uploaded files, a checkbox records consent to send console logs, and text fields can supply the submitter's name or email. Mapping a field does not bypass the normal user consent or submission flow.
+
+## Handle the outcome
+
+Every opened flow settles as `submitted`, `closed`, or `busy`. A busy result means another BugDrop modal already owns the shared surface; wait for that experience to close before opening another one. See the [JavaScript API lifecycle guide](/docs/javascript-api#custom-flow-lifecycle) for a complete example.
+
+## Exact reference
+
+The tables below are the exact released condition, context, issue, evidence, lifecycle, outcome, and scope-boundary contracts for BugDrop v1.56.3.
+
+<FlowCapabilityReference section="branching-and-output" />
+
+Return to [Flow Design](/docs/flow-design) for practical composition guidance.

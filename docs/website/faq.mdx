@@ -96,9 +96,9 @@ To completely remove BugDrop:
 
 Removing the script tag is all that is needed to stop BugDrop from appearing. Steps 2 and 3 are optional cleanup.
 
-### Why can't I use async or defer on the script tag?
+### Why must the script omit async and defer?
 
-BugDrop needs to initialize synchronously to ensure the widget is ready as early as possible and to properly read its configuration from the script tag's data attributes. Using `async` or `defer` can cause the widget to initialize after other scripts have run, which may lead to race conditions with the `bugdrop:ready` event or the `window.BugDrop` API.
+BugDrop reads configuration from the script element that is executing. Use the official synchronous snippet without `async` or `defer` so execution order and the element's `data-*` attributes remain one contract. If application code depends on the widget, register a `bugdrop:ready` listener on `window` before the script executes.
 
 ## Configuration
 

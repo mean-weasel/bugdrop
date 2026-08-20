@@ -14,6 +14,7 @@ The `window.BugDrop` object is available after the widget initializes. It provid
 | `BugDrop.show()` | Method | Shows the floating button |
 | `BugDrop.isOpen()` | Method | Returns `true` if the feedback form is currently open |
 | `BugDrop.isButtonVisible()` | Method | Returns `true` if the floating button is currently visible |
+| `BugDrop.registerFlow(config)` | Method | Registers a released `FlowConfig` and returns a `FlowHandle` |
 | `BugDrop.registerVariant(config)` | Method | Registers an immutable custom feedback definition and returns a durable handle |
 
 ### Basic Usage
@@ -142,7 +143,91 @@ If your code runs after the page is fully loaded and you want to check whether B
 
 This "check first, listen second" pattern is useful in single-page applications where your code might run at various points in the page lifecycle.
 
+## Custom-flow lifecycle
+
+`registerFlow(config)` adds a custom modal journey without replacing the default feedback flow. The
+configuration contains forms, ordered screens, issue output, and optional evidence, appearance, and
+content controls. See [Custom Flows](/docs/custom-flows) for a complete walkthrough and the
+[Flow Reference](/docs/flow-reference) for the manifest-driven released contract.
+
+```js
+const triage = window.BugDrop.registerFlow({
+  configVersion: 1,
+  id: 'support-triage',
+  presentation: { kind: 'modal', size: 'compact' },
+  forms: [
+    {
+      id: 'request',
+      title: 'How can we help?',
+      fields: [
+        {
+          id: 'summary',
+          type: 'shortText',
+          label: 'Summary',
+          required: true,
+        },
+      ],
+    },
+  ],
+  screens: [
+    { id: 'request-screen', type: 'form', form: 'request' },
+  ],
+  issue: {
+    classification: 'question',
+    title: '{{request.summary}}',
+    sections: [{ heading: 'Surface', context: 'surface', format: 'code' }],
+  },
+});
+```
+
+The returned `FlowHandle` has a stable `id` and an `open(options?)` method. Opening returns an
+`OpenedFlow` for that instance:
+
+```js
+const opened = triage.open({
+  context: { surface: 'help-menu' },
+  initialAnswers: { 'request.summary': 'Export is unavailable' },
+});
+
+console.log(opened.instanceId);
+
+const outcome = await opened.result;
+if (outcome.status === 'submitted') {
+  console.log(outcome.result.issueNumber, outcome.result.issueUrl);
+}
+```
+
+Every `context` key must be referenced by a condition or context-backed Issue section in the
+registered configuration; `open()` rejects unreferenced keys synchronously. `initialAnswers`
+prefills known answers by their `formId.fieldId` paths. Use a string for text fields, an integer for
+ratings, an option's configured `value` string for single choice, a boolean for checkboxes, and an
+attachment array for attachments. Both opening properties are optional.
+
+Registration validates the complete configuration immediately and throws when it is invalid. Flow
+IDs must be unique within one loaded BugDrop runtime, so register each configuration once and keep
+the returned handle for later opens. Conditions may only reference earlier answers, form screens
+must reference existing forms, and output mappings must reference compatible fields. These checks
+happen at registration rather than after a user begins the flow.
+
+The `result` promise settles with one released status:
+
+| Status | Meaning | Additional value |
+|--------|---------|------------------|
+| `submitted` | Submission completed | `result` contains `issueNumber`, `issueUrl`, `isPublic`, and optional `labelMappingWarnings` |
+| `closed` | This flow instance closed without a completed submission | None |
+| `busy` | The runtime could not open this instance because the modal surface was busy | None |
+
+Call `opened.close()` to close that custom-flow instance. This is separate from `BugDrop.close()`,
+which controls the default feedback form.
+
+TypeScript consumers can import the Flow configuration, handle, opening, and outcome declarations
+from the `bugdrop` package. The exact property contract is kept on the
+[Branching & Output reference](/docs/flow-branching-and-output#lifecycle) so this lifecycle guide does not duplicate it.
+
 ## Configurable Variants
+
+Variants are a separate public contract. Use them when you specifically need Variant-only inline
+mounting or headless submission; do not place those properties in a `FlowConfig`.
 
 Use a registered variant for a focused feedback experience while reusing BugDrop's validation,
 metadata, auth, Worker policy, and GitHub Issue creation. Registration validates synchronously and
@@ -177,83 +262,11 @@ mountedReview.reset();
 mountedReview.unmount();
 ```
 
-The inline renderer provides accessible short-text, long-text, rating, and single-choice controls.
-Choosing an option changes only local form state; it never submits. A GitHub Issue is created only
-after the explicit Submit button succeeds.
+The inline renderer provides accessible short-text, long-text, and rating controls. Choosing a star
+changes only local form state; it never submits. A GitHub Issue is created only after the explicit
+Submit button succeeds.
 
-For example, an inline poll keeps stable answer values separate from its visible labels and optional
-descriptions. `radio`, `cards`, and `buttons` displays all retain native radio keyboard semantics:
-
-```js
-const poll = window.BugDrop.registerVariant({
-  id: 'next-integration-poll',
-  presentation: { kind: 'inline' },
-  content: { title: 'What should we build next?', submitLabel: 'Vote' },
-  fields: [
-    {
-      id: 'choice',
-      type: 'singleChoice',
-      label: 'Choose one',
-      required: true,
-      display: 'cards',
-      options: [
-        { value: 'onedrive', label: 'OneDrive' },
-        { value: 'box', label: 'Box' },
-        { value: 'other', label: 'Something else' },
-      ],
-    },
-    { id: 'detail', type: 'longText', label: 'Optional detail', maxLength: 500 },
-  ],
-  issue: {
-    classification: 'feature',
-    title: 'Integration vote — {{choice}}',
-    sections: [
-      { heading: 'Choice', field: 'choice', format: 'choice' },
-      { heading: 'Detail', field: 'detail', omitWhenEmpty: true },
-    ],
-  },
-});
-
-const mountedPoll = poll.mount(document.querySelector('#poll-slot'));
-```
-
-The title template receives the stable configured value (for example, `onedrive`), while the
-`choice` section renders its display label (`OneDrive`). Configured labels and descriptions are
-inserted as text. Resetting a successful mounted poll restores its initial answers and creates a new
-submission identity; `unmount()` disposes only that instance.
-
-Compact suggestions do not need a special renderer or field. Compose the existing short- and
-long-text controllers in the modal presentation:
-
-```js
-const suggestion = window.BugDrop.registerVariant({
-  id: 'compact-suggestion',
-  presentation: { kind: 'modal', size: 'default' },
-  content: { title: 'Share an idea', submitLabel: 'Submit idea' },
-  fields: [
-    { id: 'summary', type: 'shortText', label: 'Idea', required: true, maxLength: 120 },
-    { id: 'detail', type: 'longText', label: 'How would this help?', maxLength: 2000 },
-  ],
-  issue: {
-    classification: 'feature',
-    title: '[Idea] {{summary}}',
-    sections: [
-      { heading: 'Idea', field: 'summary' },
-      { heading: 'Why it would help', field: 'detail', omitWhenEmpty: true },
-    ],
-  },
-});
-
-suggestion.open();
-```
-
-Every built-in controller follows the same internal controller contract for values, errors,
-disabled state, focus, reset, and disposal. Contributors extending the built-in field union add a
-controller and its shared conformance fixture; the browser still emits generic Issue sections, so
-the Worker formatter does not gain a field-specific branch. A public renderer registration API is
-not part of this contract.
-
-For a host-owned CTA, register a modal variant and call its handle instead of the legacy
+For a host-owned CTA, register a modal variant and call its handle instead of the default-flow
 `BugDrop.open()` method:
 
 ```js
@@ -290,21 +303,14 @@ document.querySelector('#provider-cta').addEventListener('click', () => {
 ```
 
 The modal traps focus, closes on Escape, restores focus and page scrolling, and settles its result
-as `submitted`, `closed`, or `busy`. A variant requested while the legacy wizard is active returns
-`busy`. Opening the legacy wizard while a variant modal is active closes the variant first. The
-legacy `BugDrop.close()` method remains legacy-scoped.
+as `submitted`, `closed`, or `busy`. A variant requested while the default feedback form is active
+returns `busy`. Opening the default feedback form while a variant modal is active closes the variant
+first. `BugDrop.close()` continues to control only the default feedback form.
 
-BugDrop's merge-queue preview checks render the star review, CTA question, poll, and compact
-suggestion from the exact deployed widget bytes. Each UX intercepts and asserts its normalized draft
-without creating an Issue. A separate zero-retry representative canary then creates, independently
-verifies, closes, and sweeps exactly one real GitHub Issue through the shared Worker and GitHub App
-path; browser and UX coverage never multiply that destructive canary.
-
-For component cleanup, keep the returned mounted or opened handle. Call `unmount()` for inline
-instances and `close()` for an open modal. Both are safe to call repeatedly and dispose only their
-own host, controller state, and listeners. `reset()` restores the supplied initial answers and, after
-a successful submission, starts a new submission identity without affecting another mounted
-instance or the legacy widget.
+BugDrop's merge-queue preview checks render both this CTA modal and the inline star review from the
+exact deployed widget bytes. They assert each normalized draft without creating Issues, followed by
+one zero-retry rendered CTA canary that creates, independently verifies, closes, and sweeps one real
+GitHub Issue through the existing GitHub App.
 
 If your application owns the UI, the same immutable handle also supports headless submission:
 
@@ -411,5 +417,7 @@ The `show()` and `hide()` methods let you control the floating button's visibili
 ## Next Steps
 
 - [Configure the widget](/docs/configuration) with data attributes
+- [Build a custom flow](/docs/custom-flows) with forms, screens, branching, and evidence
+- [Use the exhaustive Flow Reference](/docs/flow-reference) for released values and properties
 - [Style the widget](/docs/styling) to match your site design
 - [Test your integration](/docs/ci-testing) with Playwright

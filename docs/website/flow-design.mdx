@@ -1,0 +1,77 @@
+# Flow Design
+
+Custom flows have four layers: forms and fields collect answers, screens arrange the journey, issue and evidence mappings create useful output, and a registered handle owns each open instance.
+
+## Arrange forms into screens
+
+Forms are reusable groups of fields. Screens determine what a user sees and in which order. A form screen refers to a form by ID; a screenshot screen hands capture to BugDrop; a message screen can introduce or explain a branch.
+
+Use `when` to include a screen only when an answer or opening context matches. Conditions can be combined recursively with `all` or `any`:
+
+```js
+{
+  id: 'diagnostics-screen',
+  type: 'form',
+  form: 'diagnostics',
+  when: {
+    any: [
+      { answer: 'triage.kind', equals: 'bug' },
+      { context: 'supportPlan', equals: 'priority' },
+    ],
+  },
+}
+```
+
+Answer paths use `formId.fieldId`. Context values come from `open({ context })` and may be strings, numbers, booleans, or `null`.
+Every context key passed to `open()` must also be referenced by that flow in a screen condition or a
+context-backed Issue section. An unreferenced key is rejected synchronously as an unknown context
+key.
+
+## Map issue output and evidence
+
+Issue templates can classify the report, interpolate answers in the title, and render ordered sections. Evidence mappings connect dedicated fields to attachments, console-log consent, and submitter details:
+
+```js
+issue: {
+  classification: 'bug',
+  title: '{{report.summary}}',
+  sections: [
+    { heading: 'Steps', answer: 'report.steps', omitWhenEmpty: true },
+    { heading: 'Surface', context: 'surface', format: 'code' },
+  ],
+},
+evidence: {
+  attachments: 'evidence.files',
+  sendConsoleLogs: 'evidence.sendLogs',
+  submitter: { name: 'evidence.name', email: 'evidence.email' },
+},
+```
+
+Mapping a field does not bypass consent or the normal BugDrop submission path. Submitting a flow can create a real GitHub Issue, so use a repository and environment appropriate for testing.
+
+## Seed answers and pass product context
+
+`open()` accepts `context` and `initialAnswers`. Use declared context keys for routing and issue
+metadata your application already knows, and initial answers to prefill known values:
+
+```js
+const opened = productQuestion.open({
+  context: { surface: 'export' },
+  initialAnswers: { 'question.answer': 'Export needs a CSV option.' },
+});
+```
+
+Keep private or privileged values out of both inputs. Values mapped into an issue or captured as evidence can leave the browser when the user submits.
+
+## Add motion intentionally
+
+Set `presentation.screenTransition` to immediate replacement, a built-in transition, or custom declarative motion. Back navigation uses the reverse direction. BugDrop replaces motion immediately when the user prefers reduced motion.
+
+```js
+presentation: {
+  kind: 'modal',
+  screenTransition: { kind: 'fade', durationMs: 350 },
+},
+```
+
+See [Presentation & Motion](/docs/flow-presentation-and-motion) for every released transition and [Styling](/docs/styling#custom-flow-appearance) for supported appearance controls.
