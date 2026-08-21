@@ -142,6 +142,77 @@ test('captures and submits a real screenshot without test hooks or mocked bytes'
   });
 });
 
+test('downscales an oversized full-page capture before submission', async ({ page }) => {
+  const requests: FeedbackPayload[] = [];
+  await page.route('**/api/check/**', route =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ installed: true, maxScreenshotSizeBytes: 4 * 1024 * 1024 }),
+    })
+  );
+  await page.route('**/feedback', async route => {
+    requests.push(route.request().postDataJSON() as FeedbackPayload);
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        issueNumber: 99,
+        issueUrl: 'https://github.com/example/project/issues/99',
+        isPublic: false,
+      }),
+    });
+  });
+  await page.goto('/test/');
+  await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 800;
+    canvas.height = 2_000;
+    canvas.style.display = 'block';
+    canvas.style.width = '800px';
+    canvas.style.height = '2000px';
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Canvas is unavailable');
+
+    const pixels = context.createImageData(canvas.width, canvas.height);
+    let state = 0x12345678;
+    for (let index = 0; index < pixels.data.length; index += 4) {
+      state ^= state << 13;
+      state ^= state >>> 17;
+      state ^= state << 5;
+      pixels.data[index] = state & 0xff;
+      pixels.data[index + 1] = (state >>> 8) & 0xff;
+      pixels.data[index + 2] = (state >>> 16) & 0xff;
+      pixels.data[index + 3] = 255;
+    }
+    context.putImageData(pixels, 0, 0);
+    document.body.appendChild(canvas);
+  });
+  await waitForWidget(page);
+  await page.evaluate(() => window.BugDrop?.open());
+
+  const widget = host(page);
+  await widget.locator('css=#title').fill('Oversized release capture');
+  await widget.locator('css=#description').fill('Full-page payload must fit the upload limit');
+  await widget.locator('css=#submit-btn').click();
+  await widget.locator('css=[data-action="capture"]').click();
+  const annotationCanvas = widget.locator('css=#annotation-canvas canvas');
+  await expect(annotationCanvas).toBeVisible({ timeout: 30_000 });
+  const capturedBytes = await annotationCanvas.evaluate(canvas => {
+    const payload = (canvas as HTMLCanvasElement).toDataURL('image/png').split(',')[1] ?? '';
+    return Math.floor((payload.length * 3) / 4);
+  });
+  expect(capturedBytes).toBeGreaterThan(5 * 1024 * 1024);
+
+  await widget.locator('css=[data-action="done"]').click();
+  await expect(widget.locator('css=.bd-success-icon')).toBeVisible({ timeout: 30_000 });
+
+  expect(requests).toHaveLength(1);
+  const submittedPayload = requests[0].screenshot?.split(',')[1] ?? '';
+  expect(Math.floor((submittedPayload.length * 3) / 4)).toBeLessThanOrEqual(4 * 1024 * 1024);
+});
+
 test('normalizes modal, inline, and headless variants without changing their envelope', async ({
   page,
 }) => {

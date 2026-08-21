@@ -143,6 +143,7 @@ describe('API Routes', () => {
         installed: true,
         repo: 'testowner/testrepo',
         appName: 'test-bugdrop-app',
+        maxScreenshotSizeBytes: 5 * 1024 * 1024,
       });
       expect(mockGetInstallationToken).toHaveBeenCalledWith(mockEnv, 'testowner', 'testrepo');
     });
@@ -159,6 +160,7 @@ describe('API Routes', () => {
         installed: false,
         repo: 'testowner/testrepo',
         appName: 'test-bugdrop-app',
+        maxScreenshotSizeBytes: 5 * 1024 * 1024,
       });
     });
 
@@ -174,6 +176,7 @@ describe('API Routes', () => {
       expect(data).toEqual({
         installed: true,
         repo: 'testowner/testrepo',
+        maxScreenshotSizeBytes: 5 * 1024 * 1024,
       });
       expect(data).not.toHaveProperty('appName');
     });

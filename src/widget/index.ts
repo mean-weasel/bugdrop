@@ -90,6 +90,7 @@ interface WidgetConfig {
   // Screenshot configuration
   screenshotMode: 'optional' | 'auto' | 'required';
   screenshotScale?: number; // Minimum pixel ratio for captures (default: 2)
+  maxScreenshotSizeBytes?: number;
   elementContextMaxArea?: number; // Max ancestor capture area as a viewport multiplier
   issueLinkVisibility: IssueLinkVisibility;
   sendConsoleLogs: boolean;
@@ -1222,8 +1223,7 @@ async function runPrivateDefaultJourney(
     Awaited<ReturnType<typeof runScreenshotCaptureFlow>>
   >(definition, {
     preflight: recipe =>
-      checkInstallation({
-        ...config,
+      checkInstallation(config, {
         repo: recipe.repo,
         apiUrl: recipe.apiUrl,
         authTokenProvider: recipe.authTokenProvider,
@@ -1300,14 +1300,18 @@ async function runPrivateDefaultJourney(
 }
 
 async function checkInstallation(
-  config: WidgetConfig
+  config: WidgetConfig,
+  endpoint: Pick<WidgetConfig, 'repo' | 'apiUrl' | 'authTokenProvider'> = config
 ): Promise<{ status: 'installed' | 'not_installed' | 'unreachable'; appName?: string }> {
   try {
-    const response = await fetch(`${config.apiUrl}/check/${config.repo}`, {
-      headers: await getAuthHeaders(config.authTokenProvider),
+    const response = await fetch(`${endpoint.apiUrl}/check/${endpoint.repo}`, {
+      headers: await getAuthHeaders(endpoint.authTokenProvider),
     });
     if (!response.ok) return { status: 'unreachable' };
     const data = await response.json();
+    if (Number.isSafeInteger(data.maxScreenshotSizeBytes) && data.maxScreenshotSizeBytes > 0) {
+      config.maxScreenshotSizeBytes = data.maxScreenshotSizeBytes;
+    }
     return {
       status: data.installed === true ? 'installed' : 'not_installed',
       appName: data.appName,

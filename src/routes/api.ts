@@ -129,6 +129,11 @@ function getBuildSha(env: Env): string | undefined {
   return env.BUILD_SHA?.trim() || undefined;
 }
 
+function getMaxScreenshotSizeMB(env: Env): number {
+  const configured = Number.parseInt(env.MAX_SCREENSHOT_SIZE_MB || '5', 10);
+  return Number.isSafeInteger(configured) && configured > 0 ? configured : 5;
+}
+
 // Check if app is installed on repo
 api.get('/check/:owner/:repo', async c => {
   const { owner, repo } = c.req.param();
@@ -145,6 +150,7 @@ api.get('/check/:owner/:repo', async c => {
     installed: !!token,
     repo: fullRepo,
     appName: c.env.GITHUB_APP_NAME || undefined,
+    maxScreenshotSizeBytes: getMaxScreenshotSizeMB(c.env) * 1024 * 1024,
   });
 });
 
@@ -176,7 +182,7 @@ api.post('/feedback', async c => {
 
   // Validate screenshot payload. The browser widget emits PNG data URLs, but
   // callers can hit the API directly, so the server must not trust the prefix.
-  const maxSizeMB = parseInt(c.env.MAX_SCREENSHOT_SIZE_MB || '5', 10);
+  const maxSizeMB = getMaxScreenshotSizeMB(c.env);
   if (payload.screenshot) {
     const validation = validateScreenshotDataUrl(payload.screenshot, maxSizeMB);
     if (!validation.valid) {
