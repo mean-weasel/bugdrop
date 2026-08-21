@@ -20,9 +20,11 @@ import {
   shouldRememberComplexScreenshotSkip,
 } from './capture-flow-result';
 import { getCapturePickerStyle } from './capture-flow-style';
+import { constrainScreenshotSize } from './screenshot-size';
 
 export interface CaptureFlowConfig {
   screenshotMode: 'optional' | 'auto' | 'required';
+  maxScreenshotSizeBytes?: number;
   screenshotScale?: number;
   elementContextMaxArea?: number;
   accentColor?: string;
@@ -132,7 +134,7 @@ async function runScreenshotCaptureFlowInternal(
     }
 
     return {
-      screenshot: annotatedScreenshot,
+      screenshot: await constrainScreenshotSize(annotatedScreenshot, config.maxScreenshotSizeBytes),
       elementSelector: result.elementSelector,
       fullElementSelector: result.fullElementSelector,
       returnToForm: false,
@@ -158,7 +160,10 @@ async function captureAutomaticScreenshot(
   }
 
   return {
-    screenshot: result.kind === 'ok' ? result.dataUrl : null,
+    screenshot:
+      result.kind === 'ok'
+        ? await constrainScreenshotSize(result.dataUrl, config.maxScreenshotSizeBytes)
+        : null,
     elementSelector: null,
     fullElementSelector: null,
     returnToForm: false,

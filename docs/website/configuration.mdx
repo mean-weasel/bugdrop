@@ -356,6 +356,8 @@ Control how screenshots are collected during the feedback flow.
 
 Manual redaction is controlled by the person submitting feedback. Use developer-configured masking for fields that should be visually covered in supported screenshot modes, especially with automatic screenshots. Auto mode warns users that a full-page screenshot will be attached, but it does not show the manual picker or annotation review step.
 
+BugDrop preserves screenshots at their captured resolution when they fit the Worker's upload limit. The widget learns that limit during its installation check and attempts to scale larger captured or annotated PNGs down before submission. Self-hosted Workers use `MAX_SCREENSHOT_SIZE_MB` to set the limit; it defaults to 5 MB.
+
 ### Select Element screenshots
 
 When a user chooses **Select Element**, BugDrop captures the selected element and draws a rounded border around it. The border is drawn with a small 2px inner gap so it does not sit directly on top of the selected element. This keeps the default behavior tight and predictable.
