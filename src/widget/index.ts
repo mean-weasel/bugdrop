@@ -38,6 +38,7 @@ import { createVariantManager, type VariantManager } from './variants/manager';
 import { runDefaultJourney } from './default-flow/runtime';
 import { normalizeDefaultDefinition } from './default-flow/definition';
 import { createFlowManager, type FlowManager } from './flows/manager';
+import { parseAppVersion } from '../app-version';
 
 declare const __BUGDROP_ENABLE_TEST_HOOKS__: boolean;
 declare const __BUGDROP_DEFAULT_FLOW_RUNTIME__: 'fixed' | 'private';
@@ -55,6 +56,7 @@ interface WidgetConfig {
   repo: string;
   apiUrl: string;
   authTokenProvider?: BugDropAuthTokenProvider;
+  appVersion?: string;
   position: 'bottom-right' | 'bottom-left';
   theme: 'light' | 'dark' | 'auto';
   // Name/email field configuration
@@ -415,10 +417,16 @@ if (rawShowIssueLink && rawShowIssueLink !== 'public' && rawShowIssueLink !== is
     `[BugDrop] Invalid data-show-issue-link "${rawShowIssueLink}". Expected "public", "always", or "never".`
   );
 }
+const rawAppVersion = script?.dataset.appVersion;
+const appVersion = parseAppVersion(rawAppVersion);
+if (rawAppVersion !== undefined && appVersion === undefined) {
+  console.warn('[BugDrop] Invalid data-app-version. Expected 1 to 128 printable characters.');
+}
 const config: WidgetConfig = {
   repo: script?.dataset.repo || '',
   apiUrl: script?.src.replace(/\/widget(?:\.v[\d.]+)?\.js$/, '/api') || '',
   authTokenProvider: resolveAuthTokenProvider(script?.dataset.authTokenProvider),
+  appVersion,
   position: rawPosition === 'bottom-left' ? 'bottom-left' : 'bottom-right',
   theme: isValidTheme(rawTheme) ? rawTheme : 'auto', // Default to auto-detection
   // Name/email field configuration (all default to false for backwards compatibility)
@@ -984,6 +992,7 @@ function exposeBugDropAPI(root: HTMLElement, config: WidgetConfig) {
           repo: config.repo,
           apiUrl: config.apiUrl,
           authTokenProvider: config.authTokenProvider,
+          appVersion: config.appVersion,
         },
         { isLegacyModalOpen: () => _isModalOpen }
       );
@@ -997,6 +1006,7 @@ function exposeBugDropAPI(root: HTMLElement, config: WidgetConfig) {
           apiUrl: config.apiUrl,
           authTokenProvider: config.authTokenProvider,
           categoryLabels: config.categoryLabels,
+          appVersion: config.appVersion,
         },
         {
           preflight: () => checkInstallation(config),
@@ -1797,6 +1807,7 @@ async function submitFeedback(root: HTMLElement, config: WidgetConfig, data: Fee
             height: window.innerHeight,
           },
           timestamp: new Date().toISOString(),
+          appVersion: config.appVersion,
           elementSelector: data.elementSelector,
           fullElementSelector: data.fullElementSelector,
           selectedElementHighlightColor: data.selectedElementHighlightColor || undefined,

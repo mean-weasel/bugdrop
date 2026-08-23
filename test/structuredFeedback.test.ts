@@ -45,6 +45,7 @@ const validPayload: StructuredFeedbackPayload = {
     userAgent: 'FrozenAgent/1.0',
     viewport: { width: 1280, height: 720 },
     timestamp: '2026-08-02T12:34:56.000Z',
+    appVersion: '1.2.3|desktop',
     browser: { name: 'Chrome', version: '126.0' },
     os: { name: 'macOS', version: '14.5' },
     devicePixelRatio: 2,
@@ -65,6 +66,7 @@ const expectedBody = `## Rating
 
 | Property | Value |
 |----------|-------|
+| **App Version** | 1.2.3\\|desktop |
 | **Browser** | Chrome 126.0 |
 | **OS** | macOS 14.5 |
 | **Viewport** | 1280×720 @2x |
@@ -130,6 +132,17 @@ describe('structured feedback Worker contract', () => {
       ['bugdrop']
     );
     expect(mockGetInstallationToken).toHaveBeenCalledOnce();
+  });
+
+  it('omits App Version when metadata does not provide one', async () => {
+    const payload = structuredClone(validPayload);
+    delete payload.metadata.appVersion;
+
+    const response = await submit(payload);
+    const body = mockCreateIssue.mock.calls[0][4] as string;
+
+    expect(response.status).toBe(200);
+    expect(body).not.toContain('App Version');
   });
 
   it('formats a hypothetical contributor field as generic sections without a Worker branch', async () => {
@@ -289,6 +302,20 @@ describe('structured feedback Worker contract', () => {
       {
         ...validPayload,
         metadata: { ...validPayload.metadata, viewport: { width: NaN, height: 1 } },
+      },
+    ],
+    [
+      'oversized app version',
+      {
+        ...validPayload,
+        metadata: { ...validPayload.metadata, appVersion: 'v'.repeat(129) },
+      },
+    ],
+    [
+      'app version with control characters',
+      {
+        ...validPayload,
+        metadata: { ...validPayload.metadata, appVersion: '1.2.3\nforged' },
       },
     ],
   ])('rejects %s before any GitHub call', async (_name, payload) => {

@@ -53,6 +53,7 @@ That's it! Users can now click the bug button to submit feedback as GitHub Issue
 | Attribute                       | Values                                               | Default               |
 | ------------------------------- | ---------------------------------------------------- | --------------------- |
 | `data-repo`                     | `owner/repo`                                         | **required**          |
+| `data-app-version`              | Host application version (up to 128 characters)      | omitted               |
 | `data-theme`                    | `light`, `dark`, `auto`                              | `auto`                |
 | `data-locale`                   | `de`, `en`, `nl`, `pl` (region subtags accepted)     | `<html lang>` or `en` |
 | `data-position`                 | `bottom-right`, `bottom-left`                        | `bottom-right`        |

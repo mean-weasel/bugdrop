@@ -70,7 +70,7 @@ describe('variant submission transport', () => {
 
     await expect(
       submitVariant(
-        { ...transport, authTokenProvider: tokenProvider },
+        { ...transport, authTokenProvider: tokenProvider, appVersion: '1.2.3' },
         config,
         { rating: 4 },
         { context: { export_id: 'exp-42' }, submissionId: 'submission-fixed' }
@@ -110,6 +110,7 @@ describe('variant submission transport', () => {
         userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) Chrome/126.0.0.0 Safari/537.36',
         viewport: { width: 1440, height: 900 },
         timestamp: '2026-02-03T04:05:06.789Z',
+        appVersion: '1.2.3',
         browser: { name: 'Chrome', version: '126.0.0.0' },
         os: { name: 'macOS', version: '14.5' },
         devicePixelRatio: 2,

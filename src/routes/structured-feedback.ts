@@ -9,6 +9,7 @@ import type {
   StructuredFeedbackPayload,
   StructuredFeedbackSectionFormat,
 } from '../types';
+import { parseAppVersion } from '../app-version';
 
 const STRUCTURED_KIND = 'bugdrop.variant-submission';
 const STRUCTURED_SCHEMA_VERSION = 1;
@@ -48,6 +49,7 @@ const METADATA_KEYS = new Set([
   'userAgent',
   'viewport',
   'timestamp',
+  'appVersion',
   'elementSelector',
   'fullElementSelector',
   'selectedElementHighlightColor',
@@ -355,6 +357,11 @@ function validateMetadata(
     viewport: { width, height },
     timestamp: value.timestamp,
   };
+  if (value.appVersion !== undefined) {
+    const appVersion = parseAppVersion(value.appVersion);
+    if (!appVersion) return invalid('Invalid structured metadata appVersion');
+    metadata.appVersion = appVersion;
+  }
   for (const key of [
     'elementSelector',
     'fullElementSelector',
@@ -505,6 +512,9 @@ function formatStructuredIssueBody(payload: StructuredFeedbackPayload, warnings:
 
   sections.push('<details>', '<summary>System Info</summary>', '');
   sections.push('| Property | Value |', '|----------|-------|');
+  if (payload.metadata.appVersion) {
+    sections.push(`| **App Version** | ${escapeTableValue(payload.metadata.appVersion)} |`);
+  }
   if (payload.metadata.browser) {
     sections.push(
       `| **Browser** | ${escapeTableValue(`${payload.metadata.browser.name} ${payload.metadata.browser.version}`.trim())} |`

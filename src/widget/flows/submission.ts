@@ -11,6 +11,7 @@ export interface FlowTransportConfig {
   apiUrl: string;
   authTokenProvider?: BugDropAuthTokenProvider;
   categoryLabels?: Partial<Record<'bug' | 'feature' | 'question', string | string[]>>;
+  appVersion?: string;
 }
 
 export async function submitFlow(
@@ -45,7 +46,7 @@ export async function submitFlow(
       attachments: attachmentsPath ? (answers[attachmentsPath] ?? []) : [],
       consoleLogs: logsPath && answers[logsPath] === true ? getConsoleLogSnapshot() : undefined,
       submitter: submitter && (submitter.name || submitter.email) ? submitter : undefined,
-      metadata: collectMetadata(capture),
+      metadata: collectMetadata(capture, transport.appVersion),
     }),
   });
   if (response.status === 429) throw new Error('Too many submissions. Please try again later.');
@@ -85,7 +86,7 @@ function isCanonicalIssueUrl(value: string, repo: string, issueNumber: number): 
   }
 }
 
-function collectMetadata(capture: CaptureEvidence | null) {
+function collectMetadata(capture: CaptureEvidence | null, appVersion?: string) {
   const url = new URL(window.location.href);
   url.search = '';
   url.hash = '';
@@ -94,6 +95,7 @@ function collectMetadata(capture: CaptureEvidence | null) {
     userAgent: navigator.userAgent,
     viewport: { width: window.innerWidth, height: window.innerHeight },
     timestamp: new Date().toISOString(),
+    appVersion,
     elementSelector: capture?.elementSelector ?? null,
     fullElementSelector: capture?.fullElementSelector ?? null,
     domNodeCount: getDomNodeCount(),

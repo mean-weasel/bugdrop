@@ -6,6 +6,7 @@ export interface VariantTransportConfig {
   repo: string;
   apiUrl: string;
   authTokenProvider?: BugDropAuthTokenProvider;
+  appVersion?: string;
 }
 
 export async function submitVariant(
@@ -29,7 +30,7 @@ export async function submitVariant(
       variantId: config.id,
       submissionId,
       issue,
-      metadata: collectMetadata(),
+      metadata: collectMetadata(transport.appVersion),
     }),
   });
   const result = (await response.json()) as Record<string, unknown>;
@@ -65,7 +66,7 @@ function createSubmissionId(): string {
   return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
-function collectMetadata() {
+function collectMetadata(appVersion?: string) {
   const url = new URL(window.location.href);
   url.search = '';
   url.hash = '';
@@ -74,6 +75,7 @@ function collectMetadata() {
     userAgent: navigator.userAgent,
     viewport: { width: window.innerWidth, height: window.innerHeight },
     timestamp: new Date().toISOString(),
+    appVersion,
     browser: parseBrowser(navigator.userAgent),
     os: parseOS(navigator.userAgent),
     devicePixelRatio: window.devicePixelRatio,

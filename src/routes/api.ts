@@ -21,6 +21,7 @@ import { resolveAccentColor } from '../defaults';
 import { verifyBugDropAuthToken } from '../lib/authToken';
 import { escapeMarkdownTableCell, formatMarkdownCodeSpan } from '../lib/markdown';
 import { handleStructuredFeedback, isStructuredFeedbackRequest } from './structured-feedback';
+import { parseAppVersion } from '../app-version';
 
 type ApiVariables = {
   feedbackPayload?: unknown;
@@ -840,6 +841,12 @@ function formatIssueBody(
   sections.push('');
   sections.push('| Property | Value |');
   sections.push('|----------|-------|');
+
+  const appVersion = parseAppVersion(payload.metadata.appVersion);
+  if (appVersion) {
+    const tableSafeAppVersion = escapeMarkdownTableCell(appVersion.replaceAll('\\', '\\\\'));
+    sections.push(`| **App Version** | ${tableSafeAppVersion} |`);
+  }
 
   // Browser and OS (if available)
   if (payload.metadata.browser) {

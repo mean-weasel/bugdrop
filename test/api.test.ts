@@ -1803,6 +1803,7 @@ describe('API Routes', () => {
         ...validPayload,
         metadata: {
           ...validPayload.metadata,
+          appVersion: '  1.2.3\\|desktop  ',
           elementSelector: '#submit-button',
           fullElementSelector: 'html > body > main > form#contact > button#submit-button',
         },
@@ -1819,6 +1820,7 @@ describe('API Routes', () => {
       expect(issueBody).toContain('## Description');
       expect(issueBody).toContain('This is a test feedback');
       expect(issueBody).toContain('System Info');
+      expect(issueBody).toContain('| **App Version** | 1.2.3\\\\\\|desktop |');
       expect(issueBody).toContain('http://localhost:3000');
       expect(issueBody).toContain('1920×1080');
       expect(issueBody).toContain('#submit-button');
