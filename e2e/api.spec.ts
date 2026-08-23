@@ -13,6 +13,7 @@ test.describe('Health API', () => {
     const data = await response.json();
     expect(data.status).toBe('ok');
     expect(data.environment).toBe('development');
+    expect(data.capabilities).toEqual({ appVersionMetadata: true });
     expect(data.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 

@@ -19,7 +19,11 @@ import {
 import { rateLimit, rateLimitByRepo } from '../middleware/rateLimit';
 import { resolveAccentColor } from '../defaults';
 import { verifyBugDropAuthToken } from '../lib/authToken';
-import { escapeMarkdownTableCell, formatMarkdownCodeSpan } from '../lib/markdown';
+import {
+  escapeMarkdownTableCell,
+  formatMarkdownCodeSpan,
+  formatMarkdownTableCodeSpan,
+} from '../lib/markdown';
 import { handleStructuredFeedback, isStructuredFeedbackRequest } from './structured-feedback';
 import { parseAppVersion } from '../app-version';
 
@@ -122,6 +126,7 @@ api.get('/health', c => {
     status: 'ok',
     environment: c.env.ENVIRONMENT,
     timestamp: new Date().toISOString(),
+    capabilities: { appVersionMetadata: true },
     ...(buildSha ? { buildSha } : {}),
   });
 });
@@ -179,6 +184,12 @@ api.post('/feedback', async c => {
       },
       400
     );
+  }
+
+  if (payload.metadata?.appVersion !== undefined) {
+    const appVersion = parseAppVersion(payload.metadata.appVersion);
+    if (!appVersion) return c.json({ error: 'Invalid metadata appVersion' }, 400);
+    payload.metadata.appVersion = appVersion;
   }
 
   // Validate screenshot payload. The browser widget emits PNG data URLs, but
@@ -844,8 +855,7 @@ function formatIssueBody(
 
   const appVersion = parseAppVersion(payload.metadata.appVersion);
   if (appVersion) {
-    const tableSafeAppVersion = escapeMarkdownTableCell(appVersion.replaceAll('\\', '\\\\'));
-    sections.push(`| **App Version** | ${tableSafeAppVersion} |`);
+    sections.push(`| **App Version** | ${formatMarkdownTableCodeSpan(appVersion)} |`);
   }
 
   // Browser and OS (if available)

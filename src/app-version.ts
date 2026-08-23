@@ -5,6 +5,7 @@ export function parseAppVersion(value: unknown): string | undefined {
 
   const normalized = value.trim();
   if (!normalized || normalized.length > MAX_APP_VERSION_CHARS) return undefined;
+  if (/[\p{Cf}\p{Zl}\p{Zp}]/u.test(normalized)) return undefined;
 
   for (const character of normalized) {
     const code = character.charCodeAt(0);

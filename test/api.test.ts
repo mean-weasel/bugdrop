@@ -91,6 +91,7 @@ describe('API Routes', () => {
       expect(data).toMatchObject({
         status: 'ok',
         environment: 'test',
+        capabilities: { appVersionMetadata: true },
       });
       expect(data.timestamp).toBeDefined();
     });
@@ -1369,6 +1370,26 @@ describe('API Routes', () => {
       expect(data.error).toContain('Missing required fields');
     });
 
+    it.each([123, '', '1.2.3\nforged', 'v'.repeat(129)])(
+      'should reject invalid application version metadata: %j',
+      async appVersion => {
+        const req = new Request('http://localhost/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...validPayload,
+            metadata: { ...validPayload.metadata, appVersion },
+          }),
+        });
+        const res = await app.fetch(req, mockEnv);
+        const data = await res.json();
+
+        expect(res.status).toBe(400);
+        expect(data.error).toBe('Invalid metadata appVersion');
+        expect(mockCreateIssue).not.toHaveBeenCalled();
+      }
+    );
+
     it('should accept submission when description is missing (optional field)', async () => {
       const payload = { ...validPayload, description: undefined };
 
@@ -1803,7 +1824,7 @@ describe('API Routes', () => {
         ...validPayload,
         metadata: {
           ...validPayload.metadata,
-          appVersion: '  1.2.3\\|desktop  ',
+          appVersion: '  1.2.3 [download](https://attacker.test)<details>|desktop  ',
           elementSelector: '#submit-button',
           fullElementSelector: 'html > body > main > form#contact > button#submit-button',
         },
@@ -1820,7 +1841,9 @@ describe('API Routes', () => {
       expect(issueBody).toContain('## Description');
       expect(issueBody).toContain('This is a test feedback');
       expect(issueBody).toContain('System Info');
-      expect(issueBody).toContain('| **App Version** | 1.2.3\\\\\\|desktop |');
+      expect(issueBody).toContain(
+        '| **App Version** | `1.2.3 [download](https://attacker.test)<details>\\|desktop` |'
+      );
       expect(issueBody).toContain('http://localhost:3000');
       expect(issueBody).toContain('1920×1080');
       expect(issueBody).toContain('#submit-button');

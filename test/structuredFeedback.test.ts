@@ -66,7 +66,7 @@ const expectedBody = `## Rating
 
 | Property | Value |
 |----------|-------|
-| **App Version** | 1.2.3\\|desktop |
+| **App Version** | \`1.2.3\\|desktop\` |
 | **Browser** | Chrome 126.0 |
 | **OS** | macOS 14.5 |
 | **Viewport** | 1280×720 @2x |
