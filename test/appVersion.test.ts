@@ -7,6 +7,9 @@ describe('application version metadata', () => {
     expect(parseAppVersion('v'.repeat(MAX_APP_VERSION_CHARS))).toBe(
       'v'.repeat(MAX_APP_VERSION_CHARS)
     );
+    expect(parseAppVersion('🚀'.repeat(MAX_APP_VERSION_CHARS))).toBe(
+      '🚀'.repeat(MAX_APP_VERSION_CHARS)
+    );
   });
 
   it.each([
@@ -21,6 +24,7 @@ describe('application version metadata', () => {
     '1.2.3\u202eforged',
     '1.2.3\u2028forged',
     'v'.repeat(MAX_APP_VERSION_CHARS + 1),
+    '🚀'.repeat(MAX_APP_VERSION_CHARS + 1),
   ])('rejects invalid version metadata: %j', value => {
     expect(parseAppVersion(value)).toBeUndefined();
   });
