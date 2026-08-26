@@ -23,6 +23,10 @@ describe('application version metadata', () => {
     '1.2.3\u0085forged',
     '1.2.3\u202eforged',
     '1.2.3\u2028forged',
+    '\nv1.2.3',
+    'v1.2.3\u2029',
+    '\uFEFFv1.2.3',
+    '\ud800',
     'v'.repeat(MAX_APP_VERSION_CHARS + 1),
     '🚀'.repeat(MAX_APP_VERSION_CHARS + 1),
   ])('rejects invalid version metadata: %j', value => {
