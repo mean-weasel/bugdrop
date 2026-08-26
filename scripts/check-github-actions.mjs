@@ -45,7 +45,9 @@ const approvedReleases = new Map([
   ['actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294', 'v5.0.0'],
   ['codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f', 'v7.0.0'],
   ['github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3', 'v4.37.6'],
+  ['github/codeql-action/analyze@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28', 'v4.37.8'],
   ['github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3', 'v4.37.6'],
+  ['github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28', 'v4.37.8'],
 ]);
 
 const failures = [];
