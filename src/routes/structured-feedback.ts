@@ -1,7 +1,11 @@
 /* eslint-disable max-lines -- Keep the isolated structured contract out of the legacy route. */
 import type { Context } from 'hono';
 import { GitHubLabelError, createIssue, getInstallationToken, isRepoPublic } from '../lib/github';
-import { formatMarkdownCodeSpan } from '../lib/markdown';
+import {
+  escapeMarkdownLiteral,
+  formatMarkdownCodeSpan,
+  formatMarkdownTableCodeSpan,
+} from '../lib/markdown';
 import type {
   Env,
   FeedbackMetadata,
@@ -9,6 +13,7 @@ import type {
   StructuredFeedbackPayload,
   StructuredFeedbackSectionFormat,
 } from '../types';
+import { parseAppVersion } from '../app-version';
 
 const STRUCTURED_KIND = 'bugdrop.variant-submission';
 const STRUCTURED_SCHEMA_VERSION = 1;
@@ -48,6 +53,7 @@ const METADATA_KEYS = new Set([
   'userAgent',
   'viewport',
   'timestamp',
+  'appVersion',
   'elementSelector',
   'fullElementSelector',
   'selectedElementHighlightColor',
@@ -355,6 +361,11 @@ function validateMetadata(
     viewport: { width, height },
     timestamp: value.timestamp,
   };
+  if (value.appVersion !== undefined) {
+    const appVersion = parseAppVersion(value.appVersion);
+    if (!appVersion) return invalid('Invalid structured metadata appVersion');
+    metadata.appVersion = appVersion;
+  }
   for (const key of [
     'elementSelector',
     'fullElementSelector',
@@ -492,19 +503,24 @@ function labelFallback(labels: string[], warning: string): LabelResolution {
 function formatStructuredIssueBody(payload: StructuredFeedbackPayload, warnings: string[]): string {
   const sections: string[] = [];
   for (const section of payload.issue.sections) {
-    sections.push(`## ${escapeMarkdown(section.heading)}`);
+    sections.push(`## ${escapeMarkdownLiteral(section.heading)}`);
     sections.push('');
     sections.push(formatSectionValue(section.value, section.format ?? 'text'));
     sections.push('');
   }
   if (warnings.length > 0) {
     sections.push('## Label mapping warning', '');
-    for (const warning of warnings) sections.push(`- ${escapeMarkdown(warning)}`);
+    for (const warning of warnings) sections.push(`- ${escapeMarkdownLiteral(warning)}`);
     sections.push('');
   }
 
   sections.push('<details>', '<summary>System Info</summary>', '');
   sections.push('| Property | Value |', '|----------|-------|');
+  if (payload.metadata.appVersion) {
+    sections.push(
+      `| **App Version** | ${formatMarkdownTableCodeSpan(payload.metadata.appVersion)} |`
+    );
+  }
   if (payload.metadata.browser) {
     sections.push(
       `| **Browser** | ${escapeTableValue(`${payload.metadata.browser.name} ${payload.metadata.browser.version}`.trim())} |`
@@ -534,7 +550,7 @@ function formatStructuredIssueBody(payload: StructuredFeedbackPayload, warnings:
 function formatSectionValue(value: string, format: StructuredFeedbackSectionFormat): string {
   const normalized = normalizeMultilineText(value);
   if (format === 'code') return formatFencedBlock(normalized);
-  const escaped = escapeMarkdown(normalized);
+  const escaped = escapeMarkdownLiteral(normalized);
   if (format === 'quote')
     return escaped
       .split('\n')
@@ -559,15 +575,8 @@ function normalizeMultilineText(value: string): string {
   return normalized;
 }
 
-function escapeMarkdown(value: string): string {
-  const markdownCharacters = new Set(['\\', '`', '*', '_', '{', '}', '[', ']', '<', '>', '#', '|']);
-  return Array.from(value, character =>
-    markdownCharacters.has(character) ? `\\${character}` : character
-  ).join('');
-}
-
 function escapeTableValue(value: string): string {
-  return escapeMarkdown(normalizeMultilineText(value).replace(/\n/g, ' '));
+  return escapeMarkdownLiteral(normalizeMultilineText(value).replace(/\n/g, ' '));
 }
 
 function formatFencedBlock(value: string): string {

@@ -20,3 +20,14 @@ export function escapeMarkdownTableCell(value: string): string {
 
   return escaped;
 }
+
+export function formatMarkdownTableCodeSpan(value: string): string {
+  return escapeMarkdownTableCell(formatMarkdownCodeSpan(value));
+}
+
+export function escapeMarkdownLiteral(value: string): string {
+  const markdownCharacters = new Set(['\\', '`', '*', '_', '{', '}', '[', ']', '<', '>', '#', '|']);
+  return Array.from(value, character =>
+    markdownCharacters.has(character) ? `\\${character}` : character
+  ).join('');
+}

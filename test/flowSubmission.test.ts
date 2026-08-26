@@ -29,6 +29,7 @@ describe('flow legacy submission', () => {
         repo: 'owner/repo',
         apiUrl: '/api',
         categoryLabels: { bug: ['defect', 'needs-triage'] },
+        appVersion: '1.2.3',
       },
       config,
       {
@@ -55,6 +56,7 @@ describe('flow legacy submission', () => {
       attachments: [{ name: 'trace.txt' }],
       submitter: { name: 'Ada' },
       metadata: {
+        appVersion: '1.2.3',
         elementSelector: '#save',
         fullElementSelector: 'html body #save',
       },

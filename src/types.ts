@@ -38,6 +38,7 @@ export interface FeedbackMetadata {
   userAgent: string;
   viewport: { width: number; height: number };
   timestamp: string;
+  appVersion?: string;
   elementSelector?: string;
   fullElementSelector?: string;
   selectedElementHighlightColor?: string;

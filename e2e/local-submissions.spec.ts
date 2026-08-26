@@ -76,9 +76,47 @@ test('local QA fails closed when the submissions helper cannot load', async ({ p
   expect(escapedRequests).toEqual([]);
 });
 
+test('invalid data-app-version warns, omits metadata, and keeps submission available', async ({
+  page,
+}) => {
+  const prohibitedRequests = watchForProhibitedRequests(page);
+  const warnings: string[] = [];
+  page.on('console', message => {
+    if (message.type() === 'warning') warnings.push(message.text());
+  });
+
+  await page.goto(`/test/?localQa=1&appVersion=${'v'.repeat(129)}`);
+  await page.waitForFunction(() => Boolean(window.BugDrop?.registerVariant));
+  const result = await page.evaluate(() => {
+    const handle = window.BugDrop!.registerVariant({
+      id: 'invalid-app-version',
+      presentation: { kind: 'inline' },
+      content: { title: 'Invalid application version' },
+      fields: [{ id: 'answer', type: 'shortText', label: 'Answer', required: true }],
+      issue: { title: 'Invalid application version {{answer}}' },
+    });
+    return handle.submit(
+      { answer: 'still submits' },
+      { submissionId: 'invalid-app-version-submission' }
+    );
+  });
+
+  expect(warnings).toContain(
+    '[BugDrop] Invalid data-app-version. Expected 1 to 128 printable characters.'
+  );
+  const viewer = await page.context().newPage();
+  await viewer.goto(`/test/submissions.html?id=${result.issueNumber}`);
+  const payload = await readRawPayload(viewer);
+  expect(payload.metadata).not.toHaveProperty('appVersion');
+  expect(prohibitedRequests).toEqual([]);
+  await viewer.close();
+});
+
 test('local QA submissions can be created, viewed, edited, and deleted', async ({ page }) => {
   const prohibitedRequests = watchForProhibitedRequests(page);
-  await page.goto('/test/?localQa=1&showName=true&showIssueLink=always');
+  await page.goto(
+    '/test/?localQa=1&showName=true&showIssueLink=always&appVersion=%20v1.2.3%2Bdesktop%20'
+  );
   await expect(page.getByRole('link', { name: 'Local submissions' })).toBeVisible();
 
   await widget(page).locator('.bd-trigger').click();
@@ -105,6 +143,9 @@ test('local QA submissions can be created, viewed, edited, and deleted', async (
   await expect(viewer.getByRole('heading', { name: /Submission #\d+/ })).toBeVisible();
   await expect(viewer.getByLabel('Title')).toHaveValue('Local CRUD submission');
   await expect(viewer.getByText('Local CRUD submission', { exact: true })).toBeVisible();
+  expect(await readRawPayload(viewer)).toMatchObject({
+    metadata: { appVersion: 'v1.2.3+desktop' },
+  });
 
   await viewer.getByLabel('Title').fill('Edited local submission');
   await viewer.getByRole('button', { name: 'Save changes' }).click();
@@ -177,7 +218,7 @@ test('local QA variants submit headlessly and through inline and modal presentat
   page,
 }) => {
   const prohibitedRequests = watchForProhibitedRequests(page);
-  await page.goto('/test/?localQa=1');
+  await page.goto('/test/?localQa=1&appVersion=%20v1.2.3%2Bdesktop%20');
   await page.waitForFunction(() => Boolean(window.BugDrop?.registerVariant));
 
   const headlessResult = await page.evaluate(async () => {
@@ -299,6 +340,9 @@ test('local QA variants submit headlessly and through inline and modal presentat
   await expect(headlessViewer.locator('#raw-payload')).toContainText(
     '"submissionId": "local-headless-submission"'
   );
+  await expect(headlessViewer.locator('#raw-payload')).toContainText(
+    '"appVersion": "v1.2.3+desktop"'
+  );
   expect(prohibitedRequests).toEqual([]);
 });
 
@@ -308,7 +352,7 @@ test('public flows submit and can be inspected through isolated local feedback s
   test.setTimeout(60_000);
   const prohibitedRequests = watchContextHttpRequests(page.context());
   await page.goto(
-    'http://bugdrop.localhost:8787/test/welcome-disabled?localQa=1&showIssueLink=always&font=inherit'
+    'http://bugdrop.localhost:8787/test/welcome-disabled?localQa=1&showIssueLink=always&font=inherit&appVersion=%20v1.2.3%2Bdesktop%20'
   );
   expect(new URL(page.url()).hostname).toBe('bugdrop.localhost');
   expect(new URL(page.url()).pathname).toBe('/test/welcome-disabled');
@@ -394,7 +438,10 @@ test('public flows submit and can be inspected through isolated local feedback s
     screenshot: null,
     attachments: [],
     submitter: { name: 'Local Flow Tester' },
-    metadata: { url: 'http://bugdrop.localhost:8787/test/welcome-disabled' },
+    metadata: {
+      appVersion: 'v1.2.3+desktop',
+      url: 'http://bugdrop.localhost:8787/test/welcome-disabled',
+    },
   });
   expect(defaultPayload.consoleLogs).toEqual(
     expect.arrayContaining([
