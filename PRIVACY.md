@@ -12,8 +12,9 @@ When someone submits feedback, BugDrop processes:
 
 - The submitted title, description, category, and optional attachments
 - A screenshot when the site configures screenshots as optional, automatic, or required;
-  automatic mode captures and attaches a full-page screenshot on submission without a
-  preview
+  automatic mode attempts to capture and attach a full-page screenshot on submission
+  without a preview, but a submission may proceed without one on very complex pages or if
+  capture fails
 - Browser, operating system, viewport, language, and page information
 - Recent console messages, timestamps, and source locations, only when the reporter chooses
   to include console logs
