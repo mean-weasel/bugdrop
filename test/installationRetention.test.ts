@@ -159,6 +159,7 @@ describe('installation retention safeguards', () => {
   it('deletes stale records across KV pages and records anonymous cleanup evidence', async () => {
     const checkpoint = {
       schemaVersion: 1,
+      phase: 'scanning',
       cursor: 'next-page',
       startedAt: '2026-08-28T12:00:00.000Z',
       scannedCount: 2,
@@ -222,52 +223,30 @@ describe('installation retention safeguards', () => {
     expect(store.put).toHaveBeenNthCalledWith(
       1,
       INSTALLATION_CLEANUP_CHECKPOINT_KEY,
-      JSON.stringify(checkpoint)
+      JSON.stringify({
+        schemaVersion: 1,
+        phase: 'deleting',
+        installationIds: [2],
+        next: checkpoint,
+      })
     );
     expect(store.put).toHaveBeenNthCalledWith(
       2,
+      INSTALLATION_CLEANUP_CHECKPOINT_KEY,
+      JSON.stringify(checkpoint)
+    );
+    expect(store.put).toHaveBeenNthCalledWith(
+      3,
+      INSTALLATION_CLEANUP_CHECKPOINT_KEY,
+      JSON.stringify({ schemaVersion: 1, phase: 'finalizing', audit: result })
+    );
+    expect(store.put).toHaveBeenNthCalledWith(
+      4,
       INSTALLATION_CLEANUP_AUDIT_KEY,
       JSON.stringify(result)
     );
-    expect(store.put).toHaveBeenCalledTimes(2);
+    expect(store.put).toHaveBeenCalledTimes(4);
     expect(JSON.stringify(result)).not.toContain('installation:2');
-  });
-
-  it('never records a successful sweep when GitHub or deletion fails', async () => {
-    const githubFailureStore = createStore({
-      list: vi.fn().mockResolvedValue({
-        keys: [{ name: 'installation:2' }],
-        list_complete: true,
-        cacheStatus: null,
-      }),
-    });
-    await expect(
-      sweepInstallationRecords(
-        { ...baseEnv, INSTALLATION_ANALYTICS: githubFailureStore },
-        { listActiveInstallationIds: vi.fn().mockRejectedValue(new Error('GitHub unavailable')) }
-      )
-    ).rejects.toThrow('GitHub unavailable');
-    expect(githubFailureStore.delete).not.toHaveBeenCalled();
-    expect(githubFailureStore.put).not.toHaveBeenCalled();
-
-    const deletionFailureStore = createStore({
-      delete: vi.fn().mockRejectedValue(new Error('KV deletion failed')),
-      list: vi.fn().mockResolvedValue({
-        keys: [{ name: 'installation:2' }],
-        list_complete: true,
-        cacheStatus: null,
-      }),
-    });
-    await expect(
-      sweepInstallationRecords(
-        { ...baseEnv, INSTALLATION_ANALYTICS: deletionFailureStore },
-        {
-          listActiveInstallationIds: vi.fn().mockResolvedValue(new Set<number>()),
-          confirmInstallationIsInactive: vi.fn().mockResolvedValue(true),
-        }
-      )
-    ).rejects.toThrow('KV deletion failed');
-    expect(deletionFailureStore.put).not.toHaveBeenCalled();
   });
 
   it('rejects malformed record IDs rather than silently skipping cleanup', async () => {

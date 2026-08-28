@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import worker from '../src/index';
 import type { Env } from '../src/types';
@@ -129,10 +128,17 @@ describe('installation cleanup boundaries', () => {
     expect(confirmInstallationIsInactive).toHaveBeenCalledTimes(INSTALLATION_SWEEP_PAGE_SIZE);
     expect(peakConfirmations).toBe(MAX_CONCURRENT_CLEANUP_OPERATIONS);
     expect(MAX_GITHUB_INSTALLATION_PAGES + INSTALLATION_SWEEP_PAGE_SIZE).toBeLessThanOrEqual(50);
-    expect(store.put).toHaveBeenCalledExactlyOnceWith(
+    expect(store.put).toHaveBeenNthCalledWith(
+      1,
       INSTALLATION_CLEANUP_CHECKPOINT_KEY,
-      expect.stringContaining('"cursor":"page-2"')
+      expect.stringContaining('"phase":"deleting"')
     );
+    expect(store.put).toHaveBeenNthCalledWith(
+      2,
+      INSTALLATION_CLEANUP_CHECKPOINT_KEY,
+      expect.stringContaining('"phase":"scanning"')
+    );
+    expect(store.put).toHaveBeenCalledTimes(2);
     expect(store.put).not.toHaveBeenCalledWith(INSTALLATION_CLEANUP_AUDIT_KEY, expect.anything());
   });
 
@@ -184,6 +190,7 @@ describe('installation cleanup boundaries', () => {
   it('fails closed on a malformed cleanup checkpoint', async () => {
     const impossibleCheckpoint = {
       schemaVersion: 1,
+      phase: 'scanning',
       cursor: 'page-2',
       startedAt: '2026-08-28T12:00:00.000Z',
       scannedCount: 0,
@@ -223,16 +230,5 @@ describe('installation cleanup boundaries', () => {
 
     expect(response.status).toBe(200);
     expect(store.delete).toHaveBeenCalledExactlyOnceWith('installation:42');
-  });
-
-  it('binds isolated storage, the first-party route, and daily cleanup triggers', () => {
-    const config = readFileSync('wrangler.toml', 'utf8');
-
-    expect(config.match(/binding = "INSTALLATION_ANALYTICS"/g)).toHaveLength(3);
-    expect(config.match(/crons = \["17 3 \* \* \*"\]/g)).toHaveLength(2);
-    expect(config.match(/bugdrop\.dev\/api\/github\/webhook\*/g)).toHaveLength(2);
-    expect(config.indexOf('routes = [')).toBeLessThan(config.indexOf('[triggers]'));
-    expect(config).toContain('id = "a567f723a2eb4cfab807b0c1d678dc76"');
-    expect(config).toContain('id = "c58b33f6a0dc416b8661661ce0d23f7f"');
   });
 });

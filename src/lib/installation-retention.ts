@@ -1,6 +1,14 @@
 import { generateGitHubAppJWT } from './jwt';
 import { GITHUB_API, githubHeaders } from './github';
+import {
+  parseInstallationCleanupCheckpoint,
+  type InstallationCleanupAudit,
+  type InstallationDeletingCheckpoint,
+  type InstallationStableCheckpoint,
+} from './installation-cleanup-state';
 import type { Env } from '../types';
+
+export type { InstallationCleanupAudit } from './installation-cleanup-state';
 
 const INSTALLATION_RECORD_PREFIX = 'installation:';
 const GITHUB_PAGE_SIZE = 100;
@@ -11,14 +19,6 @@ export const MAX_CONCURRENT_CLEANUP_OPERATIONS = 6;
 export const INSTALLATION_CLEANUP_AUDIT_KEY = 'operations:installation-cleanup:last-success';
 export const INSTALLATION_CLEANUP_CHECKPOINT_KEY = 'operations:installation-cleanup:checkpoint';
 
-export interface InstallationCleanupAudit {
-  schemaVersion: 1;
-  completedAt: string;
-  scannedCount: number;
-  activeCount: number;
-  deletedCount: number;
-}
-
 interface GitHubListOptions {
   fetchImpl?: typeof fetch;
   createJwt?: (appId: string, privateKey: string) => Promise<string>;
@@ -28,14 +28,6 @@ interface InstallationSweepOptions {
   now?: Date;
   listActiveInstallationIds?: (env: Env) => Promise<Set<number>>;
   confirmInstallationIsInactive?: (env: Env, installationId: number) => Promise<boolean>;
-}
-
-interface InstallationCleanupCheckpoint {
-  schemaVersion: 1;
-  cursor: string;
-  startedAt: string;
-  scannedCount: number;
-  deletedCount: number;
 }
 
 export function installationRecordKey(installationId: number): string {
@@ -144,7 +136,15 @@ export async function sweepInstallationRecords(
   if (!store) throw new Error('INSTALLATION_ANALYTICS binding is required for cleanup');
 
   const now = options.now ?? new Date();
-  const checkpoint = parseCheckpoint(await store.get(INSTALLATION_CLEANUP_CHECKPOINT_KEY));
+  const checkpoint = parseInstallationCleanupCheckpoint(
+    await store.get(INSTALLATION_CLEANUP_CHECKPOINT_KEY)
+  );
+  if (checkpoint?.phase === 'finalizing') {
+    return publishFinalAudit(store, checkpoint.audit);
+  }
+  if (checkpoint?.phase === 'deleting') {
+    return finishDeletionBatch(store, checkpoint);
+  }
   const listActive = options.listActiveInstallationIds ?? listActiveGitHubInstallationIds;
   const activeIds = await listActive(env);
   const storedPage = await listStoredInstallationPage(store, checkpoint?.cursor);
@@ -165,31 +165,67 @@ export async function sweepInstallationRecords(
     : [];
   const confirmedInactiveIds = staleIds.filter((_id, index) => inactiveResults[index]);
 
-  await mapInBatches(confirmedInactiveIds, id => deleteInstallationRecord(store, id));
-
   const scannedCount = (checkpoint?.scannedCount ?? 0) + storedPage.ids.length;
   const deletedCount = (checkpoint?.deletedCount ?? 0) + confirmedInactiveIds.length;
+  let nextCheckpoint: InstallationStableCheckpoint;
   if (storedPage.cursor) {
-    const nextCheckpoint: InstallationCleanupCheckpoint = {
+    nextCheckpoint = {
       schemaVersion: 1,
+      phase: 'scanning',
       cursor: storedPage.cursor,
       startedAt: checkpoint?.startedAt ?? now.toISOString(),
       scannedCount,
       deletedCount,
     };
-    await store.put(INSTALLATION_CLEANUP_CHECKPOINT_KEY, JSON.stringify(nextCheckpoint));
-    return null;
+  } else {
+    nextCheckpoint = {
+      schemaVersion: 1,
+      phase: 'finalizing',
+      audit: {
+        schemaVersion: 1,
+        completedAt: now.toISOString(),
+        scannedCount,
+        activeCount: activeIds.size,
+        deletedCount,
+      },
+    };
   }
 
-  const audit: InstallationCleanupAudit = {
+  if (confirmedInactiveIds.length === 0) return advanceCheckpoint(store, nextCheckpoint);
+
+  const deletingCheckpoint: InstallationDeletingCheckpoint = {
     schemaVersion: 1,
-    completedAt: now.toISOString(),
-    scannedCount,
-    activeCount: activeIds.size,
-    deletedCount,
+    phase: 'deleting',
+    installationIds: confirmedInactiveIds,
+    next: nextCheckpoint,
   };
-  await store.delete(INSTALLATION_CLEANUP_CHECKPOINT_KEY);
+  await store.put(INSTALLATION_CLEANUP_CHECKPOINT_KEY, JSON.stringify(deletingCheckpoint));
+  return finishDeletionBatch(store, deletingCheckpoint);
+}
+
+async function finishDeletionBatch(
+  store: KVNamespace,
+  checkpoint: InstallationDeletingCheckpoint
+): Promise<InstallationCleanupAudit | null> {
+  await mapInBatches(checkpoint.installationIds, id => deleteInstallationRecord(store, id));
+  return advanceCheckpoint(store, checkpoint.next);
+}
+
+async function advanceCheckpoint(
+  store: KVNamespace,
+  checkpoint: InstallationStableCheckpoint
+): Promise<InstallationCleanupAudit | null> {
+  await store.put(INSTALLATION_CLEANUP_CHECKPOINT_KEY, JSON.stringify(checkpoint));
+  if (checkpoint.phase === 'scanning') return null;
+  return publishFinalAudit(store, checkpoint.audit);
+}
+
+async function publishFinalAudit(
+  store: KVNamespace,
+  audit: InstallationCleanupAudit
+): Promise<InstallationCleanupAudit> {
   await store.put(INSTALLATION_CLEANUP_AUDIT_KEY, JSON.stringify(audit));
+  await store.delete(INSTALLATION_CLEANUP_CHECKPOINT_KEY);
   return audit;
 }
 
@@ -219,29 +255,6 @@ async function listStoredInstallationPage(
   }
 
   return { ids, ...(page.list_complete ? {} : { cursor: page.cursor }) };
-}
-
-function parseCheckpoint(value: string | null): InstallationCleanupCheckpoint | null {
-  if (!value) return null;
-  try {
-    const parsed = JSON.parse(value) as Partial<InstallationCleanupCheckpoint>;
-    if (
-      parsed.schemaVersion !== 1 ||
-      typeof parsed.cursor !== 'string' ||
-      !parsed.cursor ||
-      typeof parsed.startedAt !== 'string' ||
-      !Number.isSafeInteger(parsed.scannedCount) ||
-      !Number.isSafeInteger(parsed.deletedCount) ||
-      (parsed.scannedCount ?? -1) < 0 ||
-      (parsed.deletedCount ?? -1) < 0 ||
-      (parsed.deletedCount ?? 0) > (parsed.scannedCount ?? -1)
-    ) {
-      throw new Error('invalid checkpoint fields');
-    }
-    return parsed as InstallationCleanupCheckpoint;
-  } catch {
-    throw new Error('Malformed installation cleanup checkpoint');
-  }
 }
 
 function installationIdFromGitHub(value: unknown): number {
