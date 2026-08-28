@@ -2,7 +2,9 @@ import { Hono } from 'hono';
 import { logger } from 'hono/logger';
 import type { Env } from './types';
 import api from './routes/api';
+import githubWebhook from './routes/github-webhook';
 import { createBoardDogfoodToken } from './lib/boardDogfood';
+import { sweepInstallationRecords } from './lib/installation-retention';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -45,6 +47,7 @@ app.use('*', logger());
 
 // Mount API routes
 app.route('/api', api);
+app.route('/api', githubWebhook);
 
 export function isWeakAuthTokenSecret(secret?: string): boolean {
   return typeof secret === 'string' && secret.length > 0 && secret.length < 32;
@@ -141,4 +144,15 @@ function serveAsset(c: { env: Env; req: { raw: Request } }, pathname: string): P
   return c.env.ASSETS.fetch(new Request(url, c.req.raw));
 }
 
-export default app;
+export async function scheduled(
+  _controller: ScheduledController,
+  env: Env,
+  _ctx: ExecutionContext
+): Promise<void> {
+  await sweepInstallationRecords(env);
+}
+
+export default {
+  fetch: app.fetch,
+  scheduled,
+};

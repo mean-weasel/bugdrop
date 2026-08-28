@@ -7,7 +7,11 @@ routes = [
   { pattern = "bugdrop.dev/board*", zone_name = "bugdrop.dev" },
   { pattern = "bugdrop.dev/board-dogfood*", zone_name = "bugdrop.dev" },
   { pattern = "bugdrop.dev/api/bugdrop-board-token*", zone_name = "bugdrop.dev" },
+  { pattern = "bugdrop.dev/api/github/webhook*", zone_name = "bugdrop.dev" },
 ]
+
+[triggers]
+crons = ["17 3 * * *"]
 
 # Static assets directory (for widget.js)
 [assets]
@@ -29,9 +33,14 @@ binding = "RATE_LIMIT"
 id = "e6454ed79f514ed3a9e24eea99dd6cd3"
 preview_id = "ff8f3809037d4403befd09369a9f7e36"
 
+[[kv_namespaces]]
+binding = "INSTALLATION_ANALYTICS"
+id = "a567f723a2eb4cfab807b0c1d678dc76"
+
 # Secrets (set with: wrangler secret put GITHUB_APP_ID)
 # GITHUB_APP_ID
 # GITHUB_PRIVATE_KEY
+# GITHUB_WEBHOOK_SECRET
 # AUTH_TOKEN_SECRET  # Optional: set to require signed host-app auth tokens for /feedback
 # VARIANT_LABELS  # Optional: JSON object keyed by repo, then structured variant ID
 # BUGDROP_BOARD_TOKEN_SECRET  # Optional: enables /board embedded demo token signing
@@ -52,6 +61,10 @@ MAX_SCREENSHOT_SIZE_MB = "5"
 binding = "RATE_LIMIT"
 id = "cdb88fa95d6348d6ab84037751853d5d"
 
+[[env.preview.kv_namespaces]]
+binding = "INSTALLATION_ANALYTICS"
+id = "c58b33f6a0dc416b8661661ce0d23f7f"
+
 # Controller-owned production target. The release workflow must still pass
 # BUILD_SHA explicitly and remains frozen until the later operator cutover.
 [env.production]
@@ -61,7 +74,11 @@ routes = [
   { pattern = "bugdrop.dev/board*", zone_name = "bugdrop.dev" },
   { pattern = "bugdrop.dev/board-dogfood*", zone_name = "bugdrop.dev" },
   { pattern = "bugdrop.dev/api/bugdrop-board-token*", zone_name = "bugdrop.dev" },
+  { pattern = "bugdrop.dev/api/github/webhook*", zone_name = "bugdrop.dev" },
 ]
+
+[env.production.triggers]
+crons = ["17 3 * * *"]
 
 [env.production.assets]
 directory = "public"
@@ -78,3 +95,7 @@ BUGDROP_BOARD_APP_ID = "app_mean_weasel_bugdrop_dogfood"
 [[env.production.kv_namespaces]]
 binding = "RATE_LIMIT"
 id = "e6454ed79f514ed3a9e24eea99dd6cd3"
+
+[[env.production.kv_namespaces]]
+binding = "INSTALLATION_ANALYTICS"
+id = "a567f723a2eb4cfab807b0c1d678dc76"

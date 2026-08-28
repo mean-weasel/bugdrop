@@ -2,6 +2,7 @@ export interface Env {
   // Secrets (from .dev.vars locally, wrangler secret in production)
   GITHUB_APP_ID: string;
   GITHUB_PRIVATE_KEY: string;
+  GITHUB_WEBHOOK_SECRET?: string; // HMAC secret for authenticated GitHub App webhooks
 
   // Variables (from wrangler.toml)
   ENVIRONMENT: string;
@@ -28,6 +29,7 @@ export interface Env {
   // Bindings
   ASSETS: Fetcher;
   RATE_LIMIT?: KVNamespace; // Optional: for rate limiting (create with wrangler kv:namespace create RATE_LIMIT)
+  INSTALLATION_ANALYTICS?: KVNamespace; // Deletion-ready installation records; collection remains disabled
 }
 
 export type FeedbackCategory = 'bug' | 'feature' | 'question';
