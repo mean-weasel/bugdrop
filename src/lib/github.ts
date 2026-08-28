@@ -1,7 +1,7 @@
 import { generateGitHubAppJWT } from './jwt';
 import type { Env, FeedbackAttachment, GitHubIssue } from '../types';
 
-const GITHUB_API = 'https://api.github.com';
+export const GITHUB_API = 'https://api.github.com';
 
 /**
  * Thrown when GitHub rejects an issue creation specifically due to invalid
@@ -18,7 +18,7 @@ export class GitHubLabelError extends Error {
   }
 }
 
-const headers = (token: string) => ({
+export const githubHeaders = (token: string) => ({
   Authorization: `Bearer ${token}`,
   Accept: 'application/vnd.github+json',
   'Content-Type': 'application/json',
@@ -38,7 +38,7 @@ async function getInstallationId(env: Env, owner: string, repo: string): Promise
   const jwt = await generateGitHubAppJWT(env.GITHUB_APP_ID, env.GITHUB_PRIVATE_KEY);
 
   const response = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/installation`, {
-    headers: headers(jwt),
+    headers: githubHeaders(jwt),
   });
 
   if (!response.ok) {
@@ -65,7 +65,7 @@ export async function getInstallationToken(
 
   const response = await fetch(`${GITHUB_API}/app/installations/${installationId}/access_tokens`, {
     method: 'POST',
-    headers: headers(jwt),
+    headers: githubHeaders(jwt),
   });
 
   if (!response.ok) {
@@ -90,7 +90,7 @@ export async function createIssue(
 ): Promise<GitHubIssue> {
   const response = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/issues`, {
     method: 'POST',
-    headers: headers(token),
+    headers: githubHeaders(token),
     body: JSON.stringify({ title, body, labels }),
   });
 
@@ -128,7 +128,7 @@ function isLabelValidationFailure(body: string): boolean {
 export async function isRepoPublic(token: string, owner: string, repo: string): Promise<boolean> {
   try {
     const response = await fetch(`${GITHUB_API}/repos/${owner}/${repo}`, {
-      headers: headers(token),
+      headers: githubHeaders(token),
     });
 
     if (!response.ok) {
@@ -151,7 +151,7 @@ async function ensureScreenshotBranch(token: string, owner: string, repo: string
   // Check if branch already exists
   const check = await fetch(
     `${GITHUB_API}/repos/${owner}/${repo}/git/ref/heads/${SCREENSHOT_BRANCH}`,
-    { headers: headers(token) }
+    { headers: githubHeaders(token) }
   );
   if (check.ok) return;
   if (check.status !== 404) {
@@ -160,7 +160,7 @@ async function ensureScreenshotBranch(token: string, owner: string, repo: string
 
   // Get default branch SHA
   const repoRes = await fetch(`${GITHUB_API}/repos/${owner}/${repo}`, {
-    headers: headers(token),
+    headers: githubHeaders(token),
   });
   if (!repoRes.ok) {
     throw new Error(`Failed to get repo info: ${repoRes.status}`);
@@ -169,7 +169,7 @@ async function ensureScreenshotBranch(token: string, owner: string, repo: string
 
   const refRes = await fetch(
     `${GITHUB_API}/repos/${owner}/${repo}/git/ref/heads/${repoData.default_branch}`,
-    { headers: headers(token) }
+    { headers: githubHeaders(token) }
   );
   if (!refRes.ok) {
     throw new Error(`Failed to get default branch ref: ${refRes.status}`);
@@ -179,7 +179,7 @@ async function ensureScreenshotBranch(token: string, owner: string, repo: string
   // Create the screenshot branch
   const createRes = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/git/refs`, {
     method: 'POST',
-    headers: headers(token),
+    headers: githubHeaders(token),
     body: JSON.stringify({
       ref: `refs/heads/${SCREENSHOT_BRANCH}`,
       sha: refData.object.sha,
@@ -190,7 +190,7 @@ async function ensureScreenshotBranch(token: string, owner: string, repo: string
     if (createRes.status === 422 && isExistingReferenceError(error)) {
       const recheck = await fetch(
         `${GITHUB_API}/repos/${owner}/${repo}/git/ref/heads/${SCREENSHOT_BRANCH}`,
-        { headers: headers(token) }
+        { headers: githubHeaders(token) }
       );
       if (recheck.ok) return;
     }
@@ -271,7 +271,7 @@ async function uploadBase64Asset(
 
   const response = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/contents/${filename}`, {
     method: 'PUT',
-    headers: headers(token),
+    headers: githubHeaders(token),
     body: JSON.stringify({
       message,
       content: content,
