@@ -6,7 +6,7 @@ export interface InstallationCleanupAudit {
   deletedCount: number;
 }
 
-export interface InstallationScanningCheckpoint {
+interface InstallationScanningCheckpoint {
   schemaVersion: 1;
   phase: 'scanning';
   cursor: string;
@@ -15,7 +15,7 @@ export interface InstallationScanningCheckpoint {
   deletedCount: number;
 }
 
-export interface InstallationFinalizingCheckpoint {
+interface InstallationFinalizingCheckpoint {
   schemaVersion: 1;
   phase: 'finalizing';
   audit: InstallationCleanupAudit;
