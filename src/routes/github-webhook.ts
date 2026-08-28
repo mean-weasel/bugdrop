@@ -1,62 +1,99 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
 import {
+  confirmGitHubInstallationIsInactive,
   deleteInstallationRecord,
   verifyGitHubWebhookSignature,
 } from '../lib/installation-retention';
+import {
+  createInstallationRecord,
+  isCanonicalGitHubProfileUrl,
+  isGitHubAccountLogin,
+  isInstallationAccountType,
+  type NewInstallationRecord,
+} from '../lib/installation-analytics';
 
-const githubWebhook = new Hono<{ Bindings: Env }>();
+interface GitHubWebhookDependencies {
+  confirmInstallationIsInactive?: (env: Env, installationId: number) => Promise<boolean>;
+}
 
-githubWebhook.post('/github/webhook', async c => {
-  const secret = c.env.GITHUB_WEBHOOK_SECRET;
-  if (!secret) {
-    return c.json({ error: 'GitHub webhook is not configured' }, 503);
-  }
+export function createGitHubWebhook(dependencies: GitHubWebhookDependencies = {}) {
+  const githubWebhook = new Hono<{ Bindings: Env }>();
+  const confirmInstallationIsInactive =
+    dependencies.confirmInstallationIsInactive ?? confirmGitHubInstallationIsInactive;
 
-  const body = await c.req.text();
-  const signatureIsValid = await verifyGitHubWebhookSignature(
-    secret,
-    c.req.header('x-hub-signature-256'),
-    body
-  );
-  if (!signatureIsValid) {
-    return c.json({ error: 'Invalid webhook signature' }, 401);
-  }
+  githubWebhook.post('/github/webhook', async c => {
+    const secret = c.env.GITHUB_WEBHOOK_SECRET;
+    if (!secret) {
+      return c.json({ error: 'GitHub webhook is not configured' }, 503);
+    }
 
-  const event = c.req.header('x-github-event');
-  if (!event) {
-    return c.json({ error: 'Missing GitHub event type' }, 400);
-  }
-  if (event !== 'installation') {
-    return c.json({ accepted: true }, 202);
-  }
+    const body = await c.req.text();
+    const signatureIsValid = await verifyGitHubWebhookSignature(
+      secret,
+      c.req.header('x-hub-signature-256'),
+      body
+    );
+    if (!signatureIsValid) {
+      return c.json({ error: 'Invalid webhook signature' }, 401);
+    }
 
-  const payload = parseInstallationPayload(body);
-  if (!payload) {
-    return c.json({ error: 'Invalid installation webhook payload' }, 400);
-  }
-  if (payload.action !== 'deleted') {
-    return c.json({ accepted: true }, 202);
-  }
+    const event = c.req.header('x-github-event');
+    if (!event) {
+      return c.json({ error: 'Missing GitHub event type' }, 400);
+    }
+    if (event !== 'installation') {
+      return c.json({ accepted: true }, 202);
+    }
 
-  const store = c.env.INSTALLATION_ANALYTICS;
-  if (!store) {
-    return c.json({ error: 'Installation deletion storage is unavailable' }, 503);
-  }
+    const payload = parseInstallationPayload(body);
+    if (!payload) {
+      return c.json({ error: 'Invalid installation webhook payload' }, 400);
+    }
+    if (payload.kind === 'ignored') {
+      return c.json({ accepted: true }, 202);
+    }
 
-  await deleteInstallationRecord(store, payload.installation.id);
-  return c.json({ deleted: true }, 200);
-});
+    const store = c.env.INSTALLATION_ANALYTICS;
+    if (!store) {
+      return c.json({ error: 'Installation identity storage is unavailable' }, 503);
+    }
 
-function parseInstallationPayload(
-  body: string
-): { action: string; installation: { id: number } } | null {
+    if (payload.kind === 'created') {
+      if (await confirmInstallationIsInactive(c.env, payload.installation.installationId)) {
+        return c.json({ accepted: true }, 202);
+      }
+      await createInstallationRecord(store, payload.installation);
+      if (await confirmInstallationIsInactive(c.env, payload.installation.installationId)) {
+        await deleteInstallationRecord(store, payload.installation.installationId);
+        return c.json({ accepted: true }, 202);
+      }
+      return c.json({ created: true }, 201);
+    }
+
+    await deleteInstallationRecord(store, payload.installation.installationId);
+    return c.json({ deleted: true }, 200);
+  });
+
+  return githubWebhook;
+}
+
+type InstallationPayload =
+  | { kind: 'created'; installation: NewInstallationRecord }
+  | { kind: 'deleted'; installation: { installationId: number } }
+  | { kind: 'ignored'; installation: { installationId: number } };
+
+function parseInstallationPayload(body: string): InstallationPayload | null {
   try {
     const payload = JSON.parse(body) as unknown;
     if (!payload || typeof payload !== 'object') return null;
     const candidate = payload as {
       action?: unknown;
-      installation?: { id?: unknown };
+      installation?: {
+        id?: unknown;
+        account?: { login?: unknown; type?: unknown; html_url?: unknown };
+        created_at?: unknown;
+      };
     };
     const id = candidate.installation?.id;
     if (
@@ -67,10 +104,47 @@ function parseInstallationPayload(
     ) {
       return null;
     }
-    return { action: candidate.action, installation: { id } };
+    if (candidate.action !== 'created') {
+      return {
+        kind: candidate.action === 'deleted' ? 'deleted' : 'ignored',
+        installation: { installationId: id },
+      };
+    }
+
+    const account = candidate.installation?.account;
+    const installedAt = normalizeGitHubDate(candidate.installation?.created_at);
+    if (
+      !account ||
+      typeof account.login !== 'string' ||
+      !isGitHubAccountLogin(account.login) ||
+      !isInstallationAccountType(account.type) ||
+      typeof account.html_url !== 'string' ||
+      !isCanonicalGitHubProfileUrl(account.html_url, account.login) ||
+      !installedAt
+    ) {
+      return null;
+    }
+
+    return {
+      kind: 'created',
+      installation: {
+        installationId: id,
+        account: {
+          login: account.login,
+          type: account.type,
+          profileUrl: account.html_url,
+        },
+        installedAt,
+      },
+    };
   } catch {
     return null;
   }
 }
 
-export default githubWebhook;
+function normalizeGitHubDate(value: unknown): string | null {
+  if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) return null;
+  return new Date(value).toISOString();
+}
+
+export default createGitHubWebhook();

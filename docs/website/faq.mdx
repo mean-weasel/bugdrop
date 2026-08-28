@@ -179,8 +179,8 @@ The widget does not track feedback reporters. It does not set analytics cookies,
 browser storage to track reporters, send reporter analytics, or fingerprint users.
 Feedback form contents go to the hosted service only to create the requested GitHub Issue
 and associated files. BugDrop does not retain that content in a separate feedback
-database. The service does keep short-lived rate-limit counters and may retain limited
-installation and aggregate usage information.
+database. The service does keep short-lived rate-limit counters and limited installation
+information.
 
 Separately, the bugdrop.dev website uses limited website analytics. See the
 [Privacy Policy](https://github.com/mean-weasel/bugdrop/blob/main/PRIVACY.md) for details.
@@ -193,8 +193,8 @@ Feedback data is stored in your GitHub repository:
 - **Screenshots** are committed to the `bugdrop-screenshots` branch in a `.bugdrop/` directory
 
 The API discards feedback content after creating the GitHub Issue and associated files.
-The hosted service separately keeps short-lived rate-limit counters and may retain the
-limited installation and aggregate usage information described in the
+The hosted service separately keeps short-lived rate-limit counters and the limited
+installation information described in the
 [Privacy Policy](https://github.com/mean-weasel/bugdrop/blob/main/PRIVACY.md).
 
 ### Can I self-host BugDrop?
