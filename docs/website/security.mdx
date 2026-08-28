@@ -26,7 +26,11 @@ You can review and revoke the app's access at any time from your GitHub settings
 
 ## Data Storage
 
-BugDrop follows a "GitHub-native" storage model. All data stays within your GitHub repository -- nothing is stored on external servers.
+BugDrop follows a "GitHub-native" feedback-storage model. Feedback content and uploaded
+files are stored in your GitHub repository, not in a separate BugDrop feedback database.
+The hosted service temporarily stores rate-limit counters and may retain limited
+installation and aggregate usage information as described in the
+[Privacy Policy](https://github.com/mean-weasel/bugdrop/blob/main/PRIVACY.md).
 
 ### Issues
 
@@ -70,7 +74,7 @@ BugDrop is built with a privacy-first approach:
 
 - **No user tracking** -- BugDrop does not set cookies, use local storage for tracking, or fingerprint users
 - **No analytics** -- The widget does not send any telemetry, usage data, or analytics to any server
-- **No external data storage** -- All data (issues and screenshots) is stored in your GitHub repository
+- **GitHub-native feedback storage** -- Issue content, screenshots, and attachments are stored in your GitHub repository rather than a separate BugDrop feedback database
 - **No user accounts** -- Users submitting feedback do not need to create accounts or log in
 - **No PII collection by default** -- Name and email fields are off by default. When enabled, this data goes only to the GitHub Issue in your repository
 - **Client-side screenshots** -- Screenshots are rendered in the user's browser, not captured server-side
@@ -86,8 +90,8 @@ covered:
 <input type="email" data-bugdrop-redact />
 
 <div data-bugdrop-mask>
-  <span>Customer name</span>
-  <span>customer@example.com</span>
+  <span>User name</span>
+  <span>user@example.com</span>
 </div>
 ```
 
@@ -142,7 +146,10 @@ The only network requests BugDrop makes are:
 1. Loading the widget script from Cloudflare Workers
 2. Submitting the feedback form to the BugDrop Cloudflare Worker API
 
-The API acts as a pass-through to the GitHub API -- it receives the form data, creates the issue and uploads the screenshot, and discards the data. Nothing is persisted on the Cloudflare Worker.
+The API receives the form data, creates the issue and uploads its files, then discards the
+feedback content. The hosted service separately keeps short-lived rate-limit counters; see
+the [Privacy Policy](https://github.com/mean-weasel/bugdrop/blob/main/PRIVACY.md) for the
+complete data-handling and retention details.
 
 ## Rate Limiting
 

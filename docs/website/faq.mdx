@@ -175,16 +175,27 @@ If the GitHub API is unavailable when a user submits feedback, the BugDrop API w
 
 ### Does BugDrop track users?
 
-No. BugDrop does not set cookies, use local storage for tracking, send analytics, or fingerprint users. The only data sent to the server is the feedback form contents (title, description, category, optional screenshot, optional name/email, and automatically captured system information). This data goes directly to your GitHub repository and is not stored anywhere else.
+The widget does not track feedback reporters. It does not set analytics cookies, use
+browser storage to track reporters, send reporter analytics, or fingerprint users.
+Feedback form contents go to the hosted service only to create the requested GitHub Issue
+and associated files. BugDrop does not retain that content in a separate feedback
+database. The service does keep short-lived rate-limit counters and may retain limited
+installation and aggregate usage information.
+
+Separately, the bugdrop.dev website uses limited website analytics. See the
+[Privacy Policy](https://github.com/mean-weasel/bugdrop/blob/main/PRIVACY.md) for details.
 
 ### Where is my data stored?
 
-All data is stored in your GitHub repository:
+Feedback data is stored in your GitHub repository:
 
 - **Issues** are created as GitHub Issues with labels and formatted bodies
 - **Screenshots** are committed to the `bugdrop-screenshots` branch in a `.bugdrop/` directory
 
-No data is stored on the Cloudflare Worker. The API is stateless -- it receives the form submission, creates the GitHub Issue, and discards the data.
+The API discards feedback content after creating the GitHub Issue and associated files.
+The hosted service separately keeps short-lived rate-limit counters and may retain the
+limited installation and aggregate usage information described in the
+[Privacy Policy](https://github.com/mean-weasel/bugdrop/blob/main/PRIVACY.md).
 
 ### Can I self-host BugDrop?
 
