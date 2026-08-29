@@ -7,7 +7,11 @@ import {
   sweepInstallationRecords,
   verifyGitHubWebhookSignature,
 } from '../src/lib/installation-retention';
-import githubWebhook from '../src/routes/github-webhook';
+import { createGitHubWebhook } from '../src/routes/github-webhook';
+
+const githubWebhook = createGitHubWebhook({
+  confirmInstallationIsInactive: vi.fn().mockResolvedValue(false),
+});
 
 const baseEnv: Env = {
   GITHUB_APP_ID: '123',
@@ -113,7 +117,7 @@ describe('installation retention safeguards', () => {
 
   it('acknowledges unrelated or non-deletion events without writing installation records', async () => {
     const store = createStore();
-    const body = JSON.stringify({ action: 'created', installation: { id: 42 } });
+    const body = JSON.stringify({ action: 'suspended', installation: { id: 42 } });
     const response = await githubWebhook.fetch(
       new Request('https://bugdrop.example/github/webhook', {
         method: 'POST',
@@ -130,6 +134,201 @@ describe('installation retention safeguards', () => {
     expect(response.status).toBe(202);
     expect(store.delete).not.toHaveBeenCalled();
     expect(store.put).not.toHaveBeenCalled();
+  });
+
+  it('stores only approved public account fields for a newly created installation', async () => {
+    const store = createStore();
+    const body = JSON.stringify({
+      action: 'created',
+      installation: {
+        id: 42,
+        account: {
+          login: 'acme',
+          type: 'Organization',
+          html_url: 'https://github.com/acme',
+          email: 'private@example.com',
+          avatar_url: 'https://avatars.githubusercontent.com/u/1',
+        },
+        created_at: '2026-08-28T12:00:00Z',
+        repository_selection: 'all',
+      },
+      repositories: [{ full_name: 'acme/private-repo' }],
+      sender: { login: 'private-installer' },
+    });
+    const response = await githubWebhook.fetch(
+      new Request('https://bugdrop.example/github/webhook', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-github-event': 'installation',
+          'x-hub-signature-256': await sign(body),
+        },
+        body,
+      }),
+      { ...baseEnv, INSTALLATION_ANALYTICS: store }
+    );
+
+    expect(response.status).toBe(201);
+    expect(store.put).toHaveBeenCalledExactlyOnceWith(
+      'installation:42',
+      JSON.stringify({
+        schemaVersion: 1,
+        installationId: 42,
+        account: {
+          login: 'acme',
+          type: 'Organization',
+          profileUrl: 'https://github.com/acme',
+        },
+        installedAt: '2026-08-28T12:00:00.000Z',
+      })
+    );
+    expect(JSON.stringify(vi.mocked(store.put).mock.calls)).not.toContain('private-repo');
+    expect(JSON.stringify(vi.mocked(store.put).mock.calls)).not.toContain('private-installer');
+    expect(JSON.stringify(vi.mocked(store.put).mock.calls)).not.toContain('private@example.com');
+  });
+
+  it('rejects a created-installation payload with a non-canonical profile link', async () => {
+    const store = createStore();
+    const body = JSON.stringify({
+      action: 'created',
+      installation: {
+        id: 42,
+        account: {
+          login: 'acme',
+          type: 'Organization',
+          html_url: 'https://example.com/acme',
+        },
+        created_at: '2026-08-28T12:00:00Z',
+      },
+    });
+    const response = await githubWebhook.fetch(
+      new Request('https://bugdrop.example/github/webhook', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-github-event': 'installation',
+          'x-hub-signature-256': await sign(body),
+        },
+        body,
+      }),
+      { ...baseEnv, INSTALLATION_ANALYTICS: store }
+    );
+
+    expect(response.status).toBe(400);
+    expect(store.put).not.toHaveBeenCalled();
+  });
+
+  it('does not replace an existing identity record when GitHub redelivers the created event', async () => {
+    const existing = JSON.stringify({
+      schemaVersion: 1,
+      installationId: 42,
+      account: {
+        login: 'acme',
+        type: 'Organization',
+        profileUrl: 'https://github.com/acme',
+      },
+      installedAt: '2026-08-28T12:00:00.000Z',
+    });
+    const store = createStore({ get: vi.fn().mockResolvedValue(existing) });
+    const body = JSON.stringify({
+      action: 'created',
+      installation: {
+        id: 42,
+        account: {
+          login: 'acme',
+          type: 'Organization',
+          html_url: 'https://github.com/acme',
+        },
+        created_at: '2026-08-28T12:00:00Z',
+      },
+    });
+    const response = await githubWebhook.fetch(
+      new Request('https://bugdrop.example/github/webhook', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-github-event': 'installation',
+          'x-hub-signature-256': await sign(body),
+        },
+        body,
+      }),
+      { ...baseEnv, INSTALLATION_ANALYTICS: store }
+    );
+
+    expect(response.status).toBe(201);
+    expect(store.put).not.toHaveBeenCalled();
+  });
+
+  it('does not recreate an identity record from a delayed created event after uninstall', async () => {
+    const store = createStore();
+    const delayedWebhook = createGitHubWebhook({
+      confirmInstallationIsInactive: vi.fn().mockResolvedValue(true),
+    });
+    const body = JSON.stringify({
+      action: 'created',
+      installation: {
+        id: 42,
+        account: {
+          login: 'acme',
+          type: 'Organization',
+          html_url: 'https://github.com/acme',
+        },
+        created_at: '2026-08-28T12:00:00Z',
+      },
+    });
+    const response = await delayedWebhook.fetch(
+      new Request('https://bugdrop.example/github/webhook', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-github-event': 'installation',
+          'x-hub-signature-256': await sign(body),
+        },
+        body,
+      }),
+      { ...baseEnv, INSTALLATION_ANALYTICS: store }
+    );
+
+    expect(response.status).toBe(202);
+    expect(store.put).not.toHaveBeenCalled();
+  });
+
+  it('removes a created record when uninstall happens during creation', async () => {
+    const store = createStore();
+    const confirmInstallationIsInactive = vi
+      .fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const racingWebhook = createGitHubWebhook({ confirmInstallationIsInactive });
+    const body = JSON.stringify({
+      action: 'created',
+      installation: {
+        id: 42,
+        account: {
+          login: 'acme',
+          type: 'Organization',
+          html_url: 'https://github.com/acme',
+        },
+        created_at: '2026-08-28T12:00:00Z',
+      },
+    });
+    const response = await racingWebhook.fetch(
+      new Request('https://bugdrop.example/github/webhook', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-github-event': 'installation',
+          'x-hub-signature-256': await sign(body),
+        },
+        body,
+      }),
+      { ...baseEnv, INSTALLATION_ANALYTICS: store }
+    );
+
+    expect(response.status).toBe(202);
+    expect(confirmInstallationIsInactive).toHaveBeenCalledTimes(2);
+    expect(store.put).toHaveBeenCalledOnce();
+    expect(store.delete).toHaveBeenCalledExactlyOnceWith('installation:42');
   });
 
   it('paginates GitHub’s active-installation list', async () => {

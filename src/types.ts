@@ -29,7 +29,7 @@ export interface Env {
   // Bindings
   ASSETS: Fetcher;
   RATE_LIMIT?: KVNamespace; // Optional: for rate limiting (create with wrangler kv:namespace create RATE_LIMIT)
-  INSTALLATION_ANALYTICS?: KVNamespace; // Deletion-ready installation records; collection remains disabled
+  INSTALLATION_ANALYTICS?: KVNamespace; // Minimal installation identity records
 }
 
 export type FeedbackCategory = 'bug' | 'feature' | 'question';

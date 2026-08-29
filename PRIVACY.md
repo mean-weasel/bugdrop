@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated:** August 27, 2026
+**Last updated:** August 28, 2026
 
 BugDrop is an open-source feedback widget that creates GitHub Issues. This policy covers
 the hosted BugDrop widget and service, as well as the BugDrop website at
@@ -31,23 +31,21 @@ BugDrop applies best-effort secret redaction, but console output can still conta
 or confidential information. Reporters should consider that risk before choosing to
 include it.
 
-## Installation and Usage Information
+## Installation Information
 
-BugDrop does not currently retain identifiable installation analytics. After automated
-deletion for uninstalled apps and a verifiable cleanup backstop are in place, the hosted
-service may retain a minimal installation record containing:
+The hosted service retains a minimal record for installations created after this collection
+was enabled. The record contains:
 
 - GitHub App installation ID
 - Public GitHub account name, account type, and profile link
-- Installation, suspension, removal, and last-active dates
-- Total number of feedback issues successfully created through that installation
+- Installation date
 
 BugDrop does not retain repository names, issue content, screenshots, page URLs,
 reporter identities, or IP addresses for product analytics.
 
-This information is used to operate BugDrop, understand aggregate adoption and usage,
-maintain accurate public totals, and invite app owners to participate voluntarily in
-product research or social proof.
+This information is used to operate BugDrop, understand aggregate adoption, and invite app
+owners to participate voluntarily in product research or social proof. BugDrop does not
+currently retain per-installation feedback counts or last-active dates.
 
 ## Public Statistics
 
@@ -141,9 +139,9 @@ request paths, for service delivery, security, and operational logs.
 - Feedback content is discarded by the hosted service after the GitHub request completes.
 - IP-based rate-limit records expire 15 minutes after their most recent update.
 - Repository-based rate-limit records expire one hour after their most recent update.
-- Identifiable installation analytics are not currently retained. If enabled after
-  automated deletion for uninstalled apps and a verifiable cleanup backstop are in place,
-  installation records may be retained while an installation is active.
+- Installation records are retained while an installation is active and deleted when the
+  app is uninstalled. A scheduled cleanup independently removes records for installations
+  GitHub no longer reports as active.
 - Anonymous aggregate totals may be retained indefinitely.
 - Testimonial and contact information provided with explicit permission is retained until
   that permission is withdrawn or the information is no longer needed.
