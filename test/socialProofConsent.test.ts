@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildApprovedExport,
   buildCandidateReview,
+  createEmptyRegistry,
   fingerprintAccount,
   validateRegistry,
 } from '../scripts/social-proof-consent-lib.mjs';
@@ -14,6 +15,7 @@ const installedAt = '2026-08-30T00:00:00.000Z';
 const generatedAt = '2026-08-30T01:00:00.000Z';
 const fingerprintKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const fingerprint = (login: string) => fingerprintAccount(login, fingerprintKey);
+const registry = (entries: unknown[] = []) => ({ ...createEmptyRegistry(fingerprintKey), entries });
 const record = (installationId: number, login: string) => ({
   schemaVersion: 1,
   installationId,
@@ -30,14 +32,14 @@ describe('social proof consent workflow', () => {
     await expect(runCli(['init', '--registry', registry, '--key', key])).resolves.toContain(
       'fingerprint key'
     );
-    expect(JSON.parse(await readFile(registry, 'utf8'))).toEqual({
-      schemaVersion: 1,
-      entries: [],
-    });
-    expect((await readFile(key, 'utf8')).trim()).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const keyValue = (await readFile(key, 'utf8')).trim();
+    expect(keyValue).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(JSON.parse(await readFile(registry, 'utf8'))).toEqual(createEmptyRegistry(keyValue));
     expect((await stat(registry)).mode & 0o777).toBe(0o600);
     expect((await stat(key)).mode & 0o777).toBe(0o600);
-    await expect(runCli(['init', '--registry', registry, '--key', key])).rejects.toThrow('EEXIST');
+    await expect(runCli(['init', '--registry', registry, '--key', key])).rejects.toThrow(
+      'already exists'
+    );
   });
 
   it('refuses private workflow files inside the repository from any cwd', async () => {
@@ -59,39 +61,95 @@ describe('social proof consent workflow', () => {
   });
 
   it('suppresses prior decisions by stable account fingerprint after reinstall', () => {
-    const registry = {
-      schemaVersion: 1,
-      entries: [
-        {
-          accountFingerprint: fingerprint('same-app'),
-          status: 'contacted',
-          updatedAt: generatedAt,
-        },
-      ],
-    };
+    const decisions = registry([
+      {
+        accountFingerprint: fingerprint('same-app'),
+        status: 'contacted',
+        updatedAt: generatedAt,
+      },
+    ]);
 
     const review = buildCandidateReview(
       [record(2, 'same-app'), record(3, 'new-app')],
-      registry,
+      decisions,
       ['owned-account'],
       fingerprintKey,
       generatedAt
     );
     expect(review.candidates).toEqual([
-      { ...record(3, 'new-app'), accountFingerprint: fingerprint('new-app') },
+      {
+        account: record(3, 'new-app').account,
+        installedAt,
+        accountFingerprint: fingerprint('new-app'),
+      },
+    ]);
+  });
+
+  it('deduplicates stale and reinstalled records by fingerprint and keeps the newest', () => {
+    const old = record(1, 'same-app');
+    const current = { ...record(2, 'same-app'), installedAt: '2026-08-31T00:00:00.000Z' };
+
+    expect(
+      buildCandidateReview(
+        [current, old],
+        registry(),
+        ['owned-account'],
+        fingerprintKey,
+        generatedAt
+      ).candidates
+    ).toEqual([
+      {
+        account: current.account,
+        installedAt: current.installedAt,
+        accountFingerprint: fingerprint('same-app'),
+      },
     ]);
   });
 
   it('requires and applies case-insensitive owned and test account exclusions', () => {
     const records = [record(1, 'neonwatty'), record(2, 'Real-App')];
-    const registry = { schemaVersion: 1, entries: [] };
+    const decisions = registry();
 
-    expect(() => buildCandidateReview(records, registry, [], fingerprintKey, generatedAt)).toThrow(
+    expect(() => buildCandidateReview(records, decisions, [], fingerprintKey, generatedAt)).toThrow(
       'must be excluded'
     );
     expect(
-      buildCandidateReview(records, registry, ['NEONWATTY'], fingerprintKey, generatedAt).candidates
-    ).toEqual([{ ...record(2, 'Real-App'), accountFingerprint: fingerprint('Real-App') }]);
+      buildCandidateReview(records, decisions, ['NEONWATTY'], fingerprintKey, generatedAt)
+        .candidates
+    ).toEqual([
+      {
+        account: record(2, 'Real-App').account,
+        installedAt,
+        accountFingerprint: fingerprint('Real-App'),
+      },
+    ]);
+  });
+
+  it('rejects a valid but mismatched fingerprint key', () => {
+    const otherKey = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+    expect(() =>
+      buildCandidateReview(
+        [record(1, 'candidate-app')],
+        registry(),
+        ['owned-account'],
+        otherKey,
+        generatedAt
+      )
+    ).toThrow('does not match');
+  });
+
+  it('does not create an orphan key when initialization cannot create the registry', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bugdrop-consent-atomic-'));
+    const registryPath = join(directory, 'registry.json');
+    const key = join(directory, 'fingerprint.key');
+    await runCli(['init', '--registry', registryPath, '--key', join(directory, 'first.key')]);
+
+    await expect(runCli(['init', '--registry', registryPath, '--key', key])).rejects.toThrow(
+      'already exists'
+    );
+    await expect(readFile(key, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(runCli(['init', '--registry', key, '--key', key])).rejects.toThrow('must differ');
+    await expect(readFile(key, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('reviews candidates without persisting their identities', async () => {
@@ -126,56 +184,50 @@ describe('social proof consent workflow', () => {
   });
 
   it('exports only explicitly approved public fields without private fingerprints', () => {
-    const registry = {
-      schemaVersion: 1,
-      entries: [
-        { accountFingerprint: fingerprint('declined'), status: 'declined', updatedAt: generatedAt },
-        {
-          accountFingerprint: fingerprint('approved'),
-          status: 'approved',
-          updatedAt: generatedAt,
-          approval: {
-            approvedAt: generatedAt,
-            authorizedRepresentativeConfirmed: true,
-            evidenceReference: 'private/email/2026-08-30',
-            publicProfile: {
-              displayName: 'Example App',
-              url: 'https://example.com',
-              quote: 'BugDrop keeps feedback close to the work.',
-              attribution: 'Example App team',
-            },
+    const decisions = registry([
+      { accountFingerprint: fingerprint('declined'), status: 'declined', updatedAt: generatedAt },
+      {
+        accountFingerprint: fingerprint('approved'),
+        status: 'approved',
+        updatedAt: generatedAt,
+        approval: {
+          approvedAt: generatedAt,
+          authorizedRepresentativeConfirmed: true,
+          evidenceReference: 'private/email/2026-08-30',
+          publicProfile: {
+            displayName: 'Example App',
+            url: 'https://example.com',
+            quote: 'BugDrop keeps feedback close to the work.',
+            attribution: 'Example App team',
           },
         },
-      ],
-    };
+      },
+    ]);
 
-    const output = buildApprovedExport(registry, generatedAt);
+    const output = buildApprovedExport(decisions, generatedAt);
     expect(output).toEqual({
       schemaVersion: 1,
       generatedAt,
-      apps: [registry.entries[1].approval?.publicProfile],
+      apps: [decisions.entries[1].approval?.publicProfile],
     });
     expect(JSON.stringify(output)).not.toContain('accountFingerprint');
     expect(JSON.stringify(output)).not.toContain('evidenceReference');
   });
 
   it('rejects approval without authority confirmation or with extra private fields', () => {
-    const base = {
-      schemaVersion: 1,
-      entries: [
-        {
-          accountFingerprint: fingerprint('example'),
-          status: 'approved',
-          updatedAt: generatedAt,
-          approval: {
-            approvedAt: generatedAt,
-            authorizedRepresentativeConfirmed: false,
-            evidenceReference: 'private/email/2026-08-30',
-            publicProfile: { displayName: 'Example App', url: 'https://example.com' },
-          },
+    const base = registry([
+      {
+        accountFingerprint: fingerprint('example'),
+        status: 'approved',
+        updatedAt: generatedAt,
+        approval: {
+          approvedAt: generatedAt,
+          authorizedRepresentativeConfirmed: false,
+          evidenceReference: 'private/email/2026-08-30',
+          publicProfile: { displayName: 'Example App', url: 'https://example.com' },
         },
-      ],
-    };
+      },
+    ]);
     expect(() => validateRegistry(base)).toThrow('Invalid social proof approval');
 
     base.entries[0].approval.authorizedRepresentativeConfirmed = true;
@@ -186,13 +238,7 @@ describe('social proof consent workflow', () => {
   it('rejects malformed installation records instead of displaying them', () => {
     const malformed = { ...record(1, 'example'), repository: 'secret/repo' };
     expect(() =>
-      buildCandidateReview(
-        [malformed],
-        { schemaVersion: 1, entries: [] },
-        ['owned-account'],
-        fingerprintKey,
-        generatedAt
-      )
+      buildCandidateReview([malformed], registry(), ['owned-account'], fingerprintKey, generatedAt)
     ).toThrow('Invalid installation record');
   });
 });

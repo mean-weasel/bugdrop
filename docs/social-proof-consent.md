@@ -31,7 +31,8 @@ npm run social-proof:consent -- init \
 
 Back up the key securely. It lets the workflow recognize a prior decision after an app is
 reinstalled, but the registry itself stores only a keyed account fingerprint—not the GitHub login,
-profile link, or installation ID.
+profile link, or installation ID. The registry includes a non-secret key verifier, and review fails
+instead of resurfacing prior decisions if the wrong key is supplied.
 
 ## Review outreach candidates
 

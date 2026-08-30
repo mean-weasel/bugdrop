@@ -1,12 +1,13 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { lstat, readFile, realpath, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   buildApprovedExport,
   buildCandidateReview,
+  createEmptyRegistry,
   validateFingerprintKey,
   validateRegistry,
 } from './social-proof-consent-lib.mjs';
@@ -71,6 +72,37 @@ async function writePrivateFile(path, contents) {
   });
 }
 
+async function initializePrivateFiles(registryPath, keyPath) {
+  const registry = await privateOutputPath(registryPath);
+  const key = await privateOutputPath(keyPath);
+  if (registry === key) throw new Error('Consent registry and fingerprint key paths must differ');
+  await assertDoesNotExist(registry);
+  await assertDoesNotExist(key);
+
+  const keyValue = randomBytes(32).toString('base64url');
+  await writeFile(key, `${keyValue}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+  try {
+    await writeFile(registry, `${JSON.stringify(createEmptyRegistry(keyValue), null, 2)}\n`, {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    });
+  } catch (error) {
+    await unlink(key);
+    throw error;
+  }
+}
+
+async function assertDoesNotExist(path) {
+  try {
+    await lstat(path);
+    throw new Error('Private social proof file already exists');
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'ENOENT') return;
+    throw error;
+  }
+}
+
 async function writePrivateJson(path, value) {
   await writePrivateFile(path, `${JSON.stringify(value, null, 2)}\n`);
 }
@@ -131,9 +163,7 @@ export async function runCli(args, dependencies = {}) {
   const options = parseOptions(rawOptions);
 
   if (command === 'init' && options.registry && options.key) {
-    const key = randomBytes(32).toString('base64url');
-    await writePrivateFile(options.key, `${key}\n`);
-    await writePrivateJson(options.registry, { schemaVersion: 1, entries: [] });
+    await initializePrivateFiles(options.registry, options.key);
     return 'Created a private consent registry and account-fingerprint key.';
   }
   if (command === 'review' && options.registry && options.key && options.exclude) {
@@ -159,6 +189,10 @@ export async function runCli(args, dependencies = {}) {
 
 function isObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNodeError(value) {
+  return value instanceof Error && 'code' in value;
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {

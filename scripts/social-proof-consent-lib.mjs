@@ -3,12 +3,13 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 const STATUS_VALUES = new Set(['contacted', 'declined', 'approved', 'withdrawn']);
 
 export function validateRegistry(value) {
-  if (!isObject(value) || !hasExactKeys(value, ['schemaVersion', 'entries'])) {
+  if (!isObject(value) || !hasExactKeys(value, ['schemaVersion', 'keyVerifier', 'entries'])) {
     throw new Error('Invalid consent registry');
   }
   if (value.schemaVersion !== 1 || !Array.isArray(value.entries)) {
     throw new Error('Invalid consent registry');
   }
+  assertFingerprint(value.keyVerifier);
 
   const fingerprints = new Set();
   for (const entry of value.entries) {
@@ -29,16 +30,18 @@ export function buildCandidateReview(
   generatedAt = new Date().toISOString()
 ) {
   validateRegistry(registry);
+  assertRegistryKey(registry, fingerprintKey);
   assertIsoDate(generatedAt);
   if (!Array.isArray(excludedLogins) || excludedLogins.length === 0) {
     throw new Error('At least one owned or test account must be excluded');
   }
   const excluded = new Set(excludedLogins.map(normalizeGitHubLogin));
   const decided = registry.entries.map(entry => Buffer.from(entry.accountFingerprint, 'hex'));
-  const candidates = records
+  const eligible = records
     .map(validateInstallationRecord)
     .map(record => ({
-      ...record,
+      account: record.account,
+      installedAt: record.installedAt,
       accountFingerprint: fingerprintAccount(record.account.login, fingerprintKey),
     }))
     .filter(
@@ -47,8 +50,18 @@ export function buildCandidateReview(
         !decided.some(value =>
           timingSafeEqual(value, Buffer.from(record.accountFingerprint, 'hex'))
         )
-    )
-    .sort((a, b) => a.installedAt.localeCompare(b.installedAt));
+    );
+
+  const candidatesByAccount = new Map();
+  for (const candidate of eligible) {
+    const existing = candidatesByAccount.get(candidate.accountFingerprint);
+    if (!existing || candidate.installedAt > existing.installedAt) {
+      candidatesByAccount.set(candidate.accountFingerprint, candidate);
+    }
+  }
+  const candidates = [...candidatesByAccount.values()].sort((a, b) =>
+    a.installedAt.localeCompare(b.installedAt)
+  );
 
   return { schemaVersion: 1, generatedAt, candidates };
 }
@@ -66,7 +79,15 @@ export function buildApprovedExport(registry, generatedAt = new Date().toISOStri
 export function fingerprintAccount(login, fingerprintKey) {
   const normalized = normalizeGitHubLogin(login);
   const key = validateFingerprintKey(fingerprintKey);
-  return createHmac('sha256', key).update(normalized, 'utf8').digest('hex');
+  return createHmac('sha256', key).update(`account:${normalized}`, 'utf8').digest('hex');
+}
+
+export function createEmptyRegistry(fingerprintKey) {
+  return {
+    schemaVersion: 1,
+    keyVerifier: keyVerifier(fingerprintKey),
+    entries: [],
+  };
 }
 
 export function validateFingerprintKey(value) {
@@ -76,6 +97,19 @@ export function validateFingerprintKey(value) {
   const decoded = Buffer.from(value, 'base64url');
   if (decoded.length !== 32) throw new Error('Invalid social proof fingerprint key');
   return decoded;
+}
+
+function assertRegistryKey(registry, fingerprintKey) {
+  const actual = Buffer.from(registry.keyVerifier, 'hex');
+  const expected = Buffer.from(keyVerifier(fingerprintKey), 'hex');
+  if (!timingSafeEqual(actual, expected)) {
+    throw new Error('Consent registry does not match the account-fingerprint key');
+  }
+}
+
+function keyVerifier(fingerprintKey) {
+  const key = validateFingerprintKey(fingerprintKey);
+  return createHmac('sha256', key).update('registry-key-verifier:v1', 'utf8').digest('hex');
 }
 
 function validateRegistryEntry(entry) {
