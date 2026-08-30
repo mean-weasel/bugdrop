@@ -8,6 +8,7 @@ routes = [
   { pattern = "bugdrop.dev/board-dogfood*", zone_name = "bugdrop.dev" },
   { pattern = "bugdrop.dev/api/bugdrop-board-token*", zone_name = "bugdrop.dev" },
   { pattern = "bugdrop.dev/api/github/webhook*", zone_name = "bugdrop.dev" },
+  { pattern = "bugdrop.dev/api/stats/feedback-issues*", zone_name = "bugdrop.dev" },
 ]
 
 [triggers]
@@ -26,6 +27,15 @@ GITHUB_APP_NAME = "neonwatty-bugdrop"  # Your GitHub App's URL slug
 MAX_SCREENSHOT_SIZE_MB = "5"  # Maximum screenshot size in MB
 BUGDROP_BOARD_TENANT_ID = "tenant_mean_weasel"
 BUGDROP_BOARD_APP_ID = "app_mean_weasel_bugdrop_dogfood"
+FEEDBACK_COUNT_BASELINE = "0"
+FEEDBACK_COUNT_EXCLUDED_OWNERS = "mean-weasel,neonwatty"
+
+[durable_objects]
+bindings = [{ name = "FEEDBACK_COUNTER", class_name = "FeedbackCounter" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["FeedbackCounter"]
 
 # Rate limiting KV namespace
 [[kv_namespaces]]
@@ -56,6 +66,11 @@ ENVIRONMENT = "preview"
 ALLOWED_ORIGINS = "*"
 GITHUB_APP_NAME = "neonwatty-bugdrop"
 MAX_SCREENSHOT_SIZE_MB = "5"
+FEEDBACK_COUNT_BASELINE = "0"
+FEEDBACK_COUNT_EXCLUDED_OWNERS = "mean-weasel,neonwatty"
+
+[env.preview.durable_objects]
+bindings = [{ name = "FEEDBACK_COUNTER", class_name = "FeedbackCounter" }]
 
 [[env.preview.kv_namespaces]]
 binding = "RATE_LIMIT"
@@ -75,6 +90,7 @@ routes = [
   { pattern = "bugdrop.dev/board-dogfood*", zone_name = "bugdrop.dev" },
   { pattern = "bugdrop.dev/api/bugdrop-board-token*", zone_name = "bugdrop.dev" },
   { pattern = "bugdrop.dev/api/github/webhook*", zone_name = "bugdrop.dev" },
+  { pattern = "bugdrop.dev/api/stats/feedback-issues*", zone_name = "bugdrop.dev" },
 ]
 
 [env.production.triggers]
@@ -91,6 +107,11 @@ GITHUB_APP_NAME = "neonwatty-bugdrop"
 MAX_SCREENSHOT_SIZE_MB = "5"
 BUGDROP_BOARD_TENANT_ID = "tenant_mean_weasel"
 BUGDROP_BOARD_APP_ID = "app_mean_weasel_bugdrop_dogfood"
+FEEDBACK_COUNT_BASELINE = "3116"
+FEEDBACK_COUNT_EXCLUDED_OWNERS = "mean-weasel,neonwatty"
+
+[env.production.durable_objects]
+bindings = [{ name = "FEEDBACK_COUNTER", class_name = "FeedbackCounter" }]
 
 [[env.production.kv_namespaces]]
 binding = "RATE_LIMIT"

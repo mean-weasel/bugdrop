@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
 import type { Env, FeedbackPayload } from '../src/types';
 import { createBugDropAuthTokenForTest } from '../src/lib/authToken';
@@ -81,6 +81,10 @@ describe('API Routes', () => {
     app = await createApiRoutes();
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   describe('GET /health', () => {
     it('should return status ok', async () => {
       const req = new Request('http://localhost/health');
@@ -128,6 +132,64 @@ describe('API Routes', () => {
 
         expect(data).not.toHaveProperty('buildSha');
       }
+    });
+  });
+
+  describe('GET /stats/feedback-issues', () => {
+    it('returns only the rounded public count with daily shared caching', async () => {
+      const put = vi.fn().mockResolvedValue(undefined);
+      const match = vi.fn().mockResolvedValue(undefined);
+      vi.stubGlobal('caches', { default: { match, put } });
+      const req = new Request('http://localhost/stats/feedback-issues?nonce=ignored', {
+        headers: { Origin: 'https://first.example' },
+      });
+      const res = await app.fetch(req, { ...mockEnv, FEEDBACK_COUNT_BASELINE: '3116' });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        feedbackIssuesCreated: 3100,
+        display: '3,100+',
+      });
+      expect(res.headers.get('Cache-Control')).toContain('s-maxage=86400');
+      expect(match).toHaveBeenCalledOnce();
+      expect(put).toHaveBeenCalledOnce();
+      expect((match.mock.calls[0][0] as Request).url).toBe(
+        'http://localhost/stats/feedback-issues'
+      );
+      const storedResponse = put.mock.calls[0][1] as Response;
+      expect(storedResponse.headers.get('Access-Control-Allow-Origin')).toBeNull();
+
+      const cachedResponse = Response.json(
+        {
+          feedbackIssuesCreated: 3100,
+          display: '3,100+',
+        },
+        {
+          headers: { 'Access-Control-Allow-Origin': 'https://first.example' },
+        }
+      );
+      match.mockResolvedValueOnce(cachedResponse);
+      const cached = await app.fetch(
+        new Request('http://localhost/stats/feedback-issues?another=ignored', {
+          headers: { Origin: 'https://second.example' },
+        }),
+        mockEnv
+      );
+      expect(await cached.json()).toEqual({
+        feedbackIssuesCreated: 3100,
+        display: '3,100+',
+      });
+      expect(cached.headers.get('Access-Control-Allow-Origin')).toBe('https://second.example');
+      expect(put).toHaveBeenCalledOnce();
+    });
+
+    it('fails closed without exposing a synthetic count when unconfigured', async () => {
+      const req = new Request('http://localhost/stats/feedback-issues');
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: 'Feedback count unavailable' });
+      expect(res.headers.get('Cache-Control')).toBe('no-store');
     });
   });
 
@@ -368,6 +430,92 @@ describe('API Routes', () => {
         expect.stringContaining('This is a test feedback'),
         ['bug', 'bugdrop']
       );
+    });
+
+    it('queues one anonymous counter increment only after GitHub creates the Issue', async () => {
+      const counterFetch = vi.fn().mockResolvedValue(Response.json({ total: 3117 }));
+      const counterId = {} as DurableObjectId;
+      const waitUntil = vi.fn();
+      const env = {
+        ...mockEnv,
+        FEEDBACK_COUNTER: {
+          idFromName: vi.fn().mockReturnValue(counterId),
+          get: vi.fn().mockReturnValue({ fetch: counterFetch }),
+        } as unknown as DurableObjectNamespace,
+      };
+      const req = new Request('http://localhost/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(validPayload),
+      });
+
+      const res = await app.fetch(req, env, { waitUntil } as unknown as ExecutionContext);
+
+      expect(res.status).toBe(200);
+      expect(waitUntil).toHaveBeenCalledOnce();
+      await (waitUntil.mock.calls[0][0] as Promise<void>);
+      expect(counterFetch).toHaveBeenCalledOnce();
+      expect(counterFetch).toHaveBeenCalledWith(
+        'https://feedback-counter/increment',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: expect.stringMatching(/"eventId":"[0-9a-f-]{36}"/i),
+        })
+      );
+    });
+
+    it('does not count feedback when GitHub Issue creation fails', async () => {
+      mockCreateIssue.mockRejectedValueOnce(new Error('GitHub unavailable'));
+      const counterFetch = vi.fn();
+      const counterId = {} as DurableObjectId;
+      const waitUntil = vi.fn();
+      const env = {
+        ...mockEnv,
+        FEEDBACK_COUNTER: {
+          idFromName: vi.fn().mockReturnValue(counterId),
+          get: vi.fn().mockReturnValue({ fetch: counterFetch }),
+        } as unknown as DurableObjectNamespace,
+      };
+      const req = new Request('http://localhost/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(validPayload),
+      });
+
+      const res = await app.fetch(req, env, { waitUntil } as unknown as ExecutionContext);
+
+      expect(res.status).toBe(500);
+      expect(counterFetch).not.toHaveBeenCalled();
+      expect(waitUntil).not.toHaveBeenCalled();
+    });
+
+    it('does not count a malformed GitHub success response', async () => {
+      mockCreateIssue.mockResolvedValueOnce({
+        number: 42,
+        html_url: 'https://github.com/another/repo/issues/42',
+      });
+      const counterFetch = vi.fn();
+      const waitUntil = vi.fn();
+      const env = {
+        ...mockEnv,
+        FEEDBACK_COUNTER: {
+          idFromName: vi.fn().mockReturnValue({} as DurableObjectId),
+          get: vi.fn().mockReturnValue({ fetch: counterFetch }),
+        } as unknown as DurableObjectNamespace,
+      };
+      const req = new Request('http://localhost/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(validPayload),
+      });
+
+      const res = await app.fetch(req, env, { waitUntil } as unknown as ExecutionContext);
+
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({ error: 'GitHub returned an invalid Issue result' });
+      expect(counterFetch).not.toHaveBeenCalled();
+      expect(waitUntil).not.toHaveBeenCalled();
     });
 
     it('should expose the configured Worker build SHA on successful feedback', async () => {

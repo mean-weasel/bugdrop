@@ -26,6 +26,8 @@ import {
 } from '../lib/markdown';
 import { handleStructuredFeedback, isStructuredFeedbackRequest } from './structured-feedback';
 import { parseAppVersion } from '../app-version';
+import { getPublicFeedbackCount, scheduleSuccessfulFeedbackCount } from '../lib/feedback-counter';
+import { isCanonicalGitHubIssue } from '../lib/github-issue-result';
 
 type ApiVariables = {
   feedbackPayload?: unknown;
@@ -129,6 +131,63 @@ api.get('/health', c => {
     capabilities: { appVersionMetadata: true },
     ...(buildSha ? { buildSha } : {}),
   });
+});
+
+api.get('/stats/feedback-issues', async c => {
+  const cacheUrl = new URL(c.req.url);
+  cacheUrl.search = '';
+  cacheUrl.hash = '';
+  const cacheKey = new Request(cacheUrl, { method: 'GET' });
+  const sharedCache = typeof caches === 'undefined' ? undefined : caches.default;
+  if (sharedCache) {
+    try {
+      const cached = await sharedCache.match(cacheKey);
+      if (cached) {
+        const response = new Response(cached.body, cached);
+        // CORS is request-specific and is reapplied by the outer middleware.
+        response.headers.delete('Access-Control-Allow-Origin');
+        response.headers.delete('Access-Control-Allow-Credentials');
+        response.headers.delete('Vary');
+        return response;
+      }
+    } catch (error) {
+      console.warn('[BugDrop] Failed to read cached public feedback count:', error);
+    }
+  }
+
+  try {
+    const feedbackIssuesCreated = await getPublicFeedbackCount(c.env);
+    if (feedbackIssuesCreated === null) {
+      return c.json({ error: 'Feedback count unavailable' }, 503, {
+        'Cache-Control': 'no-store',
+      });
+    }
+    const response = Response.json(
+      {
+        feedbackIssuesCreated,
+        display: `${feedbackIssuesCreated.toLocaleString('en-US')}+`,
+      },
+      {
+        status: 200,
+        headers: {
+          'Cache-Control': 'public, max-age=3600, s-maxage=86400, stale-while-revalidate=86400',
+        },
+      }
+    );
+    if (sharedCache) {
+      try {
+        await sharedCache.put(cacheKey, response.clone());
+      } catch (error) {
+        console.warn('[BugDrop] Failed to cache public feedback count:', error);
+      }
+    }
+    return response;
+  } catch (error) {
+    console.error('[BugDrop] Failed to read anonymous feedback counter:', error);
+    return c.json({ error: 'Feedback count unavailable' }, 503, {
+      'Cache-Control': 'no-store',
+    });
+  }
 });
 
 function getBuildSha(env: Env): string | undefined {
@@ -306,6 +365,12 @@ api.post('/feedback', async c => {
         );
       }
     }
+
+    if (!isCanonicalGitHubIssue(issue, owner, repo)) {
+      throw new Error('GitHub returned an invalid Issue result');
+    }
+
+    scheduleSuccessfulFeedbackCount(c.env, payload.repo, c);
 
     return c.json({
       success: true,

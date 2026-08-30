@@ -25,11 +25,14 @@ export interface Env {
   BUGDROP_BOARD_APP_ID?: string; // Optional hosted beta app claim for the demo board token
   BUGDROP_BOARD_TOKEN_AUDIENCE?: string; // Optional override for board token audience
   BUGDROP_BOARD_TOKEN_ISSUER?: string; // Optional override for board token issuer
+  FEEDBACK_COUNT_BASELINE?: string; // Anonymous external-Issue count before live counting
+  FEEDBACK_COUNT_EXCLUDED_OWNERS?: string; // Comma-separated first-party/test owners
 
   // Bindings
   ASSETS: Fetcher;
   RATE_LIMIT?: KVNamespace; // Optional: for rate limiting (create with wrangler kv:namespace create RATE_LIMIT)
   INSTALLATION_ANALYTICS?: KVNamespace; // Minimal installation identity records
+  FEEDBACK_COUNTER?: DurableObjectNamespace; // Anonymous global successful-Issue counter
 }
 
 export type FeedbackCategory = 'bug' | 'feature' | 'question';

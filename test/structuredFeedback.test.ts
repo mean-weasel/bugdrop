@@ -134,6 +134,32 @@ describe('structured feedback Worker contract', () => {
     expect(mockGetInstallationToken).toHaveBeenCalledOnce();
   });
 
+  it('queues one anonymous counter increment after a valid structured Issue result', async () => {
+    const counterFetch = vi.fn().mockResolvedValue(Response.json({ total: 3117 }));
+    const counterId = {} as DurableObjectId;
+    const waitUntil = vi.fn();
+    const counterEnv = {
+      ...env,
+      FEEDBACK_COUNTER: {
+        idFromName: vi.fn().mockReturnValue(counterId),
+        get: vi.fn().mockReturnValue({ fetch: counterFetch }),
+      } as unknown as DurableObjectNamespace,
+    };
+    const request = new Request('http://localhost/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validPayload),
+    });
+
+    const response = await app.fetch(request, counterEnv, {
+      waitUntil,
+    } as unknown as ExecutionContext);
+
+    expect(response.status).toBe(200);
+    await (waitUntil.mock.calls[0][0] as Promise<void>);
+    expect(counterFetch).toHaveBeenCalledOnce();
+  });
+
   it('omits App Version when metadata does not provide one', async () => {
     const payload = structuredClone(validPayload);
     delete payload.metadata.appVersion;
