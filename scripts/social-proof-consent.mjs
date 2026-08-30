@@ -1,67 +1,22 @@
 import { execFile } from 'node:child_process';
-import { readFile, realpath, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+  buildApprovedExport,
+  buildCandidateReview,
+  validateFingerprintKey,
+  validateRegistry,
+} from './social-proof-consent-lib.mjs';
 
 const execFileAsync = promisify(execFile);
 const INSTALLATION_PREFIX = 'installation:';
-const STATUS_VALUES = new Set(['contacted', 'declined', 'approved', 'withdrawn']);
-
-export function validateRegistry(value) {
-  if (!isObject(value) || !hasExactKeys(value, ['schemaVersion', 'entries'])) {
-    throw new Error('Invalid consent registry');
-  }
-  if (value.schemaVersion !== 1 || !Array.isArray(value.entries)) {
-    throw new Error('Invalid consent registry');
-  }
-
-  const ids = new Set();
-  for (const entry of value.entries) {
-    validateRegistryEntry(entry);
-    if (ids.has(entry.installationId)) throw new Error('Duplicate consent registry entry');
-    ids.add(entry.installationId);
-  }
-  return value;
-}
-
-export function buildCandidateReport(
-  records,
-  registry,
-  excludedLogins,
-  generatedAt = new Date().toISOString()
-) {
-  validateRegistry(registry);
-  assertIsoDate(generatedAt);
-  if (!Array.isArray(excludedLogins) || excludedLogins.length === 0) {
-    throw new Error('At least one owned or test account must be excluded');
-  }
-  const excluded = new Set(excludedLogins.map(normalizeExcludedLogin));
-  const decided = new Set(registry.entries.map(entry => entry.installationId));
-  const candidates = records
-    .map(validateInstallationRecord)
-    .filter(
-      record =>
-        !decided.has(record.installationId) &&
-        !excluded.has(record.account.login.toLocaleLowerCase('en-US'))
-    )
-    .sort((a, b) => a.installedAt.localeCompare(b.installedAt));
-
-  return { schemaVersion: 1, generatedAt, candidates };
-}
-
-export function buildApprovedExport(registry, generatedAt = new Date().toISOString()) {
-  validateRegistry(registry);
-  assertIsoDate(generatedAt);
-  const apps = registry.entries
-    .filter(entry => entry.status === 'approved')
-    .map(entry => ({ ...entry.approval.publicProfile }))
-    .sort((a, b) => a.displayName.localeCompare(b.displayName));
-  return { schemaVersion: 1, generatedAt, apps };
-}
+const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 async function readInstallationRecords() {
-  const wrangler = resolve('node_modules/.bin/wrangler');
+  const wrangler = resolve(REPOSITORY_ROOT, 'node_modules/.bin/wrangler');
   try {
     const listed = await execFileAsync(
       wrangler,
@@ -75,7 +30,7 @@ async function readInstallationRecords() {
         'production',
         '--remote',
       ],
-      { maxBuffer: 10 * 1024 * 1024 }
+      { cwd: REPOSITORY_ROOT, maxBuffer: 10 * 1024 * 1024 }
     );
     const keys = JSON.parse(listed.stdout);
     if (!Array.isArray(keys)) throw new Error('invalid list');
@@ -98,7 +53,7 @@ async function readInstallationRecords() {
           '--remote',
           '--text',
         ],
-        { maxBuffer: 1024 * 1024 }
+        { cwd: REPOSITORY_ROOT, maxBuffer: 1024 * 1024 }
       );
       records.push(JSON.parse(result.stdout));
     }
@@ -108,18 +63,38 @@ async function readInstallationRecords() {
   }
 }
 
-async function writePrivateJson(path, value) {
-  await writeFile(await privateOutputPath(path), `${JSON.stringify(value, null, 2)}\n`, {
+async function writePrivateFile(path, contents) {
+  await writeFile(await privateOutputPath(path), contents, {
     encoding: 'utf8',
     flag: 'wx',
     mode: 0o600,
   });
 }
 
+async function writePrivateJson(path, value) {
+  await writePrivateFile(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
 async function readRegistry(path) {
+  const target = await privateInputPath(path);
+  return validateRegistry(JSON.parse(await readFile(target, 'utf8')));
+}
+
+async function readFingerprintKey(path) {
+  const target = await privateInputPath(path);
+  const value = (await readFile(target, 'utf8')).trim();
+  validateFingerprintKey(value);
+  return value;
+}
+
+async function privateInputPath(path) {
   const target = await realpath(resolve(path));
   await assertOutsideRepository(target);
-  return validateRegistry(JSON.parse(await readFile(target, 'utf8')));
+  const metadata = await stat(target);
+  if (!metadata.isFile() || (metadata.mode & 0o077) !== 0) {
+    throw new Error('Private social proof inputs must be owner-only regular files');
+  }
+  return target;
 }
 
 async function privateOutputPath(path) {
@@ -130,119 +105,11 @@ async function privateOutputPath(path) {
 }
 
 async function assertOutsideRepository(path) {
-  const repository = await realpath(process.cwd());
+  const repository = await realpath(REPOSITORY_ROOT);
   const relation = relative(repository, path);
   if (relation === '' || (!relation.startsWith('..') && !isAbsolute(relation))) {
     throw new Error('Private social proof files must be outside the repository');
   }
-}
-
-function validateRegistryEntry(entry) {
-  if (!isObject(entry) || !STATUS_VALUES.has(entry.status)) {
-    throw new Error('Invalid consent registry entry');
-  }
-  assertPositiveInteger(entry.installationId);
-  assertIsoDate(entry.updatedAt);
-
-  const expected =
-    entry.status === 'approved'
-      ? ['installationId', 'status', 'updatedAt', 'approval']
-      : ['installationId', 'status', 'updatedAt'];
-  if (!hasExactKeys(entry, expected)) throw new Error('Invalid consent registry entry');
-  if (entry.status === 'approved') validateApproval(entry.approval);
-}
-
-function validateApproval(approval) {
-  if (
-    !isObject(approval) ||
-    !hasExactKeys(approval, [
-      'approvedAt',
-      'authorizedRepresentativeConfirmed',
-      'evidenceReference',
-      'publicProfile',
-    ]) ||
-    approval.authorizedRepresentativeConfirmed !== true ||
-    typeof approval.evidenceReference !== 'string' ||
-    approval.evidenceReference.trim() === ''
-  ) {
-    throw new Error('Invalid social proof approval');
-  }
-  assertIsoDate(approval.approvedAt);
-  validatePublicProfile(approval.publicProfile);
-}
-
-function validatePublicProfile(profile) {
-  if (!isObject(profile)) throw new Error('Invalid approved public profile');
-  const allowed = ['displayName', 'url', 'logoUrl', 'quote', 'attribution'];
-  const keys = Object.keys(profile);
-  if (
-    !keys.includes('displayName') ||
-    !keys.includes('url') ||
-    keys.some(key => !allowed.includes(key))
-  ) {
-    throw new Error('Invalid approved public profile');
-  }
-  for (const key of keys) {
-    if (typeof profile[key] !== 'string' || profile[key].trim() === '') {
-      throw new Error('Invalid approved public profile');
-    }
-  }
-  assertHttpUrl(profile.url);
-  if (profile.logoUrl) assertHttpUrl(profile.logoUrl);
-}
-
-function validateInstallationRecord(record) {
-  if (
-    !isObject(record) ||
-    !hasExactKeys(record, ['schemaVersion', 'installationId', 'account', 'installedAt']) ||
-    record.schemaVersion !== 1 ||
-    !isObject(record.account) ||
-    !hasExactKeys(record.account, ['login', 'type', 'profileUrl']) ||
-    typeof record.account.login !== 'string' ||
-    !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,98}[A-Za-z0-9])?$/.test(record.account.login) ||
-    !['User', 'Organization'].includes(record.account.type)
-  ) {
-    throw new Error('Invalid installation record');
-  }
-  assertPositiveInteger(record.installationId);
-  assertIsoDate(record.installedAt);
-  const expectedUrl = `https://github.com/${record.account.login}`;
-  if (![expectedUrl, `${expectedUrl}/`].includes(record.account.profileUrl)) {
-    throw new Error('Invalid installation record');
-  }
-  return record;
-}
-
-function hasExactKeys(value, expected) {
-  return Object.keys(value).sort().join('\0') === [...expected].sort().join('\0');
-}
-
-function isObject(value) {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function assertPositiveInteger(value) {
-  if (!Number.isSafeInteger(value) || value <= 0) throw new Error('Invalid installation ID');
-}
-
-function assertIsoDate(value) {
-  if (typeof value !== 'string' || new Date(value).toISOString() !== value) {
-    throw new Error('Invalid timestamp');
-  }
-}
-
-function assertHttpUrl(value) {
-  const url = new URL(value);
-  if (url.protocol !== 'https:' || url.username || url.password) {
-    throw new Error('Invalid public URL');
-  }
-}
-
-function normalizeExcludedLogin(value) {
-  if (typeof value !== 'string' || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,98}[A-Za-z0-9])?$/.test(value)) {
-    throw new Error('Invalid excluded account');
-  }
-  return value.toLocaleLowerCase('en-US');
 }
 
 function parseOptions(args) {
@@ -256,33 +123,42 @@ function parseOptions(args) {
   return options;
 }
 
-export async function runCli(args) {
+export async function runCli(args, dependencies = {}) {
+  const readRecords = dependencies.readInstallationRecords ?? readInstallationRecords;
+  const showReview =
+    dependencies.showReview ?? (review => console.log(JSON.stringify(review, null, 2)));
   const [command, ...rawOptions] = args;
   const options = parseOptions(rawOptions);
-  if (command === 'init' && options.output) {
-    await writePrivateJson(options.output, { schemaVersion: 1, entries: [] });
-    return 'Created an empty private consent registry.';
+
+  if (command === 'init' && options.registry && options.key) {
+    const key = randomBytes(32).toString('base64url');
+    await writePrivateFile(options.key, `${key}\n`);
+    await writePrivateJson(options.registry, { schemaVersion: 1, entries: [] });
+    return 'Created a private consent registry and account-fingerprint key.';
   }
-  if (command === 'prepare' && options.registry && options.output) {
-    const report = buildCandidateReport(
-      await readInstallationRecords(),
+  if (command === 'review' && options.registry && options.key && options.exclude) {
+    const review = buildCandidateReview(
+      await readRecords(),
       await readRegistry(options.registry),
       options.exclude
-        ?.split(',')
+        .split(',')
         .map(value => value.trim())
-        .filter(Boolean) ?? []
+        .filter(Boolean),
+      await readFingerprintKey(options.key)
     );
-    await writePrivateJson(options.output, report);
-    return `Created a private outreach report with ${report.candidates.length} candidate(s).`;
+    showReview(review);
+    return `Reviewed ${review.candidates.length} outreach candidate(s) without saving identities.`;
   }
   if (command === 'export-approved' && options.registry && options.output) {
     const output = buildApprovedExport(await readRegistry(options.registry));
     await writePrivateJson(options.output, output);
     return `Created an approved-only public export with ${output.apps.length} app(s).`;
   }
-  throw new Error(
-    'Usage: init|prepare|export-approved with --registry, --output, and prepare --exclude'
-  );
+  throw new Error('Usage: init|review|export-approved with the documented private-file options');
+}
+
+function isObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
