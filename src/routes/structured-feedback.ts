@@ -14,6 +14,8 @@ import type {
   StructuredFeedbackSectionFormat,
 } from '../types';
 import { parseAppVersion } from '../app-version';
+import { scheduleSuccessfulFeedbackCount } from '../lib/feedback-counter';
+import { isCanonicalGitHubIssue } from '../lib/github-issue-result';
 
 const STRUCTURED_KIND = 'bugdrop.variant-submission';
 const STRUCTURED_SCHEMA_VERSION = 1;
@@ -144,13 +146,11 @@ export async function handleStructuredFeedback(c: StructuredContext, input: unkn
       issue = await createIssue(token, owner, repo, payload.issue.title, body, fallbackLabels);
     }
 
-    if (
-      !Number.isInteger(issue.number) ||
-      issue.number <= 0 ||
-      !isCanonicalIssueUrl(issue.html_url, owner, repo, issue.number)
-    ) {
+    if (!isCanonicalGitHubIssue(issue, owner, repo)) {
       throw new Error('GitHub returned an invalid Issue result');
     }
+
+    scheduleSuccessfulFeedbackCount(c.env, payload.repo, c);
 
     return c.json({
       success: true,
@@ -592,29 +592,6 @@ function formatInlineCode(value: string): string {
 
 function formatLabelList(labels: string[]): string {
   return labels.map(formatInlineCode).join(', ');
-}
-
-function isCanonicalIssueUrl(
-  url: string,
-  owner: string,
-  repo: string,
-  issueNumber: number
-): boolean {
-  try {
-    const parsed = new URL(url);
-    const expectedPath = `/${owner}/${repo}/issues/${issueNumber}`.toLocaleLowerCase('en-US');
-    return (
-      parsed.protocol === 'https:' &&
-      parsed.hostname === 'github.com' &&
-      parsed.username === '' &&
-      parsed.password === '' &&
-      parsed.search === '' &&
-      parsed.hash === '' &&
-      parsed.pathname.toLocaleLowerCase('en-US') === expectedPath
-    );
-  } catch {
-    return false;
-  }
 }
 
 function collapseWhitespace(value: string): string {

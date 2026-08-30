@@ -147,7 +147,12 @@ The only network requests BugDrop makes are:
 2. Submitting the feedback form to the BugDrop Cloudflare Worker API
 
 The API receives the form data, creates the issue and uploads its files, then discards the
-feedback content. The hosted service separately keeps short-lived rate-limit counters; see
+feedback content. After GitHub confirms Issue creation, the hosted service increments one
+anonymous global counter. The counter contains no account, repository, Issue, reporter, or
+submission data. To make delivery retries safe, it retains a bounded set of recent random
+deduplication tokens that encode no submission information. BugDrop excludes its first-party/test
+owners and publishes the total only as a rounded, defensible lower bound. The hosted service
+separately keeps short-lived rate-limit counters; see
 the [Privacy Policy](https://github.com/mean-weasel/bugdrop/blob/main/PRIVACY.md) for the
 complete data-handling and retention details.
 

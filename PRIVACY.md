@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated:** August 28, 2026
+**Last updated:** August 30, 2026
 
 BugDrop is an open-source feedback widget that creates GitHub Issues. This policy covers
 the hosted BugDrop widget and service, as well as the BugDrop website at
@@ -130,9 +130,14 @@ The hosted service temporarily stores rate-limit counters to prevent abuse:
 - A counter keyed by the destination repository name expires one hour after its most
   recent update.
 
-These identifiers are used only to enforce submission limits and are not used for product
-analytics. Cloudflare may also temporarily process request and network metadata, including
-request paths, for service delivery, security, and operational logs.
+The anonymous feedback total also retains up to 1,024 recent random deduplication tokens
+so a delivery retry cannot increment the total twice. The tokens encode no account,
+repository, Issue, reporter, or submission information and are replaced as newer tokens
+arrive.
+
+The rate-limit identifiers are used only to enforce submission limits and are not used for
+product analytics. Cloudflare may also temporarily process request and network metadata,
+including request paths, for service delivery, security, and operational logs.
 
 ## Retention
 
@@ -143,6 +148,7 @@ request paths, for service delivery, security, and operational logs.
   app is uninstalled. A scheduled cleanup independently removes records for installations
   GitHub no longer reports as active.
 - Anonymous aggregate totals may be retained indefinitely.
+- Random feedback-counter deduplication tokens are limited to the 1,024 most recent values.
 - Testimonial and contact information provided with explicit permission is retained until
   that permission is withdrawn or the information is no longer needed.
 - Website analytics identifiers stored in the browser remain until the visitor clears the

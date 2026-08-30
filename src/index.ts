@@ -6,6 +6,8 @@ import githubWebhook from './routes/github-webhook';
 import { createBoardDogfoodToken } from './lib/boardDogfood';
 import { sweepInstallationRecords } from './lib/installation-retention';
 
+export { FeedbackCounter } from './lib/feedback-counter';
+
 const app = new Hono<{ Bindings: Env }>();
 
 // Log warning about missing credentials (but don't block non-authenticated routes)
