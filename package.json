@@ -32,6 +32,7 @@
     "build:widget": "node scripts/build-widget.js",
     "deploy": "wrangler deploy",
     "render:board-gallery": "node scripts/render-board-gallery.mjs",
+    "social-proof:consent": "node scripts/social-proof-consent.mjs",
     "verify:legacy-compat": "node scripts/verify-legacy-compat.mjs",
     "release:plan": "node scripts/release/plan.mjs",
     "release:live": "node scripts/release/live-release.mjs",
