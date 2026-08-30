@@ -135,9 +135,9 @@ so a delivery retry cannot increment the total twice. The tokens encode no accou
 repository, Issue, reporter, or submission information and are replaced as newer tokens
 arrive.
 
-These identifiers are used only to enforce submission limits and are not used for product
-analytics. Cloudflare may also temporarily process request and network metadata, including
-request paths, for service delivery, security, and operational logs.
+The rate-limit identifiers are used only to enforce submission limits and are not used for
+product analytics. Cloudflare may also temporarily process request and network metadata,
+including request paths, for service delivery, security, and operational logs.
 
 ## Retention
 
