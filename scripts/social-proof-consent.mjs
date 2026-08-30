@@ -10,6 +10,7 @@ import {
   createEmptyRegistry,
   validateFingerprintKey,
   validateRegistry,
+  validateRegistryKey,
 } from './social-proof-consent-lib.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -167,14 +168,18 @@ export async function runCli(args, dependencies = {}) {
     return 'Created a private consent registry and account-fingerprint key.';
   }
   if (command === 'review' && options.registry && options.key && options.exclude) {
+    const registry = await readRegistry(options.registry);
+    const fingerprintKey = await readFingerprintKey(options.key);
+    validateRegistryKey(registry, fingerprintKey);
+    const records = await readRecords();
     const review = buildCandidateReview(
-      await readRecords(),
-      await readRegistry(options.registry),
+      records,
+      registry,
       options.exclude
         .split(',')
         .map(value => value.trim())
         .filter(Boolean),
-      await readFingerprintKey(options.key)
+      fingerprintKey
     );
     showReview(review);
     return `Reviewed ${review.candidates.length} outreach candidate(s) without saving identities.`;

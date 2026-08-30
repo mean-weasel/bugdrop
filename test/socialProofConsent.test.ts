@@ -169,6 +169,32 @@ describe('social proof consent workflow', () => {
     expect(await readdir(directory)).toEqual(['fingerprint.key', 'registry.json']);
   });
 
+  it('does not read production records before private inputs pass validation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bugdrop-consent-order-'));
+    let reads = 0;
+
+    await expect(
+      runCli(
+        [
+          'review',
+          '--registry',
+          join(directory, 'missing-registry.json'),
+          '--key',
+          join(directory, 'missing.key'),
+          '--exclude',
+          'owned-account',
+        ],
+        {
+          readInstallationRecords: async () => {
+            reads += 1;
+            return [record(1, 'candidate-app')];
+          },
+        }
+      )
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(reads).toBe(0);
+  });
+
   it('refuses a fingerprint key that is readable by other users', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'bugdrop-consent-permissions-'));
     const registry = join(directory, 'registry.json');

@@ -30,7 +30,7 @@ export function buildCandidateReview(
   generatedAt = new Date().toISOString()
 ) {
   validateRegistry(registry);
-  assertRegistryKey(registry, fingerprintKey);
+  validateRegistryKey(registry, fingerprintKey);
   assertIsoDate(generatedAt);
   if (!Array.isArray(excludedLogins) || excludedLogins.length === 0) {
     throw new Error('At least one owned or test account must be excluded');
@@ -99,7 +99,8 @@ export function validateFingerprintKey(value) {
   return decoded;
 }
 
-function assertRegistryKey(registry, fingerprintKey) {
+export function validateRegistryKey(registry, fingerprintKey) {
+  validateRegistry(registry);
   const actual = Buffer.from(registry.keyVerifier, 'hex');
   const expected = Buffer.from(keyVerifier(fingerprintKey), 'hex');
   if (!timingSafeEqual(actual, expected)) {
