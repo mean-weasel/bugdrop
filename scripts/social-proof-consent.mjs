@@ -8,6 +8,7 @@ import {
   buildApprovedExport,
   buildCandidateReview,
   createEmptyRegistry,
+  validateExcludedLogins,
   validateFingerprintKey,
   validateRegistry,
   validateRegistryKey,
@@ -168,19 +169,17 @@ export async function runCli(args, dependencies = {}) {
     return 'Created a private consent registry and account-fingerprint key.';
   }
   if (command === 'review' && options.registry && options.key && options.exclude) {
+    const excludedLogins = validateExcludedLogins(
+      options.exclude
+        .split(',')
+        .map(value => value.trim())
+        .filter(Boolean)
+    );
     const registry = await readRegistry(options.registry);
     const fingerprintKey = await readFingerprintKey(options.key);
     validateRegistryKey(registry, fingerprintKey);
     const records = await readRecords();
-    const review = buildCandidateReview(
-      records,
-      registry,
-      options.exclude
-        .split(',')
-        .map(value => value.trim())
-        .filter(Boolean),
-      fingerprintKey
-    );
+    const review = buildCandidateReview(records, registry, excludedLogins, fingerprintKey);
     showReview(review);
     return `Reviewed ${review.candidates.length} outreach candidate(s) without saving identities.`;
   }

@@ -195,6 +195,27 @@ describe('social proof consent workflow', () => {
     expect(reads).toBe(0);
   });
 
+  it('does not read production records before exclusions pass validation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bugdrop-consent-exclusions-'));
+    const registry = join(directory, 'registry.json');
+    const key = join(directory, 'fingerprint.key');
+    await runCli(['init', '--registry', registry, '--key', key]);
+    let reads = 0;
+    const dependencies = {
+      readInstallationRecords: async () => {
+        reads += 1;
+        return [record(1, 'candidate-app')];
+      },
+    };
+
+    for (const exclude of [', ,', 'not a github login']) {
+      await expect(
+        runCli(['review', '--registry', registry, '--key', key, '--exclude', exclude], dependencies)
+      ).rejects.toThrow();
+    }
+    expect(reads).toBe(0);
+  });
+
   it('refuses a fingerprint key that is readable by other users', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'bugdrop-consent-permissions-'));
     const registry = join(directory, 'registry.json');

@@ -32,10 +32,7 @@ export function buildCandidateReview(
   validateRegistry(registry);
   validateRegistryKey(registry, fingerprintKey);
   assertIsoDate(generatedAt);
-  if (!Array.isArray(excludedLogins) || excludedLogins.length === 0) {
-    throw new Error('At least one owned or test account must be excluded');
-  }
-  const excluded = new Set(excludedLogins.map(normalizeGitHubLogin));
+  const excluded = new Set(validateExcludedLogins(excludedLogins));
   const decided = registry.entries.map(entry => Buffer.from(entry.accountFingerprint, 'hex'));
   const eligible = records
     .map(validateInstallationRecord)
@@ -97,6 +94,13 @@ export function validateFingerprintKey(value) {
   const decoded = Buffer.from(value, 'base64url');
   if (decoded.length !== 32) throw new Error('Invalid social proof fingerprint key');
   return decoded;
+}
+
+export function validateExcludedLogins(values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new Error('At least one owned or test account must be excluded');
+  }
+  return values.map(normalizeGitHubLogin);
 }
 
 export function validateRegistryKey(registry, fingerprintKey) {
