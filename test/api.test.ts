@@ -22,6 +22,10 @@ class TestGitHubLabelError extends Error {
 
 vi.mock('../src/lib/github', () => ({
   getInstallationToken: (...args: unknown[]) => mockGetInstallationToken(...args),
+  getInstallationAccess: async (...args: unknown[]) => {
+    const token = await mockGetInstallationToken(...args);
+    return token ? { token, installationId: 123456 } : null;
+  },
   createIssue: (...args: unknown[]) => mockCreateIssue(...args),
   uploadScreenshotAsAsset: (...args: unknown[]) => mockUploadScreenshotAsAsset(...args),
   uploadAttachmentAsAsset: (...args: unknown[]) => mockUploadAttachmentAsAsset(...args),

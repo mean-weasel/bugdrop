@@ -10,6 +10,7 @@ import type {
 import { redactConsoleLogMessage } from '../widget/console-log-redaction';
 import {
   getInstallationToken,
+  getInstallationAccess,
   createIssue,
   uploadScreenshotAsAsset,
   uploadAttachmentAsAsset,
@@ -281,8 +282,8 @@ api.post('/feedback', async c => {
 
   try {
     // Get installation token
-    const token = await getInstallationToken(c.env, owner, repo);
-    if (!token) {
+    const access = await getInstallationAccess(c.env, owner, repo);
+    if (!access) {
       const appName = c.env.GITHUB_APP_NAME || 'your-app-name';
       return c.json(
         {
@@ -292,6 +293,7 @@ api.post('/feedback', async c => {
         403
       );
     }
+    const { token, installationId } = access;
 
     // Upload screenshot as file and get URL
     let screenshotUrl: string | undefined;
@@ -370,7 +372,7 @@ api.post('/feedback', async c => {
       throw new Error('GitHub returned an invalid Issue result');
     }
 
-    scheduleSuccessfulFeedbackCount(c.env, payload.repo, c);
+    scheduleSuccessfulFeedbackCount(c.env, payload.repo, c, installationId);
 
     return c.json({
       success: true,

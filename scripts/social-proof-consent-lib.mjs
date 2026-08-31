@@ -27,20 +27,33 @@ export function buildCandidateReview(
   registry,
   excludedLogins,
   fingerprintKey,
-  generatedAt = new Date().toISOString()
+  generatedAt = new Date().toISOString(),
+  usageRecords = []
 ) {
   validateRegistry(registry);
   validateRegistryKey(registry, fingerprintKey);
   assertIsoDate(generatedAt);
   const excluded = new Set(validateExcludedLogins(excludedLogins));
+  const usageByInstallation = new Map();
+  for (const record of usageRecords) {
+    const valid = validateInstallationUsageRecord(record);
+    if (usageByInstallation.has(valid.installationId)) {
+      throw new Error('Duplicate installation usage record');
+    }
+    usageByInstallation.set(valid.installationId, valid.successfulFeedbackCount);
+  }
   const decided = registry.entries.map(entry => Buffer.from(entry.accountFingerprint, 'hex'));
   const eligible = records
     .map(validateInstallationRecord)
-    .map(record => ({
-      account: record.account,
-      installedAt: record.installedAt,
-      accountFingerprint: fingerprintAccount(record.account.login, fingerprintKey),
-    }))
+    .map(record => {
+      const successfulFeedbackCount = usageByInstallation.get(record.installationId);
+      return {
+        account: record.account,
+        installedAt: record.installedAt,
+        accountFingerprint: fingerprintAccount(record.account.login, fingerprintKey),
+        ...(successfulFeedbackCount === undefined ? {} : { successfulFeedbackCount }),
+      };
+    })
     .filter(
       record =>
         !excluded.has(record.account.login.toLocaleLowerCase('en-US')) &&
@@ -56,11 +69,24 @@ export function buildCandidateReview(
       candidatesByAccount.set(candidate.accountFingerprint, candidate);
     }
   }
-  const candidates = [...candidatesByAccount.values()].sort((a, b) =>
-    a.installedAt.localeCompare(b.installedAt)
-  );
+  const candidates = [...candidatesByAccount.values()].sort(compareCandidatePriority);
 
   return { schemaVersion: 1, generatedAt, candidates };
+}
+
+export function validateInstallationUsageRecord(record) {
+  if (
+    !isObject(record) ||
+    !hasExactKeys(record, ['schemaVersion', 'installationId', 'successfulFeedbackCount']) ||
+    record.schemaVersion !== 1
+  ) {
+    throw new Error('Invalid installation usage record');
+  }
+  assertPositiveInteger(record.installationId);
+  if (!Number.isSafeInteger(record.successfulFeedbackCount) || record.successfulFeedbackCount < 0) {
+    throw new Error('Invalid installation usage record');
+  }
+  return record;
 }
 
 export function buildApprovedExport(registry, generatedAt = new Date().toISOString()) {
@@ -191,6 +217,16 @@ function validateInstallationRecord(record) {
     throw new Error('Invalid installation record');
   }
   return record;
+}
+
+function compareCandidatePriority(a, b) {
+  const aKnown = Number.isSafeInteger(a.successfulFeedbackCount);
+  const bKnown = Number.isSafeInteger(b.successfulFeedbackCount);
+  if (aKnown !== bKnown) return aKnown ? -1 : 1;
+  if (aKnown && a.successfulFeedbackCount !== b.successfulFeedbackCount) {
+    return b.successfulFeedbackCount - a.successfulFeedbackCount;
+  }
+  return b.installedAt.localeCompare(a.installedAt);
 }
 
 function normalizeGitHubLogin(value) {

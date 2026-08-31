@@ -1,4 +1,11 @@
 import type { Env } from '../types';
+import { installationUsageEnabled } from './installation-usage';
+import {
+  handleInstallationAlarm,
+  handleInstallationDeletion,
+  handleInstallationIncrement,
+  handleInstallationPurge,
+} from './installation-feedback-counter';
 
 const COUNTER_OBJECT_NAME = 'global-feedback-issues-created';
 const COUNTER_STORAGE_KEY = 'total';
@@ -6,6 +13,7 @@ const RECENT_EVENT_IDS_STORAGE_KEY = 'recentEventIds';
 const MAX_RECENT_EVENT_IDS = 1024;
 const MAX_INCREMENT_ATTEMPTS = 3;
 const PUBLIC_BUCKET_SIZE = 100;
+const INSTALLATION_COUNTER_OBJECT_PREFIX = 'installation-feedback:';
 
 type WaitUntilContext = {
   readonly executionCtx: Pick<ExecutionContext, 'waitUntil'>;
@@ -42,6 +50,18 @@ export class FeedbackCounter {
       return Response.json({ total });
     }
 
+    if (request.method === 'POST' && pathname === '/installation/increment') {
+      return handleInstallationIncrement(this.state, this.env, request);
+    }
+
+    if (request.method === 'POST' && pathname === '/installation/delete') {
+      return handleInstallationDeletion(this.state);
+    }
+
+    if (request.method === 'POST' && pathname === '/installation/purge') {
+      return handleInstallationPurge(this.state);
+    }
+
     if (request.method === 'GET' && pathname === '/total') {
       const total =
         (await this.state.storage.get<number>(COUNTER_STORAGE_KEY)) ??
@@ -51,20 +71,42 @@ export class FeedbackCounter {
 
     return new Response('Not found', { status: 404 });
   }
+
+  async alarm(): Promise<void> {
+    await handleInstallationAlarm(this.state, this.env);
+  }
 }
 
 export function scheduleSuccessfulFeedbackCount(
   env: Env,
   repo: string,
-  context?: WaitUntilContext
+  context?: WaitUntilContext,
+  installationId?: number
 ): void {
-  if (!env.FEEDBACK_COUNTER || isExcludedFromFeedbackCount(env, repo)) return;
+  if (!env.FEEDBACK_COUNTER) return;
 
   const eventId = crypto.randomUUID();
-  const task = incrementFeedbackCount(env, eventId).catch(error => {
-    console.error('[BugDrop] Failed to increment anonymous feedback counter:', error);
-    throw error;
-  });
+  const tasks: Promise<void>[] = [];
+  if (!isExcludedFromFeedbackCount(env, repo)) tasks.push(incrementFeedbackCount(env, eventId));
+  if (
+    installationUsageEnabled(env) &&
+    Number.isSafeInteger(installationId) &&
+    (installationId as number) > 0
+  ) {
+    tasks.push(incrementInstallationFeedbackCount(env, installationId as number, eventId));
+  }
+  if (tasks.length === 0) return;
+  const task = Promise.allSettled(tasks)
+    .then(results => {
+      const failure = results.find(
+        (result): result is PromiseRejectedResult => result.status === 'rejected'
+      );
+      if (failure) throw failure.reason;
+    })
+    .catch(error => {
+      console.error('[BugDrop] Failed to record successful feedback count:', error);
+      throw error;
+    });
 
   try {
     if (context) {
@@ -76,6 +118,34 @@ export function scheduleSuccessfulFeedbackCount(
     // Hono unit tests do not provide an ExecutionContext. The task has already
     // started; prevent an unhandled rejection when no runtime can observe it.
     void task.catch(() => undefined);
+  }
+}
+
+export async function deleteInstallationFeedbackCounter(
+  env: Env,
+  installationId: number
+): Promise<void> {
+  if (!env.FEEDBACK_COUNTER) throw new Error('Feedback counter binding is unavailable');
+  const response = await getInstallationCounterStub(env, installationId).fetch(
+    'https://feedback-counter/installation/delete',
+    { method: 'POST' }
+  );
+  if (!response.ok) {
+    throw new Error(`Installation feedback counter deletion failed with ${response.status}`);
+  }
+}
+
+export async function purgeInstallationFeedbackCounter(
+  env: Env,
+  installationId: number
+): Promise<void> {
+  if (!env.FEEDBACK_COUNTER) throw new Error('Feedback counter binding is unavailable');
+  const response = await getInstallationCounterStub(env, installationId).fetch(
+    'https://feedback-counter/installation/purge',
+    { method: 'POST' }
+  );
+  if (!response.ok) {
+    throw new Error(`Installation feedback counter purge failed with ${response.status}`);
   }
 }
 
@@ -119,23 +189,50 @@ export function isExcludedFromFeedbackCount(env: Env, repo: string): boolean {
 }
 
 async function incrementFeedbackCount(env: Env, eventId: string): Promise<void> {
+  const stub = getCounterStub(env);
+  const init: RequestInit = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventId }),
+  };
+  await sendCounterIncrementWithRetries(
+    () => stub.fetch('https://feedback-counter/increment', init),
+    'Feedback counter increment'
+  );
+}
+
+async function incrementInstallationFeedbackCount(
+  env: Env,
+  installationId: number,
+  eventId: string
+): Promise<void> {
+  const stub = getInstallationCounterStub(env, installationId);
+  const init: RequestInit = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventId, installationId }),
+  };
+  await sendCounterIncrementWithRetries(
+    () => stub.fetch('https://feedback-counter/installation/increment', init),
+    'Installation feedback counter increment'
+  );
+}
+
+async function sendCounterIncrementWithRetries(
+  send: () => Promise<Response>,
+  failureLabel: string
+): Promise<void> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= MAX_INCREMENT_ATTEMPTS; attempt += 1) {
     try {
-      const response = await getCounterStub(env).fetch('https://feedback-counter/increment', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ eventId }),
-      });
-      if (!response.ok) {
-        throw new Error(`Feedback counter increment failed with ${response.status}`);
-      }
+      const response = await send();
+      if (!response.ok) throw new Error(`${failureLabel} failed with ${response.status}`);
       return;
     } catch (error) {
       lastError = error;
     }
   }
-  throw lastError ?? new Error('Feedback counter increment failed');
+  throw lastError ?? new Error(`${failureLabel} failed`);
 }
 
 async function parseEventId(request: Request): Promise<string | null> {
@@ -156,4 +253,15 @@ function getCounterStub(env: Env): DurableObjectStub {
   const namespace = env.FEEDBACK_COUNTER;
   if (!namespace) throw new Error('Feedback counter binding is unavailable');
   return namespace.get(namespace.idFromName(COUNTER_OBJECT_NAME));
+}
+
+function getInstallationCounterStub(env: Env, installationId: number): DurableObjectStub {
+  if (!Number.isSafeInteger(installationId) || installationId <= 0) {
+    throw new Error('Invalid installation ID');
+  }
+  const namespace = env.FEEDBACK_COUNTER;
+  if (!namespace) throw new Error('Feedback counter binding is unavailable');
+  return namespace.get(
+    namespace.idFromName(`${INSTALLATION_COUNTER_OBJECT_PREFIX}${installationId}`)
+  );
 }

@@ -1,4 +1,4 @@
-import { installationRecordKey } from './installation-retention';
+export const INSTALLATION_RECORD_PREFIX = 'installation:';
 
 type InstallationAccountType = 'User' | 'Organization';
 
@@ -17,6 +17,13 @@ export interface NewInstallationRecord {
   installationId: number;
   account: InstallationIdentityRecord['account'];
   installedAt: string;
+}
+
+export function installationRecordKey(installationId: number): string {
+  if (!Number.isSafeInteger(installationId) || installationId <= 0) {
+    throw new Error('Invalid installation ID');
+  }
+  return `${INSTALLATION_RECORD_PREFIX}${installationId}`;
 }
 
 export async function createInstallationRecord(

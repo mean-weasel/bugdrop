@@ -3,6 +3,7 @@ import type { Env } from '../src/types';
 import {
   INSTALLATION_CLEANUP_AUDIT_KEY,
   INSTALLATION_CLEANUP_CHECKPOINT_KEY,
+  deleteInstallationData,
   listActiveGitHubInstallationIds,
   sweepInstallationRecords,
   verifyGitHubWebhookSignature,
@@ -13,6 +14,15 @@ const githubWebhook = createGitHubWebhook({
   confirmInstallationIsInactive: vi.fn().mockResolvedValue(false),
 });
 
+function createCounterNamespace(
+  fetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+): DurableObjectNamespace {
+  return {
+    idFromName: vi.fn().mockReturnValue({} as DurableObjectId),
+    get: vi.fn().mockReturnValue({ fetch }),
+  } as unknown as DurableObjectNamespace;
+}
+
 const baseEnv: Env = {
   GITHUB_APP_ID: '123',
   GITHUB_PRIVATE_KEY: 'test-private-key',
@@ -22,6 +32,7 @@ const baseEnv: Env = {
   GITHUB_APP_NAME: 'test-bugdrop-app',
   MAX_SCREENSHOT_SIZE_MB: '5',
   ASSETS: {} as Fetcher,
+  FEEDBACK_COUNTER: createCounterNamespace(),
 };
 
 function createStore(overrides: Partial<KVNamespace> = {}): KVNamespace {
@@ -67,6 +78,99 @@ describe('installation retention safeguards', () => {
     ).resolves.toBe(false);
   });
 
+  it('deletes usage before identity so partial cleanup remains retryable', async () => {
+    const operations: string[] = [];
+    const store = createStore({
+      put: vi.fn(async (key: string) => {
+        operations.push(`put:${key}`);
+      }),
+      delete: vi.fn(async (key: string) => {
+        operations.push(`delete:${key}`);
+      }),
+    });
+    const namespace = {
+      idFromName: vi.fn().mockReturnValue({} as DurableObjectId),
+      get: vi.fn().mockReturnValue({
+        fetch: vi.fn(async () => {
+          operations.push('delete:durable-counter');
+          return new Response(null, { status: 204 });
+        }),
+      }),
+    } as unknown as DurableObjectNamespace;
+
+    await deleteInstallationData(
+      {
+        ...baseEnv,
+        INSTALLATION_ANALYTICS: store,
+        FEEDBACK_COUNTER: namespace,
+        INSTALLATION_USAGE_ENABLED: 'true',
+      },
+      42
+    );
+
+    expect(operations).toEqual([
+      'put:installation-usage-deleted:42',
+      'delete:durable-counter',
+      'delete:installation-usage:42',
+      'delete:installation:42',
+    ]);
+  });
+
+  it('purges old usage without creating guards while collection is disabled', async () => {
+    const operations: string[] = [];
+    const store = createStore({
+      put: vi.fn(async (key: string) => {
+        operations.push(`put:${key}`);
+      }),
+      delete: vi.fn(async (key: string) => {
+        operations.push(`delete:${key}`);
+      }),
+    });
+    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+      operations.push(`counter:${String(request)}`);
+      return new Response(null, { status: 204 });
+    });
+
+    await deleteInstallationData(
+      {
+        ...baseEnv,
+        INSTALLATION_ANALYTICS: store,
+        FEEDBACK_COUNTER: createCounterNamespace(fetch),
+      },
+      42
+    );
+
+    expect(operations).toEqual([
+      'counter:https://feedback-counter/installation/purge',
+      'delete:installation-usage:42',
+      'delete:installation:42',
+    ]);
+  });
+
+  it('keeps the installation identity when counter cleanup fails', async () => {
+    const store = createStore();
+    const namespace = {
+      idFromName: vi.fn().mockReturnValue({} as DurableObjectId),
+      get: vi.fn().mockReturnValue({
+        fetch: vi.fn().mockResolvedValue(new Response(null, { status: 500 })),
+      }),
+    } as unknown as DurableObjectNamespace;
+
+    await expect(
+      deleteInstallationData(
+        {
+          ...baseEnv,
+          INSTALLATION_ANALYTICS: store,
+          FEEDBACK_COUNTER: namespace,
+          INSTALLATION_USAGE_ENABLED: 'true',
+        },
+        42
+      )
+    ).rejects.toThrow('deletion failed');
+
+    expect(store.delete).not.toHaveBeenCalledWith('installation:42');
+  });
+
   it('deletes only the uninstalled app record after authenticating the webhook', async () => {
     const store = createStore();
     const body = JSON.stringify({ action: 'deleted', installation: { id: 987654 } });
@@ -84,8 +188,30 @@ describe('installation retention safeguards', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(store.delete).toHaveBeenCalledExactlyOnceWith('installation:987654');
-    expect(store.put).not.toHaveBeenCalled();
+    expect(store.put).not.toHaveBeenCalledWith(
+      'installation-usage-deleted:987654',
+      expect.anything(),
+      expect.anything()
+    );
+    expect(store.delete).toHaveBeenNthCalledWith(1, 'installation-usage:987654');
+    expect(store.delete).toHaveBeenNthCalledWith(2, 'installation:987654');
+  });
+
+  it('keeps the identity whenever its durable counter binding is unavailable', async () => {
+    const store = createStore();
+
+    await expect(
+      deleteInstallationData(
+        {
+          ...baseEnv,
+          INSTALLATION_ANALYTICS: store,
+          FEEDBACK_COUNTER: undefined,
+        },
+        42
+      )
+    ).rejects.toThrow('binding is required');
+
+    expect(store.delete).not.toHaveBeenCalledWith('installation:42');
   });
 
   it('rejects unsigned deliveries and fails visibly when deletion storage is unavailable', async () => {
@@ -328,7 +454,8 @@ describe('installation retention safeguards', () => {
     expect(response.status).toBe(202);
     expect(confirmInstallationIsInactive).toHaveBeenCalledTimes(2);
     expect(store.put).toHaveBeenCalledOnce();
-    expect(store.delete).toHaveBeenCalledExactlyOnceWith('installation:42');
+    expect(store.delete).toHaveBeenNthCalledWith(1, 'installation-usage:42');
+    expect(store.delete).toHaveBeenNthCalledWith(2, 'installation:42');
   });
 
   it('paginates GitHub’s active-installation list', async () => {
@@ -416,9 +543,10 @@ describe('installation retention safeguards', () => {
       limit: 25,
       cursor: 'next-page',
     });
-    expect(store.delete).toHaveBeenNthCalledWith(1, 'installation:2');
-    expect(store.delete).toHaveBeenNthCalledWith(2, INSTALLATION_CLEANUP_CHECKPOINT_KEY);
-    expect(store.delete).toHaveBeenCalledTimes(2);
+    expect(store.delete).toHaveBeenNthCalledWith(1, 'installation-usage:2');
+    expect(store.delete).toHaveBeenNthCalledWith(2, 'installation:2');
+    expect(store.delete).toHaveBeenNthCalledWith(3, INSTALLATION_CLEANUP_CHECKPOINT_KEY);
+    expect(store.delete).toHaveBeenCalledTimes(3);
     expect(store.put).toHaveBeenNthCalledWith(
       1,
       INSTALLATION_CLEANUP_CHECKPOINT_KEY,

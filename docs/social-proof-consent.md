@@ -12,8 +12,9 @@ authorizes public display from an installation alone.
   inside the repository, including paths reached through a symlinked parent directory, and refuses
   input files readable or writable by other users.
 - Never commit the registry, fingerprint key, permission evidence, or installation identities.
-- Do not add repository information, usage frequency, issue counts, email addresses, or other
-  enrichment to this workflow.
+- Do not add repository information, issue contents, reporter details, email addresses, last-active
+  dates, or other enrichment to this workflow. The only allowed usage signal is the exact count of
+  successful feedback Issues associated with an installation.
 - Contact an app owner at most once unless they reply. Record `contacted`, `declined`, `approved`,
   or `withdrawn` before reviewing candidates again.
 - Publishing requires affirmative permission from an authorized representative. Copy only the
@@ -45,11 +46,13 @@ npm run social-proof:consent -- review \
   --exclude mean-weasel,neonwatty
 ```
 
-The private terminal displays the currently eligible account, profile, installation date, and its
-keyed fingerprint. The command does not save those installation identities to another file. Close
-the terminal session after finishing the review. The command rejects installation records with any
-fields beyond the approved minimal schema. The exclusion list is required so owned and controlled
-test accounts cannot accidentally enter the outreach queue.
+The private terminal displays the currently eligible account, profile, installation date, keyed
+fingerprint, and—when collection was enabled for that installation—the successful-feedback count.
+Known counts are ranked highest first; a missing count is not presented as zero. The command does
+not save installation identities or usage counts to another file. Close the terminal session after
+finishing the review. The command rejects identity and usage records with any fields beyond their
+approved minimal schemas. The exclusion list is required so owned and controlled test accounts
+cannot accidentally enter the outreach queue.
 
 ## Record decisions
 
@@ -80,6 +83,6 @@ npm run social-proof:consent -- export-approved \
   --output /private/path/bugdrop-approved-social-proof.json
 ```
 
-This export contains only approved public profile fields. It omits account fingerprints, private
-evidence references, contact status, and all unapproved apps. Review the output against the
-permission evidence before copying it into the website repository.
+This export contains only approved public profile fields. It omits account fingerprints, usage
+counts, private evidence references, contact status, and all unapproved apps. Review the output
+against the permission evidence before copying it into the website repository.

@@ -46,8 +46,15 @@ async function getInstallationId(env: Env, owner: string, repo: string): Promise
     return null;
   }
 
-  const data = (await response.json()) as { id: number };
-  return data.id;
+  const data = (await response.json()) as { id?: unknown };
+  return typeof data.id === 'number' && Number.isSafeInteger(data.id) && data.id > 0
+    ? data.id
+    : null;
+}
+
+export interface InstallationAccess {
+  installationId: number;
+  token: string;
 }
 
 /**
@@ -58,6 +65,17 @@ export async function getInstallationToken(
   owner: string,
   repo: string
 ): Promise<string | null> {
+  return (await getInstallationAccess(env, owner, repo))?.token ?? null;
+}
+
+/**
+ * Get both the installation ID and its repository-scoped access token.
+ */
+export async function getInstallationAccess(
+  env: Env,
+  owner: string,
+  repo: string
+): Promise<InstallationAccess | null> {
   const installationId = await getInstallationId(env, owner, repo);
   if (!installationId) return null;
 
@@ -73,8 +91,10 @@ export async function getInstallationToken(
     return null;
   }
 
-  const data = (await response.json()) as { token: string };
-  return data.token;
+  const data = (await response.json()) as { token?: unknown };
+  return typeof data.token === 'string' && data.token.length > 0
+    ? { installationId, token: data.token }
+    : null;
 }
 
 /**

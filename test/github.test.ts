@@ -10,6 +10,7 @@ vi.mock('../src/lib/jwt', () => ({ generateGitHubAppJWT: mockGenerateGitHubAppJW
 import {
   GitHubLabelError,
   createIssue,
+  getInstallationAccess,
   getInstallationToken,
   isRepoPublic,
   uploadAttachmentAsAsset,
@@ -135,6 +136,39 @@ describe('GitHub API boundary', () => {
     ]);
     await expect(getInstallationToken(env, 'acme', 'widgets')).resolves.toBeNull();
     await expect(getInstallationToken({} as Env, 'acme', 'widgets')).resolves.toBeNull();
+  });
+
+  it('returns the validated installation ID with its access token', async () => {
+    const env = { GITHUB_APP_ID: '42', GITHUB_PRIVATE_KEY: 'private-key' } as Env;
+    expectRequests([
+      {
+        url: `${API_ROOT}/installation`,
+        token: JWT,
+        response: Response.json({ id: 123 }),
+      },
+      {
+        url: 'https://api.github.com/app/installations/123/access_tokens',
+        method: 'POST',
+        token: JWT,
+        response: Response.json({ token: TOKEN }),
+      },
+    ]);
+
+    await expect(getInstallationAccess(env, 'acme', 'widgets')).resolves.toEqual({
+      installationId: 123,
+      token: TOKEN,
+    });
+
+    for (const id of [0, -1, 1.5, '123', null]) {
+      expectRequests([
+        {
+          url: `${API_ROOT}/installation`,
+          token: JWT,
+          response: Response.json({ id }),
+        },
+      ]);
+      await expect(getInstallationAccess(env, 'acme', 'widgets')).resolves.toBeNull();
+    }
   });
 
   it('creates issues and classifies only structured label validation failures', async () => {

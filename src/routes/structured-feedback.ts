@@ -1,6 +1,6 @@
 /* eslint-disable max-lines -- Keep the isolated structured contract out of the legacy route. */
 import type { Context } from 'hono';
-import { GitHubLabelError, createIssue, getInstallationToken, isRepoPublic } from '../lib/github';
+import { GitHubLabelError, createIssue, getInstallationAccess, isRepoPublic } from '../lib/github';
 import {
   escapeMarkdownLiteral,
   formatMarkdownCodeSpan,
@@ -93,8 +93,8 @@ export async function handleStructuredFeedback(c: StructuredContext, input: unkn
   const [owner, repo] = payload.repo.split('/');
 
   try {
-    const token = await getInstallationToken(c.env, owner, repo);
-    if (!token) {
+    const access = await getInstallationAccess(c.env, owner, repo);
+    if (!access) {
       const appName = c.env.GITHUB_APP_NAME || 'your-app-name';
       return c.json(
         {
@@ -104,6 +104,7 @@ export async function handleStructuredFeedback(c: StructuredContext, input: unkn
         403
       );
     }
+    const { token, installationId } = access;
 
     const labelResolution = resolveVariantLabels(
       c.env.VARIANT_LABELS,
@@ -150,7 +151,7 @@ export async function handleStructuredFeedback(c: StructuredContext, input: unkn
       throw new Error('GitHub returned an invalid Issue result');
     }
 
-    scheduleSuccessfulFeedbackCount(c.env, payload.repo, c);
+    scheduleSuccessfulFeedbackCount(c.env, payload.repo, c, installationId);
 
     return c.json({
       success: true,
