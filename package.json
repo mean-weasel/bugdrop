@@ -101,7 +101,7 @@
     "yaml": "^2.9.0"
   },
   "dependencies": {
-    "hono": "^4.13.3",
+    "hono": "^4.13.5",
     "html-to-image": "^1.11.13"
   }
 }
