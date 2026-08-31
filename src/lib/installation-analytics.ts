@@ -29,13 +29,13 @@ export function installationRecordKey(installationId: number): string {
 export async function createInstallationRecord(
   store: KVNamespace,
   installation: NewInstallationRecord
-): Promise<void> {
+): Promise<boolean> {
   const key = installationRecordKey(installation.installationId);
   const existing = await store.get(key);
   if (existing !== null) {
     const record = parseInstallationIdentityRecord(existing, installation.installationId);
     assertInstallationIdentityRecord(record, installation.installationId);
-    return;
+    return false;
   }
 
   const record: InstallationIdentityRecord = {
@@ -46,6 +46,7 @@ export async function createInstallationRecord(
   };
   assertInstallationIdentityRecord(record, installation.installationId);
   await store.put(key, JSON.stringify(record));
+  return true;
 }
 
 function parseInstallationIdentityRecord(value: string, installationId: number): unknown {

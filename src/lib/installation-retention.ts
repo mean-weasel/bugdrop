@@ -1,6 +1,7 @@
 import { generateGitHubAppJWT } from './jwt';
 import { GITHUB_API, githubHeaders } from './github';
 import { INSTALLATION_RECORD_PREFIX, installationRecordKey } from './installation-analytics';
+import { listActiveGitHubInstallations } from './github-installation-inventory';
 import {
   deleteInstallationFeedbackCounter,
   purgeInstallationFeedbackCounter,
@@ -20,8 +21,7 @@ import type { Env } from '../types';
 
 export type { InstallationCleanupAudit } from './installation-cleanup-state';
 
-const GITHUB_PAGE_SIZE = 100;
-export const MAX_GITHUB_INSTALLATION_PAGES = 20;
+export { MAX_GITHUB_INSTALLATION_PAGES } from './github-installation-inventory';
 export const INSTALLATION_SWEEP_PAGE_SIZE = 25;
 export const MAX_CONCURRENT_CLEANUP_OPERATIONS = 6;
 
@@ -90,41 +90,8 @@ export async function listActiveGitHubInstallationIds(
   env: Env,
   options: GitHubListOptions = {}
 ): Promise<Set<number>> {
-  if (!env.GITHUB_APP_ID || !env.GITHUB_PRIVATE_KEY) {
-    throw new Error('GitHub App credentials are required for installation cleanup');
-  }
-
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const createJwt = options.createJwt ?? generateGitHubAppJWT;
-  const jwt = await createJwt(env.GITHUB_APP_ID, env.GITHUB_PRIVATE_KEY);
-  const activeIds = new Set<number>();
-
-  for (let page = 1; page <= MAX_GITHUB_INSTALLATION_PAGES; page += 1) {
-    const response = await fetchImpl(
-      `${GITHUB_API}/app/installations?per_page=${GITHUB_PAGE_SIZE}&page=${page}`,
-      {
-        headers: githubHeaders(jwt),
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Failed to list GitHub App installations: ${response.status}`);
-    }
-
-    const installations = (await response.json()) as unknown;
-    if (!Array.isArray(installations)) {
-      throw new Error('GitHub returned an invalid installation list');
-    }
-
-    for (const installation of installations) {
-      const id = installationIdFromGitHub(installation);
-      activeIds.add(id);
-    }
-
-    if (installations.length < GITHUB_PAGE_SIZE) return activeIds;
-  }
-
-  throw new Error('GitHub installation pagination exceeded the safety limit');
+  const inventory = await listActiveGitHubInstallations(env, options);
+  return new Set(inventory.installationIds);
 }
 
 export async function confirmGitHubInstallationIsInactive(
@@ -279,17 +246,6 @@ async function listStoredInstallationPage(
   }
 
   return { ids, ...(page.list_complete ? {} : { cursor: page.cursor }) };
-}
-
-function installationIdFromGitHub(value: unknown): number {
-  if (!value || typeof value !== 'object' || !('id' in value)) {
-    throw new Error('GitHub returned an invalid installation record');
-  }
-  const id = (value as { id: unknown }).id;
-  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) {
-    throw new Error('GitHub returned an invalid installation ID');
-  }
-  return id;
 }
 
 function hexToBytes(hex: string): Uint8Array | null {

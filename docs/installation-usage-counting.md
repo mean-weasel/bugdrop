@@ -53,8 +53,17 @@ The mirror is not created until the installation identity record is visible. If 
 still propagating, the Durable Object makes at most 1,440 one-minute retry checks without resetting
 the original budget. The budget is a non-temporal integer; no submission timestamp is stored. If no
 identity arrives, it purges the unanchored counter instead of retaining usage that the scheduled
-cleanup cannot discover. This intentionally favors deletion safety over completeness for a
-pre-tracking installation or a permanently missed installation-created webhook.
+cleanup cannot discover. Before cleanup, the same daily task finds active GitHub App installations
+that lack an identity record and creates those missing records using the approved minimal schema. It stores an
+aggregate-only audit, and reuses the fetched installation set for cleanup. That idempotent repair
+lets installations from before tracking—and installations whose creation webhook was permanently
+missed—begin prospective counting without a reinstall. The reconciliation code also supports a
+non-writing dry run for controlled verification. Active installations without a supported GitHub
+User or Organization identity remain part of cleanup but are skipped by reconciliation and counted
+only in the aggregate audit. Apply repairs at most 25 records at a time and reports the remaining
+aggregate count so large inventories finish safely over later daily runs. Each repair candidate is
+confirmed active immediately after creation; an uninstall racing the repair triggers the
+same complete identity-and-usage cleanup as an uninstall webhook.
 
 Delivery uses one opaque event ID across retries, so an ambiguous retry does not increment twice.
 It has the same best-effort delivery boundary as the existing anonymous public counter; it is not a
