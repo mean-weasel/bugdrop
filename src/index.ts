@@ -5,6 +5,8 @@ import api from './routes/api';
 import githubWebhook from './routes/github-webhook';
 import { createBoardDogfoodToken } from './lib/boardDogfood';
 import { sweepInstallationRecords } from './lib/installation-retention';
+import { listActiveGitHubInstallations } from './lib/github-installation-inventory';
+import { reconcileInstallationRecords } from './lib/installation-reconciliation';
 
 export { FeedbackCounter } from './lib/feedback-counter';
 
@@ -151,7 +153,13 @@ export async function scheduled(
   env: Env,
   _ctx: ExecutionContext
 ): Promise<void> {
-  await sweepInstallationRecords(env);
+  await sweepInstallationRecords(env, {
+    listActiveInstallationIds: async () => {
+      const inventory = await listActiveGitHubInstallations(env);
+      await reconcileInstallationRecords(env, { mode: 'apply', inventory });
+      return new Set(inventory.installationIds);
+    },
+  });
 }
 
 export default {

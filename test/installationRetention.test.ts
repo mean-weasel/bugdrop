@@ -459,11 +459,20 @@ describe('installation retention safeguards', () => {
   });
 
   it('paginates GitHub’s active-installation list', async () => {
-    const firstPage = Array.from({ length: 100 }, (_, index) => ({ id: index + 1 }));
+    const installation = (id: number) => ({
+      id,
+      account: {
+        login: `app-${id}`,
+        type: 'Organization',
+        html_url: `https://github.com/app-${id}`,
+      },
+      created_at: '2026-08-28T12:00:00Z',
+    });
+    const firstPage = Array.from({ length: 100 }, (_, index) => installation(index + 1));
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json(firstPage))
-      .mockResolvedValueOnce(Response.json([{ id: 101 }]));
+      .mockResolvedValueOnce(Response.json([installation(101)]));
 
     const ids = await listActiveGitHubInstallationIds(baseEnv, {
       fetchImpl,
