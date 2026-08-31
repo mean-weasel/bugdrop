@@ -106,6 +106,78 @@ describe('social proof consent workflow', () => {
     ]);
   });
 
+  it('keeps the newest reinstall even when an older installation had more usage', () => {
+    const old = record(1, 'same-app');
+    const current = { ...record(2, 'same-app'), installedAt: '2026-08-31T00:00:00.000Z' };
+    const usage = [
+      { schemaVersion: 1, installationId: 1, successfulFeedbackCount: 20 },
+      { schemaVersion: 1, installationId: 2, successfulFeedbackCount: 3 },
+    ];
+
+    expect(
+      buildCandidateReview(
+        [current, old],
+        registry(),
+        ['owned-account'],
+        fingerprintKey,
+        generatedAt,
+        usage
+      ).candidates
+    ).toEqual([
+      {
+        account: current.account,
+        installedAt: current.installedAt,
+        accountFingerprint: fingerprint('same-app'),
+        successfulFeedbackCount: 3,
+      },
+    ]);
+  });
+
+  it('joins exact private usage by installation and ranks known high-use candidates first', () => {
+    const records = [record(1, 'low-use'), record(2, 'unknown-use'), record(3, 'high-use')];
+    const usage = [
+      { schemaVersion: 1, installationId: 1, successfulFeedbackCount: 2 },
+      { schemaVersion: 1, installationId: 3, successfulFeedbackCount: 19 },
+    ];
+
+    const candidates = buildCandidateReview(
+      records,
+      registry(),
+      ['owned-account'],
+      fingerprintKey,
+      generatedAt,
+      usage
+    ).candidates;
+
+    expect(candidates.map(candidate => candidate.account.login)).toEqual([
+      'high-use',
+      'low-use',
+      'unknown-use',
+    ]);
+    expect(candidates[0].successfulFeedbackCount).toBe(19);
+    expect(candidates[2]).not.toHaveProperty('successfulFeedbackCount');
+  });
+
+  it('rejects usage records with extra or identifying fields', () => {
+    expect(() =>
+      buildCandidateReview(
+        [record(1, 'candidate')],
+        registry(),
+        ['owned-account'],
+        fingerprintKey,
+        generatedAt,
+        [
+          {
+            schemaVersion: 1,
+            installationId: 1,
+            successfulFeedbackCount: 3,
+            repository: 'private/repo',
+          },
+        ]
+      )
+    ).toThrow('Invalid installation usage record');
+  });
+
   it('requires and applies case-insensitive owned and test account exclusions', () => {
     const records = [record(1, 'neonwatty'), record(2, 'Real-App')];
     const decisions = registry();

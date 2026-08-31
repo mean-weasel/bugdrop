@@ -22,6 +22,12 @@ const baseEnv: Env = {
   GITHUB_APP_NAME: 'test-bugdrop-app',
   MAX_SCREENSHOT_SIZE_MB: '5',
   ASSETS: {} as Fetcher,
+  FEEDBACK_COUNTER: {
+    idFromName: vi.fn().mockReturnValue({} as DurableObjectId),
+    get: vi.fn().mockReturnValue({
+      fetch: vi.fn().mockResolvedValue(new Response(null, { status: 204 })),
+    }),
+  } as unknown as DurableObjectNamespace,
 };
 
 function createStore(overrides: Partial<KVNamespace> = {}): KVNamespace {
@@ -124,7 +130,7 @@ describe('installation cleanup boundaries', () => {
     );
 
     expect(result).toBeNull();
-    expect(store.delete).toHaveBeenCalledTimes(INSTALLATION_SWEEP_PAGE_SIZE);
+    expect(store.delete).toHaveBeenCalledTimes(INSTALLATION_SWEEP_PAGE_SIZE * 2);
     expect(confirmInstallationIsInactive).toHaveBeenCalledTimes(INSTALLATION_SWEEP_PAGE_SIZE);
     expect(peakConfirmations).toBe(MAX_CONCURRENT_CLEANUP_OPERATIONS);
     expect(MAX_GITHUB_INSTALLATION_PAGES + INSTALLATION_SWEEP_PAGE_SIZE).toBeLessThanOrEqual(50);
@@ -229,6 +235,7 @@ describe('installation cleanup boundaries', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(store.delete).toHaveBeenCalledExactlyOnceWith('installation:42');
+    expect(store.delete).toHaveBeenNthCalledWith(1, 'installation-usage:42');
+    expect(store.delete).toHaveBeenNthCalledWith(2, 'installation:42');
   });
 });

@@ -27,6 +27,7 @@ export interface Env {
   BUGDROP_BOARD_TOKEN_ISSUER?: string; // Optional override for board token issuer
   FEEDBACK_COUNT_BASELINE?: string; // Anonymous external-Issue count before live counting
   FEEDBACK_COUNT_EXCLUDED_OWNERS?: string; // Comma-separated first-party/test owners
+  INSTALLATION_USAGE_ENABLED?: string; // Exact "true" enables private per-install successful-Issue counts
 
   // Bindings
   ASSETS: Fetcher;

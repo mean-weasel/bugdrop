@@ -1,5 +1,15 @@
 import { generateGitHubAppJWT } from './jwt';
 import { GITHUB_API, githubHeaders } from './github';
+import { INSTALLATION_RECORD_PREFIX, installationRecordKey } from './installation-analytics';
+import {
+  deleteInstallationFeedbackCounter,
+  purgeInstallationFeedbackCounter,
+} from './feedback-counter';
+import {
+  deleteInstallationUsageRecord,
+  installationUsageEnabled,
+  markInstallationUsageDeleted,
+} from './installation-usage';
 import {
   parseInstallationCleanupCheckpoint,
   type InstallationCleanupAudit,
@@ -10,7 +20,6 @@ import type { Env } from '../types';
 
 export type { InstallationCleanupAudit } from './installation-cleanup-state';
 
-const INSTALLATION_RECORD_PREFIX = 'installation:';
 const GITHUB_PAGE_SIZE = 100;
 export const MAX_GITHUB_INSTALLATION_PAGES = 20;
 export const INSTALLATION_SWEEP_PAGE_SIZE = 25;
@@ -30,18 +39,31 @@ interface InstallationSweepOptions {
   confirmInstallationIsInactive?: (env: Env, installationId: number) => Promise<boolean>;
 }
 
-export function installationRecordKey(installationId: number): string {
-  if (!Number.isSafeInteger(installationId) || installationId <= 0) {
-    throw new Error('Invalid installation ID');
-  }
-  return `${INSTALLATION_RECORD_PREFIX}${installationId}`;
-}
+export { installationRecordKey } from './installation-analytics';
 
 export async function deleteInstallationRecord(
   store: KVNamespace,
   installationId: number
 ): Promise<void> {
   await store.delete(installationRecordKey(installationId));
+}
+
+export async function deleteInstallationData(env: Env, installationId: number): Promise<void> {
+  const store = env.INSTALLATION_ANALYTICS;
+  if (!store) throw new Error('INSTALLATION_ANALYTICS binding is required for cleanup');
+
+  if (installationUsageEnabled(env)) {
+    // Tombstone first so a delayed submission cannot recreate usage after uninstall.
+    await markInstallationUsageDeleted(store, installationId);
+    await deleteInstallationFeedbackCounter(env, installationId);
+  } else if (env.FEEDBACK_COUNTER) {
+    await purgeInstallationFeedbackCounter(env, installationId);
+  } else {
+    throw new Error('Feedback counter binding is required for installation cleanup');
+  }
+  await deleteInstallationUsageRecord(store, installationId);
+  // Identity is the retry anchor and is deliberately removed last.
+  await deleteInstallationRecord(store, installationId);
 }
 
 export async function verifyGitHubWebhookSignature(
@@ -143,7 +165,7 @@ export async function sweepInstallationRecords(
     return publishFinalAudit(store, checkpoint.audit);
   }
   if (checkpoint?.phase === 'deleting') {
-    return finishDeletionBatch(store, checkpoint);
+    return finishDeletionBatch(env, checkpoint);
   }
   const listActive = options.listActiveInstallationIds ?? listActiveGitHubInstallationIds;
   const activeIds = await listActive(env);
@@ -200,14 +222,16 @@ export async function sweepInstallationRecords(
     next: nextCheckpoint,
   };
   await store.put(INSTALLATION_CLEANUP_CHECKPOINT_KEY, JSON.stringify(deletingCheckpoint));
-  return finishDeletionBatch(store, deletingCheckpoint);
+  return finishDeletionBatch(env, deletingCheckpoint);
 }
 
 async function finishDeletionBatch(
-  store: KVNamespace,
+  env: Env,
   checkpoint: InstallationDeletingCheckpoint
 ): Promise<InstallationCleanupAudit | null> {
-  await mapInBatches(checkpoint.installationIds, id => deleteInstallationRecord(store, id));
+  const store = env.INSTALLATION_ANALYTICS;
+  if (!store) throw new Error('INSTALLATION_ANALYTICS binding is required for cleanup');
+  await mapInBatches(checkpoint.installationIds, id => deleteInstallationData(env, id));
   return advanceCheckpoint(store, checkpoint.next);
 }
 

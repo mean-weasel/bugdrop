@@ -9,6 +9,12 @@ import {
 const baseEnv = {
   GITHUB_APP_ID: '123',
   GITHUB_PRIVATE_KEY: 'test-private-key',
+  FEEDBACK_COUNTER: {
+    idFromName: vi.fn().mockReturnValue({} as DurableObjectId),
+    get: vi.fn().mockReturnValue({
+      fetch: vi.fn().mockResolvedValue(new Response(null, { status: 204 })),
+    }),
+  } as unknown as DurableObjectNamespace,
 } as Env;
 
 function createStore(overrides: Partial<KVNamespace> = {}): KVNamespace {
@@ -73,7 +79,8 @@ describe('installation cleanup durability', () => {
         createOptions()
       )
     ).rejects.toThrow('KV deletion failed');
-    expect(deletionFailureStore.put).toHaveBeenCalledExactlyOnceWith(
+    expect(deletionFailureStore.put).toHaveBeenNthCalledWith(
+      1,
       INSTALLATION_CLEANUP_CHECKPOINT_KEY,
       expect.stringContaining('"phase":"deleting"')
     );
@@ -102,6 +109,7 @@ describe('installation cleanup durability', () => {
       put: vi
         .fn()
         .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(undefined)
         .mockRejectedValueOnce(new Error('checkpoint unavailable'))
         .mockResolvedValue(undefined),
     });
@@ -117,15 +125,17 @@ describe('installation cleanup durability', () => {
     expect(result).toEqual(audit);
     expect(options.listActiveInstallationIds).toHaveBeenCalledTimes(1);
     expect(store.list).toHaveBeenCalledTimes(1);
-    expect(store.delete).toHaveBeenNthCalledWith(1, 'installation:3');
+    expect(store.delete).toHaveBeenNthCalledWith(1, 'installation-usage:3');
     expect(store.delete).toHaveBeenNthCalledWith(2, 'installation:3');
+    expect(store.delete).toHaveBeenNthCalledWith(3, 'installation-usage:3');
+    expect(store.delete).toHaveBeenNthCalledWith(4, 'installation:3');
     expect(store.put).toHaveBeenNthCalledWith(
-      3,
+      4,
       INSTALLATION_CLEANUP_CHECKPOINT_KEY,
       JSON.stringify(finalizing)
     );
     expect(store.put).toHaveBeenNthCalledWith(
-      4,
+      5,
       INSTALLATION_CLEANUP_AUDIT_KEY,
       JSON.stringify(audit)
     );

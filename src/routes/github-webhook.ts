@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from '../types';
 import {
   confirmGitHubInstallationIsInactive,
-  deleteInstallationRecord,
+  deleteInstallationData,
   verifyGitHubWebhookSignature,
 } from '../lib/installation-retention';
 import {
@@ -65,13 +65,13 @@ export function createGitHubWebhook(dependencies: GitHubWebhookDependencies = {}
       }
       await createInstallationRecord(store, payload.installation);
       if (await confirmInstallationIsInactive(c.env, payload.installation.installationId)) {
-        await deleteInstallationRecord(store, payload.installation.installationId);
+        await deleteInstallationData(c.env, payload.installation.installationId);
         return c.json({ accepted: true }, 202);
       }
       return c.json({ created: true }, 201);
     }
 
-    await deleteInstallationRecord(store, payload.installation.installationId);
+    await deleteInstallationData(c.env, payload.installation.installationId);
     return c.json({ deleted: true }, 200);
   });
 

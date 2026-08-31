@@ -16,6 +16,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const INSTALLATION_PREFIX = 'installation:';
+const INSTALLATION_USAGE_PREFIX = 'installation-usage:';
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 async function readInstallationRecords() {
@@ -38,10 +39,13 @@ async function readInstallationRecords() {
     const keys = JSON.parse(listed.stdout);
     if (!Array.isArray(keys)) throw new Error('invalid list');
 
-    const records = [];
+    const installations = [];
+    const usageRecords = [];
     for (const item of keys) {
       if (!isObject(item) || typeof item.name !== 'string') throw new Error('invalid key');
-      if (!item.name.startsWith(INSTALLATION_PREFIX)) continue;
+      const isInstallation = item.name.startsWith(INSTALLATION_PREFIX);
+      const isUsage = item.name.startsWith(INSTALLATION_USAGE_PREFIX);
+      if (!isInstallation && !isUsage) continue;
       const result = await execFileAsync(
         wrangler,
         [
@@ -58,9 +62,11 @@ async function readInstallationRecords() {
         ],
         { cwd: REPOSITORY_ROOT, maxBuffer: 1024 * 1024 }
       );
-      records.push(JSON.parse(result.stdout));
+      const record = JSON.parse(result.stdout);
+      if (isUsage) usageRecords.push(record);
+      else installations.push(record);
     }
-    return records;
+    return { installations, usageRecords };
   } catch {
     throw new Error('Unable to read installation records from Cloudflare KV');
   }
@@ -178,8 +184,17 @@ export async function runCli(args, dependencies = {}) {
     const registry = await readRegistry(options.registry);
     const fingerprintKey = await readFingerprintKey(options.key);
     validateRegistryKey(registry, fingerprintKey);
-    const records = await readRecords();
-    const review = buildCandidateReview(records, registry, excludedLogins, fingerprintKey);
+    const result = await readRecords();
+    const installations = Array.isArray(result) ? result : result.installations;
+    const usageRecords = Array.isArray(result) ? [] : result.usageRecords;
+    const review = buildCandidateReview(
+      installations,
+      registry,
+      excludedLogins,
+      fingerprintKey,
+      new Date().toISOString(),
+      usageRecords
+    );
     showReview(review);
     return `Reviewed ${review.candidates.length} outreach candidate(s) without saving identities.`;
   }
