@@ -74,7 +74,7 @@ export function buildCandidateReview(
   return { schemaVersion: 1, generatedAt, candidates };
 }
 
-export function validateInstallationUsageRecord(record) {
+function validateInstallationUsageRecord(record) {
   if (
     !isObject(record) ||
     !hasExactKeys(record, ['schemaVersion', 'installationId', 'successfulFeedbackCount']) ||
