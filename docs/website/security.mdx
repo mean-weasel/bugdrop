@@ -4,25 +4,19 @@ BugDrop is designed with security and privacy at its core. This page covers the 
 
 ## GitHub App Permissions
 
-The BugDrop GitHub App requests the minimum permissions necessary to function:
+The BugDrop GitHub App uses the following repository permissions:
 
 | Permission | Access Level | Purpose |
 |-----------|-------------|---------|
 | **Issues** | Read & Write | Create bug reports, feature requests, and questions as GitHub Issues |
-| **Contents** | Read & Write | Store screenshots in the repository on the `bugdrop-screenshots` branch |
+| **Contents** | Read & Write | Store screenshots and attachments on the `bugdrop-screenshots` branch |
+| **Metadata** | Read | Read basic repository information, including the default branch |
 
-GitHub App `Contents` permissions are repository-scoped, not branch-scoped. BugDrop's implementation writes screenshots only to `.bugdrop/screenshots/` on the dedicated `bugdrop-screenshots` branch, but GitHub does not provide a narrower branch-only permission for this API.
+**Permission granted.** GitHub’s `Contents: Read & Write` permission allows access to repository files, including source code. It is repository-scoped, not limited to a folder or branch. Branch rules can constrain writes, but storing files on a separate branch does not narrow the app’s permission. See [GitHub’s Contents API documentation](https://docs.github.com/en/rest/repos/contents).
 
-BugDrop does **not** request access to:
+**How BugDrop uses it.** The [file-upload implementation](https://github.com/mean-weasel/bugdrop/blob/511470d91169ac93593ebcc7a0b3e6459ab29df9/src/lib/github.ts) stores screenshots in `.bugdrop/screenshots/` and attachments in `.bugdrop/uploads/` on `bugdrop-screenshots`. To create that branch, it reads repository information and the default branch reference. This describes the inspected implementation, not a technical restriction preventing other use of the granted permission.
 
-- Pull requests
-- Actions or workflows
-- Secrets or environment variables
-- Organization settings
-- Collaborators or team membership
-- Any other repository or account data
-
-You can review and revoke the app's access at any time from your GitHub settings under **Applications > Installed GitHub Apps**.
+**Limit access.** Choose **Only select repositories** when installing and select only the feedback destination. Check GitHub’s installation screen for the permissions you are granting. You can change the selected repositories or revoke access at any time under **GitHub Settings > Applications > Installed GitHub Apps**.
 
 ## Data Storage
 

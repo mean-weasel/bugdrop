@@ -6,18 +6,20 @@ completes an on-demand release. An exact URL can identify an asset in the curren
 is present in the authoritative `versions.json`, but availability is not guaranteed across later
 releases.
 
-## Default Behavior
+## Recommended Setup
 
-The default script URL always loads the latest version of the widget:
+The installation guide uses the currently available `widget.v1.56.4.js` asset so you can test a specific version before updating:
 
 ```html
 <script
-  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  src="https://bugdrop.neonwatty.workers.dev/widget.v1.56.4.js"
   data-repo="owner/repo"
 ></script>
 ```
 
-This is fine for development and testing, but for production sites you may want more control over when updates are applied.
+Use the same URL in each example you copy. An exact URL controls which asset you request; it does not guarantee permanent hosting. Confirm availability before deployment and review the limits below before relying on it for long-term reproducibility.
+
+For automatic updates, use `https://bugdrop.neonwatty.workers.dev/widget.js`. That URL follows the current hosted deployment. Major and minor aliases offer narrower update policies when the corresponding assets are available.
 
 ## Version URL Reference
 
@@ -26,11 +28,11 @@ BugDrop follows [semantic versioning](https://semver.org/) (major.minor.patch). 
 | URL | Example | Update Behavior | Best For |
 |-----|---------|----------------|----------|
 | `/widget.js` | Always latest | Gets all updates automatically | Development, testing |
-| `/widget.v1.js` | Major pin | Gets minor and patch updates (1.x.x) | **Production (recommended)** |
+| `/widget.v1.js` | Major pin | Gets minor and patch updates (1.x.x) | Automatic updates within a major version |
 | `/widget.v1.1.js` | Minor pin | Gets patch updates only (1.1.x) | Cautious production |
-| `/widget.v1.1.0.js` | Exact URL | Identifies a listed current-deployment asset | Inspection and validation |
+| `/widget.v1.1.0.js` | Exact URL | Identifies a listed current-deployment asset | Explicit version selection |
 
-### Major Version Pin (Recommended for Production)
+### Major Version Alias (Automatic Updates)
 
 ```html
 <script
@@ -39,11 +41,11 @@ BugDrop follows [semantic versioning](https://semver.org/) (major.minor.patch). 
 ></script>
 ```
 
-This loads the latest `1.x.x` release. You get bug fixes and new features automatically, but never a breaking change. This is the recommended approach for production sites because:
+This loads the latest `1.x.x` release. You get bug fixes and new features automatically, with the intention of preserving compatibility. Choose this when you want automatic updates within a major version:
 
 - **You get bug fixes automatically** -- No action needed when patches are released
 - **You get new features** -- Minor version updates add functionality without breaking existing behavior
-- **You are protected from breaking changes** -- Major version bumps (which may change the API or behavior) require you to explicitly update the URL
+- **You choose major upgrades** -- Major version bumps require you to explicitly update the URL. Test updates against your integration; version numbering is not a guarantee against regressions
 
 ### Minor Version Pin
 
@@ -106,7 +108,7 @@ Here is a decision guide:
 - You are running a production site
 - You want automatic bug fixes and new features
 - You want protection from breaking API changes
-- **This is the recommended default for most production sites**
+- You will test your integration after updates
 
 ### Use `/widget.v1.1.js` (minor pin) when:
 - You want only bug fixes, not new features
@@ -117,11 +119,9 @@ Here is a decision guide:
 
 - You are inspecting or validating an asset present in the current deployment
 - You have verified its filename and digest against the live `versions.json`
-- You do not depend on that URL remaining available after another release
+- You want to choose when to update, and will verify the URL remains available
 
-Production cutover is blocked until a separately authorized operator phase establishes the boundary
-and proves live N/N+1 behavior. Until then, use a separately controlled archive if your application
-requires cross-release reproducibility.
+For long-term reproducibility, keep an independently controlled copy of an authenticated release asset. An exact URL available today does not by itself establish a cross-release hosting guarantee.
 
 ## Upgrading Versions
 
