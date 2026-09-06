@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated:** August 30, 2026
+**Last updated:** September 6, 2026
 
 BugDrop is an open-source feedback widget that creates GitHub Issues. This policy covers
 the hosted BugDrop widget and service, as well as the BugDrop website at
@@ -33,19 +33,23 @@ include it.
 
 ## Installation Information
 
-The hosted service retains a minimal record for installations created after this collection
-was enabled. The record contains:
+The hosted service retains a minimal record for active GitHub App installations. The record
+contains:
 
 - GitHub App installation ID
 - Public GitHub account name, account type, and profile link
 - Installation date
 
-BugDrop does not retain repository names, issue content, screenshots, page URLs,
-reporter identities, or IP addresses for product analytics.
+BugDrop also maintains a best-effort, unrounded per-installation count of successful GitHub
+Issues created through the hosted BugDrop service. The count begins when this collection is
+enabled and covers successful feedback across repositories available through the
+installation.
 
-This information is used to operate BugDrop, understand aggregate adoption, and invite app
-owners to participate voluntarily in product research or social proof. BugDrop does not
-currently retain per-installation feedback counts or last-active dates.
+This information is used to operate BugDrop, understand aggregate adoption and meaningful
+use, and invite app owners to participate voluntarily in product research or social proof.
+The installation record and count do not retain repository names, issue content,
+screenshots, page URLs, reporter identities, IP addresses, feedback timestamps, or
+last-active dates for product analytics.
 
 ## Public Statistics
 
@@ -56,6 +60,10 @@ BugDrop may publish rounded, aggregate statistics such as:
 
 Public statistics are not broken down by installation and do not identify individual
 apps, repositories, or reporters.
+
+Installation-level counts are private and will not be published or attributed to an app,
+account, organization, or repository without explicit permission from an authorized
+representative.
 
 ## App Names, Logos, Links, and Testimonials
 
@@ -130,10 +138,12 @@ The hosted service temporarily stores rate-limit counters to prevent abuse:
 - A counter keyed by the destination repository name expires one hour after its most
   recent update.
 
-The anonymous feedback total also retains up to 1,024 recent random deduplication tokens
-so a delivery retry cannot increment the total twice. The tokens encode no account,
-repository, Issue, reporter, or submission information and are replaced as newer tokens
-arrive.
+To prevent retries from being counted twice, the anonymous aggregate counter and each
+installation counter retain up to 1,024 recent random identifiers. The random deduplication
+identifiers contain no account, repository, Issue, reporter, feedback content, or timestamp
+information. Older identifiers are replaced as newer ones arrive. Aggregate identifiers may
+remain until replaced; per-installation identifiers are deleted with the installation
+counter when the app is uninstalled.
 
 The rate-limit identifiers are used only to enforce submission limits and are not used for
 product analytics. Cloudflare may also temporarily process request and network metadata,
@@ -144,11 +154,14 @@ including request paths, for service delivery, security, and operational logs.
 - Feedback content is discarded by the hosted service after the GitHub request completes.
 - IP-based rate-limit records expire 15 minutes after their most recent update.
 - Repository-based rate-limit records expire one hour after their most recent update.
-- Installation records are retained while an installation is active and deleted when the
-  app is uninstalled. A scheduled cleanup independently removes records for installations
-  GitHub no longer reports as active.
+- Installation records and their successful-feedback counts are retained while an
+  installation is active and deleted when the app is uninstalled. A scheduled cleanup
+  independently removes both records for installations GitHub no longer reports as active.
+- After uninstall, BugDrop retains a deletion guard derived from the GitHub App installation
+  ID for up to seven days solely to prevent delayed submissions from recreating a usage
+  count. The guard contains only an expiry time—no account, repository, Issue, reporter, or
+  feedback content—and expires automatically.
 - Anonymous aggregate totals may be retained indefinitely.
-- Random feedback-counter deduplication tokens are limited to the 1,024 most recent values.
 - Testimonial and contact information provided with explicit permission is retained until
   that permission is withdrawn or the information is no longer needed.
 - Website analytics identifiers stored in the browser remain until the visitor clears the
