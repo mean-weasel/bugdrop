@@ -61,14 +61,15 @@ Screenshots are stored as image files in a `.bugdrop/` directory on the `bugdrop
 
 ### What permissions does the GitHub App need?
 
-The BugDrop GitHub App requests two permissions:
+The BugDrop GitHub App uses these repository permissions:
 
 | Permission | Access Level | Purpose |
 |-----------|-------------|---------|
 | **Issues** | Read & Write | Create bug reports as GitHub Issues |
-| **Contents** | Read & Write | Store screenshots on the `bugdrop-screenshots` branch |
+| **Contents** | Read & Write | Store screenshots and attachments on the `bugdrop-screenshots` branch |
+| **Metadata** | Read | Read basic repository information |
 
-These are the minimum permissions required. The app does not access your source code, pull requests, actions, secrets, or any other repository data.
+**Contents permission includes access to source files.** It applies to the selected repository, not only the screenshots branch. BugDrop’s file-upload implementation stores screenshots and attachments on that branch, but the permission itself is broader. Choose **Only select repositories** during installation to limit access, and review the [permission and data-handling explanation](/docs/security#github-app-permissions).
 
 ### Can I use BugDrop on multiple repos?
 
@@ -76,11 +77,11 @@ Yes. When you install the BugDrop GitHub App, you can grant access to specific r
 
 ```html
 <!-- Site A -->
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
+<script src="https://bugdrop.neonwatty.workers.dev/widget.v1.56.4.js"
   data-repo="your-org/site-a"></script>
 
 <!-- Site B -->
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
+<script src="https://bugdrop.neonwatty.workers.dev/widget.v1.56.4.js"
   data-repo="your-org/site-b"></script>
 ```
 
@@ -107,7 +108,7 @@ BugDrop reads configuration from the script element that is executing. Use the o
 Yes. The `data-label` attribute changes the text displayed next to the button icon:
 
 ```html
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
+<script src="https://bugdrop.neonwatty.workers.dev/widget.v1.56.4.js"
   data-repo="owner/repo"
   data-label="Send Feedback"></script>
 ```
@@ -115,7 +116,7 @@ Yes. The `data-label` attribute changes the text displayed next to the button ic
 You can also set `data-icon="none"` to show only the text label without an icon:
 
 ```html
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
+<script src="https://bugdrop.neonwatty.workers.dev/widget.v1.56.4.js"
   data-repo="owner/repo"
   data-icon="none"
   data-label="Report a Bug"></script>
@@ -126,7 +127,7 @@ You can also set `data-icon="none"` to show only the text label without an icon:
 Yes. Self-hosted deployments can map the three built-in categories to custom GitHub labels with `data-category-labels` when `ALLOW_CLIENT_CATEGORY_LABELS` is set to `"true"`:
 
 ```html
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
+<script src="https://bugdrop.neonwatty.workers.dev/widget.v1.56.4.js"
   data-repo="owner/repo"
   data-category-labels='{"bug":"defect","feature":["product-feedback","triage"],"question":"support"}'></script>
 ```
@@ -143,7 +144,7 @@ Yes. By default, the name and email fields are hidden. Enable them with data att
 
 ```html
 <!-- Show both, require email -->
-<script src="https://bugdrop.neonwatty.workers.dev/widget.js"
+<script src="https://bugdrop.neonwatty.workers.dev/widget.v1.56.4.js"
   data-repo="owner/repo"
   data-show-name="true"
   data-show-email="true"

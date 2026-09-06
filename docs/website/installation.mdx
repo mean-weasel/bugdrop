@@ -1,8 +1,6 @@
 # Installation
 
-import { WidgetInstallSnippet } from "@/components/widget-install-snippet";
-
-Getting BugDrop running on your site takes about 30 seconds. There are only two steps: install the GitHub App and add a script tag. No npm packages, no build configuration, no backend setup required.
+Connect a GitHub repository, add one script tag, then send a test report. No npm package or backend setup is required for the hosted service. Allow time for any organization approval, site deployment, and testing your setup needs.
 
 ## Step 1: Install the GitHub App
 
@@ -10,24 +8,34 @@ BugDrop needs access to your GitHub repository to create issues and store screen
 
 **[Install BugDrop from GitHub Marketplace](https://github.com/marketplace/bugdrop-in-app-feedback-to-github-issues)**
 
-During installation you will be asked which repositories to grant access to. You can choose specific repositories or grant access to all repositories in your account or organization.
+During installation you will be asked which repositories to grant access to. Choose **Only select repositories** and select the repository that should receive feedback to limit the app’s access. Organization installations may require an administrator’s approval.
 
 ### What permissions does the app request?
 
 | Permission | Access Level | Purpose |
 |-----------|-------------|---------|
 | Issues | Read & Write | Create bug reports as GitHub Issues |
-| Contents | Read & Write | Store screenshots in the repository |
+| Contents | Read & Write | Store screenshots and attachments in the repository |
+| Metadata | Read | Read basic repository information; included with GitHub App repository access |
 
-These are the minimum permissions required for BugDrop to function. The app does not request access to your code, pull requests, actions, or any other repository data.
+**Contents access includes repository files, including source code.** GitHub grants this permission for the selected repository, not just a screenshot folder or branch. It permits reading and writing repository contents, subject to GitHub’s rules; see [GitHub’s Contents API documentation](https://docs.github.com/en/rest/repos/contents).
+
+BugDrop uses it to store screenshots and attachments on the `bugdrop-screenshots` branch. That describes the implementation’s use, not a narrower permission grant. Review [Security](/docs/security#github-app-permissions) before installing. You can change selected repositories or revoke access under **GitHub Settings > Applications > Installed GitHub Apps**.
 
 ## Step 2: Add the Script Tag
 
 Add the BugDrop script tag to your HTML, just before the closing `</body>` tag:
 
-<WidgetInstallSnippet repo="your-username/your-repo" />
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.v1.56.4.js"
+  data-repo="your-username/your-repo"
+></script>
+```
 
 Replace `your-username/your-repo` with your actual GitHub repository path (e.g., `acme-corp/my-website`).
+
+These installation examples use `widget.v1.56.4.js` so you can test a specific version before updating. The unversioned `widget.js` URL follows the current hosted deployment automatically. See [version pinning](/docs/version-pinning) for update options and hosting-availability limits, and use the same URL throughout your integration.
 
 ### Full HTML Example
 
@@ -44,7 +52,7 @@ Replace `your-username/your-repo` with your actual GitHub repository path (e.g.,
 
   <!-- BugDrop widget -->
   <script
-    src="https://bugdrop.neonwatty.workers.dev/widget.js"
+    src="https://bugdrop.neonwatty.workers.dev/widget.v1.56.4.js"
     data-repo="your-username/your-repo"
   ></script>
 </body>
@@ -57,7 +65,7 @@ You can add data attributes to customize the widget's appearance and behavior:
 
 ```html
 <script
-  src="https://bugdrop.neonwatty.workers.dev/widget.js"
+  src="https://bugdrop.neonwatty.workers.dev/widget.v1.56.4.js"
   data-repo="your-username/your-repo"
   data-theme="dark"
   data-position="bottom-left"
@@ -88,9 +96,11 @@ BugDrop covers each marked element with an opaque rectangle on supported capture
 Password inputs and credit-card autocomplete fields are masked automatically. See
 [Screenshot masking](/docs/security#screenshot-masking) on the Security page for details.
 
-## Step 3: You Are Done
+## Step 3: Send a Test Report
 
-That is it. Load your page and you will see the BugDrop button in the corner of your site. Click it to open the feedback form, fill it out, and submit -- a GitHub Issue will be created in your repository automatically.
+Load your page, open the BugDrop button, and submit a clearly labeled test report with a screenshot. Confirm that the issue arrives in the selected repository and that its screenshot opens. A visible widget alone does not confirm that repository permissions, screenshot storage, and submission are working.
+
+Reports and screenshots in a public repository are public. Use non-sensitive test content, and review [screenshot masking](/docs/security#screenshot-masking) before using BugDrop on pages with customer data.
 
 ## Important Notes
 
@@ -98,7 +108,12 @@ That is it. Load your page and you will see the BugDrop button in the corner of 
 
 Use a normal script element without `async` or `defer`. The widget reads configuration from the executing script element, so changing execution order can separate initialization from its `data-*` attributes. This is the contract in the [official BugDrop README](https://github.com/mean-weasel/bugdrop#quick-start) and the same contract used by BugDrop's own website.
 
-<WidgetInstallSnippet />
+```html
+<script
+  src="https://bugdrop.neonwatty.workers.dev/widget.v1.56.4.js"
+  data-repo="owner/repo"
+></script>
+```
 
 ### Content Security Policy (CSP)
 
@@ -135,7 +150,7 @@ export default function RootLayout({ children }) {
       <body>
         {children}
         <script
-          src="https://bugdrop.neonwatty.workers.dev/widget.js"
+          src="https://bugdrop.neonwatty.workers.dev/widget.v1.56.4.js"
           data-repo="your-username/your-repo"
         />
       </body>
