@@ -109,6 +109,7 @@ BUGDROP_BOARD_TENANT_ID = "tenant_mean_weasel"
 BUGDROP_BOARD_APP_ID = "app_mean_weasel_bugdrop_dogfood"
 FEEDBACK_COUNT_BASELINE = "3116"
 FEEDBACK_COUNT_EXCLUDED_OWNERS = "mean-weasel,neonwatty"
+INSTALLATION_USAGE_ENABLED = "true"
 
 [env.production.durable_objects]
 bindings = [{ name = "FEEDBACK_COUNTER", class_name = "FeedbackCounter" }]
