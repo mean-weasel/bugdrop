@@ -109,6 +109,7 @@ check-security-analysis-workflows:
 
 check-ci-scope:
 	bash test/ci-scope.test.sh
+	node test/ci-scope-workflow.test.mjs
 
 check-ci-workflow:
 	bash test/ci-workflow-contract.test.sh

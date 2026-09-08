@@ -27,8 +27,19 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Determine analysis scope
+        id: scope
+        shell: bash
+        env:
+          SCOPE_EVENT: ${{ github.event_name }}
+          SCOPE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          SCOPE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: scripts/ci-scope.sh "$SCOPE_EVENT" opened "$SCOPE_BASE" "$SCOPE_HEAD" '' false
 
       - name: Initialize CodeQL
+        if: steps.scope.outputs.full_ci != 'false'
         uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           languages: javascript-typescript
@@ -36,6 +47,7 @@ jobs:
           config-file: ./.github/codeql/codeql-config.yml
 
       - name: Analyze with CodeQL
+        if: steps.scope.outputs.full_ci != 'false'
         uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           category: /language:javascript-typescript

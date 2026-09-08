@@ -23,6 +23,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
       - name: Verify previous full CI succeeded
         id: previous-ci
         if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
@@ -87,8 +92,8 @@ jobs:
         shell: bash
         env:
           PR_ACTION: ${{ github.event.action }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
           PR_BEFORE_SHA: ${{ github.event.before }}
         run: |
           scripts/ci-scope.sh \
@@ -99,11 +104,6 @@ jobs:
             "$PR_BEFORE_SHA" \
             "${{ steps.previous-ci.outputs.result }}"
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '22'
-          cache: 'npm'
-
       - name: Install dependencies
         if: steps.scope.outputs.full_ci != 'false'
         run: make install
@@ -112,12 +112,12 @@ jobs:
         if: steps.scope.outputs.full_ci != 'false'
         run: make check
 
-      - name: Check changed documentation formatting
+      - name: Check changed documentation and metadata formatting
         if: steps.scope.outputs.full_ci == 'false'
         shell: bash
         env:
           DIFF_BASE_SHA: ${{ steps.scope.outputs.diff_base }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
           format_files=()
           while IFS= read -r -d '' path; do
@@ -129,7 +129,7 @@ jobs:
             printf '%s\0' "${format_files[@]}" |
               xargs -0 npx --yes prettier@3.8.1 --check --ignore-unknown --
           else
-            echo 'No remaining documentation files require formatting.'
+            echo 'No remaining documentation or metadata files require formatting.'
           fi
 
   # Unit tests and build
@@ -139,7 +139,7 @@ jobs:
     needs: check
     permissions:
       contents: read
-    # Keep the required check visible as skipped for docs-only pull requests.
+    # Keep the required check visible as skipped for docs/metadata-only changes.
     if: needs.check.outputs.full_ci != 'false'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -216,9 +216,9 @@ jobs:
     steps:
       # These no-op matrix jobs preserve the two exact required check names. A job-level
       # condition is evaluated before matrix expansion and would collapse them into one.
-      - name: Skip expensive E2E for documentation-only changes
+      - name: Skip expensive E2E for documentation or metadata changes
         if: needs.check.outputs.full_ci == 'false'
-        run: echo 'Documentation-only change; required E2E context satisfied without browser tests.'
+        run: echo 'Documentation or license metadata change; required E2E context satisfied without browser tests.'
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.check.outputs.full_ci != 'false'
@@ -340,7 +340,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: [check, test, e2e, radix-e2e]
-    if: github.event_name == 'merge_group'
+    if: >-
+      ${{ always() && github.event_name == 'merge_group' &&
+          needs.check.result == 'success' &&
+          (needs.check.outputs.full_ci == 'false' ||
+           (needs.test.result == 'success' && needs.e2e.result == 'success' &&
+            needs.radix-e2e.result == 'success')) }}
     permissions:
       contents: read
     concurrency:
@@ -348,23 +353,32 @@ jobs:
       cancel-in-progress: false
       queue: max
     steps:
+      - name: Skip preview for documentation or metadata changes
+        if: needs.check.outputs.full_ci == 'false'
+        run: echo 'No runtime changes; preview deployment and live tests are unnecessary.'
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.check.outputs.full_ci != 'false'
         with:
           fetch-depth: 0
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: needs.check.outputs.full_ci != 'false'
         with:
           node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
+        if: needs.check.outputs.full_ci != 'false'
         run: make install
 
       - name: Get Playwright version
+        if: needs.check.outputs.full_ci != 'false'
         id: pw-version
         run: echo "version=$(npx playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
 
       - name: Cache Playwright browsers
+        if: needs.check.outputs.full_ci != 'false'
         id: pw-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -373,15 +387,16 @@ jobs:
 
       - name: Install Playwright browsers
         timeout-minutes: 10
-        if: steps.pw-cache.outputs.cache-hit != 'true'
+        if: needs.check.outputs.full_ci != 'false' && steps.pw-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Install Playwright system deps
         timeout-minutes: 10
-        if: steps.pw-cache.outputs.cache-hit == 'true'
+        if: needs.check.outputs.full_ci != 'false' && steps.pw-cache.outputs.cache-hit == 'true'
         run: npx playwright install-deps chromium firefox webkit
 
       - name: Record canary identity
+        if: needs.check.outputs.full_ci != 'false'
         shell: bash
         run: |
           echo "BUGDROP_CANARY_MARKER=bugdrop-ci-canary:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${GITHUB_SHA}" >> "$GITHUB_ENV"
@@ -395,6 +410,7 @@ jobs:
           echo "PLAYWRIGHT_BASE_URL=https://bugdrop-widget-test-git-preview-jermwatts-projects.vercel.app" >> "$GITHUB_ENV"
 
       - name: Preflight stale canary cleanup
+        if: needs.check.outputs.full_ci != 'false'
         run: >-
           node scripts/github-issue-canary.mjs preflight
           --profile preview
@@ -404,6 +420,7 @@ jobs:
           BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
 
       - name: Build classic fixed-controller preview widget
+        if: needs.check.outputs.full_ci != 'false'
         run: |
           CLASSIC_OUTPUT="$RUNNER_TEMP/classic-preview-widget"
           node scripts/build-widget.js \
@@ -414,9 +431,11 @@ jobs:
             --default-flow-runtime fixed
 
       - name: Build normal flow-controller preview widget and application
+        if: needs.check.outputs.full_ci != 'false'
         run: BUGDROP_BUILD_MODE=development BUGDROP_DEVELOPMENT_ID="merge-group-${GITHUB_SHA}-candidate" make build-all
 
       - name: Validate and record dual-controller preview identities
+        if: needs.check.outputs.full_ci != 'false'
         run: |
           cp "$RUNNER_TEMP/classic-preview-widget/widget.js" public/widget.classic.js
           CANDIDATE_SHA256=$(shasum -a 256 public/widget.js | awk '{print $1}')
@@ -461,12 +480,14 @@ jobs:
           echo "EXPECTED_CLASSIC_WIDGET_SHA256=$CLASSIC_SHA256" >> "$GITHUB_ENV"
 
       - name: Deploy to preview
+        if: needs.check.outputs.full_ci != 'false'
         run: npx wrangler deploy --env preview --var "BUILD_SHA:$GITHUB_SHA"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Wait for exact preview Worker
+        if: needs.check.outputs.full_ci != 'false'
         run: |
           WORKER_URL="https://bugdrop-preview.neonwatty.workers.dev/api/health"
           echo "Polling preview health for the expected environment and build SHA..."
@@ -485,6 +506,7 @@ jobs:
           exit 1
 
       - name: Wait for exact preview widget asset
+        if: needs.check.outputs.full_ci != 'false'
         run: |
           WIDGET_URL="$EXPECTED_WIDGET_ORIGIN/widget.js"
           CANDIDATE_PATH="$EXACT_WIDGET_FIXTURE_PATH.candidate"
@@ -509,6 +531,7 @@ jobs:
           exit 1
 
       - name: Wait for exact classic preview widget asset
+        if: needs.check.outputs.full_ci != 'false'
         run: |
           WIDGET_URL="$EXPECTED_WIDGET_ORIGIN/widget.classic.js"
           CANDIDATE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH.candidate"
@@ -533,6 +556,7 @@ jobs:
           exit 1
 
       - name: Verify fixed preview venue
+        if: needs.check.outputs.full_ci != 'false'
         run: |
           BYPASS_ARGS=()
           if [ -n "$VERCEL_AUTOMATION_BYPASS_SECRET" ]; then
@@ -547,6 +571,7 @@ jobs:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
       - name: Run candidate legacy and default live E2E tests
+        if: needs.check.outputs.full_ci != 'false'
         run: >-
           EXACT_WIDGET_FIXTURE_PATH="$EXACT_WIDGET_FIXTURE_PATH"
           EXPECTED_WIDGET_SHA256="$EXPECTED_WIDGET_SHA256"
@@ -557,6 +582,7 @@ jobs:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
       - name: Run classic legacy and default live E2E tests
+        if: needs.check.outputs.full_ci != 'false'
         run: >-
           EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"
           EXPECTED_WIDGET_SHA256="$EXPECTED_CLASSIC_WIDGET_SHA256"
@@ -567,6 +593,7 @@ jobs:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
       - name: Require identical candidate and classic legacy outcomes
+        if: needs.check.outputs.full_ci != 'false'
         run: |
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
@@ -627,6 +654,7 @@ jobs:
           NODE
 
       - name: Run composable FlowConfig live E2E tests
+        if: needs.check.outputs.full_ci != 'false'
         run: >-
           EXACT_WIDGET_FIXTURE_PATH="$EXACT_WIDGET_FIXTURE_PATH"
           EXPECTED_WIDGET_SHA256="$EXPECTED_WIDGET_SHA256"
@@ -635,6 +663,7 @@ jobs:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
       - name: Run candidate live Radix E2E tests
+        if: needs.check.outputs.full_ci != 'false'
         run: >-
           EXACT_WIDGET_FIXTURE_PATH="$EXACT_WIDGET_FIXTURE_PATH"
           EXPECTED_WIDGET_SHA256="$EXPECTED_WIDGET_SHA256"
@@ -643,6 +672,7 @@ jobs:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
       - name: Run classic live Radix E2E tests
+        if: needs.check.outputs.full_ci != 'false'
         run: >-
           EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"
           EXPECTED_WIDGET_SHA256="$EXPECTED_CLASSIC_WIDGET_SHA256"
@@ -651,6 +681,7 @@ jobs:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
       - name: Run candidate Chromium live cross-browser smoke
+        if: needs.check.outputs.full_ci != 'false'
         run: >-
           EXACT_WIDGET_FIXTURE_PATH="$EXACT_WIDGET_FIXTURE_PATH"
           EXPECTED_WIDGET_SHA256="$EXPECTED_WIDGET_SHA256"
@@ -659,6 +690,7 @@ jobs:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
       - name: Run classic Chromium live cross-browser smoke
+        if: needs.check.outputs.full_ci != 'false'
         run: >-
           EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"
           EXPECTED_WIDGET_SHA256="$EXPECTED_CLASSIC_WIDGET_SHA256"
@@ -667,6 +699,7 @@ jobs:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
       - name: Run candidate Firefox live cross-browser smoke
+        if: needs.check.outputs.full_ci != 'false'
         run: >-
           EXACT_WIDGET_FIXTURE_PATH="$EXACT_WIDGET_FIXTURE_PATH"
           EXPECTED_WIDGET_SHA256="$EXPECTED_WIDGET_SHA256"
@@ -675,6 +708,7 @@ jobs:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
       - name: Run classic Firefox live cross-browser smoke
+        if: needs.check.outputs.full_ci != 'false'
         run: >-
           EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"
           EXPECTED_WIDGET_SHA256="$EXPECTED_CLASSIC_WIDGET_SHA256"
@@ -683,6 +717,7 @@ jobs:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
       - name: Run candidate WebKit live cross-browser smoke
+        if: needs.check.outputs.full_ci != 'false'
         run: >-
           EXACT_WIDGET_FIXTURE_PATH="$EXACT_WIDGET_FIXTURE_PATH"
           EXPECTED_WIDGET_SHA256="$EXPECTED_WIDGET_SHA256"
@@ -691,6 +726,7 @@ jobs:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
       - name: Run classic WebKit live cross-browser smoke
+        if: needs.check.outputs.full_ci != 'false'
         run: >-
           EXACT_WIDGET_FIXTURE_PATH="$EXACT_CLASSIC_WIDGET_FIXTURE_PATH"
           EXPECTED_WIDGET_SHA256="$EXPECTED_CLASSIC_WIDGET_SHA256"
@@ -699,6 +735,7 @@ jobs:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
       - name: Run one structured real-Issue canary
+        if: needs.check.outputs.full_ci != 'false'
         run: |
           mkdir -p "$(dirname "$BUGDROP_CANARY_ATTEMPT_FILE")"
           : > "$BUGDROP_CANARY_ATTEMPT_FILE"
@@ -709,6 +746,7 @@ jobs:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
       - name: Verify canary Issue independently
+        if: needs.check.outputs.full_ci != 'false'
         run: >-
           node scripts/github-issue-canary.mjs verify
           --profile preview
@@ -720,7 +758,7 @@ jobs:
           BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
 
       - name: Cleanup current canary marker
-        if: always()
+        if: always() && needs.check.outputs.full_ci != 'false'
         run: |
           if [ ! -f "$BUGDROP_CANARY_ATTEMPT_FILE" ]; then
             echo 'The Issue canary never started; no current marker can exist.'
@@ -734,7 +772,7 @@ jobs:
           BUGDROP_CANARY_GITHUB_TOKEN: ${{ secrets.BUGDROP_CANARY_GITHUB_TOKEN }}
 
       - name: Final reserved-prefix sweep
-        if: always()
+        if: always() && needs.check.outputs.full_ci != 'false'
         run: >-
           node scripts/github-issue-canary.mjs sweep
           --profile preview
@@ -745,7 +783,7 @@ jobs:
 
       - name: Upload preview failure report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: failure()
+        if: failure() && needs.check.outputs.full_ci != 'false'
         with:
           name: playwright-preview-critical-report
           path: |

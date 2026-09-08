@@ -59,9 +59,9 @@ perl -0pi -e 's/(  analyze:\n)/$1    if: false\n/' "$disabled_codeql_job/codeql.
 expect_failure "$disabled_codeql_job" 'codeql.yml: analyze job: must not define if'
 
 disabled_codeql_step=$(make_fixture disabled-codeql-step)
-perl -0pi -e 's/(      - name: Analyze with CodeQL\n)/$1        if: false\n/' \
+perl -0pi -e "s/if: steps.scope.outputs.full_ci != 'false'/if: false/g" \
   "$disabled_codeql_step/codeql.yml"
-expect_failure "$disabled_codeql_step" 'codeql.yml: analyze step: must not define if'
+expect_failure "$disabled_codeql_step" 'codeql.yml: analyze step: scope condition'
 
 warn_only=$(make_fixture warn-only)
 perl -0pi -e 's/(          fail-on-severity: moderate\n)/$1          warn-only: true\n/' \

@@ -18,8 +18,19 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Determine analysis scope
+        id: scope
+        shell: bash
+        env:
+          SCOPE_EVENT: ${{ github.event_name }}
+          SCOPE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          SCOPE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: scripts/ci-scope.sh "$SCOPE_EVENT" opened "$SCOPE_BASE" "$SCOPE_HEAD" '' false
 
       - name: Review dependency changes
+        if: steps.scope.outputs.dependency_review != 'false'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate

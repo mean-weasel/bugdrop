@@ -12,9 +12,15 @@ const checkEqual = (location, actual, expected) => {
   }
 };
 
-const checkBlocking = (location, node) => {
+const checkBlocking = (location, node, scoped = false) => {
+  if (scoped)
+    checkEqual(
+      `${location}: scope condition`,
+      node?.if,
+      `steps.scope.outputs.${scoped} != 'false'`
+    );
   for (const key of ['if', 'continue-on-error']) {
-    if (node && Object.hasOwn(node, key)) {
+    if (node && Object.hasOwn(node, key) && !(scoped && key === 'if')) {
       failures.push(`${location}: must not define ${key}`);
     }
   }
@@ -47,8 +53,8 @@ const codeqlCheckout = codeqlSteps.find(step => step.name === 'Checkout reposito
 const codeqlInit = codeqlSteps.find(step => step.name === 'Initialize CodeQL');
 const codeqlAnalyze = codeqlSteps.find(step => step.name === 'Analyze with CodeQL');
 checkBlocking('codeql.yml: checkout step', codeqlCheckout);
-checkBlocking('codeql.yml: init step', codeqlInit);
-checkBlocking('codeql.yml: analyze step', codeqlAnalyze);
+checkBlocking('codeql.yml: init step', codeqlInit, 'full_ci');
+checkBlocking('codeql.yml: analyze step', codeqlAnalyze, 'full_ci');
 checkEqual(
   'codeql.yml: checkout action',
   codeqlCheckout?.uses,
@@ -56,6 +62,7 @@ checkEqual(
 );
 checkEqual('codeql.yml: checkout configuration', codeqlCheckout?.with, {
   'persist-credentials': false,
+  'fetch-depth': 0,
 });
 checkEqual(
   'codeql.yml: init action',
@@ -100,7 +107,7 @@ const dependencySteps = dependencyReview.jobs?.['dependency-review']?.steps ?? [
 const dependencyCheckout = dependencySteps.find(step => step.name === 'Checkout repository');
 const dependencyScan = dependencySteps.find(step => step.name === 'Review dependency changes');
 checkBlocking('dependency-review.yml: checkout step', dependencyCheckout);
-checkBlocking('dependency-review.yml: review step', dependencyScan);
+checkBlocking('dependency-review.yml: review step', dependencyScan, 'dependency_review');
 checkEqual(
   'dependency-review.yml: checkout action',
   dependencyCheckout?.uses,
@@ -108,6 +115,7 @@ checkEqual(
 );
 checkEqual('dependency-review.yml: checkout configuration', dependencyCheckout?.with, {
   'persist-credentials': false,
+  'fetch-depth': 0,
 });
 checkEqual(
   'dependency-review.yml: review action',
@@ -121,6 +129,27 @@ checkEqual('dependency-review.yml: review configuration', dependencyScan?.with, 
   'show-openssf-scorecard': false,
   'show-patched-versions': true,
 });
+
+for (const [name, steps] of [
+  ['codeql.yml', codeqlSteps],
+  ['dependency-review.yml', dependencySteps],
+]) {
+  checkEqual(
+    `${name}: scope step`,
+    steps.find(step => step.id === 'scope'),
+    {
+      name: 'Determine analysis scope',
+      id: 'scope',
+      shell: 'bash',
+      env: {
+        SCOPE_EVENT: '${{ github.event_name }}',
+        SCOPE_BASE: '${{ github.event.pull_request.base.sha || github.event.before }}',
+        SCOPE_HEAD: '${{ github.event.pull_request.head.sha || github.sha }}',
+      },
+      run: `scripts/ci-scope.sh "$SCOPE_EVENT" opened "$SCOPE_BASE" "$SCOPE_HEAD" '' false`,
+    }
+  );
+}
 
 if (failures.length > 0) {
   console.error(failures.join('\n'));

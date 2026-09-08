@@ -9,7 +9,10 @@ head_sha=${4:-}
 before_sha=${5:-}
 previous_ci_passed=${6:-false}
 
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 full_ci=true
+dependency_review=true
 diff_base=''
 reason="${event_name} events always run full CI"
 
@@ -17,11 +20,17 @@ commit_exists() {
   [[ -n "$1" ]] && git cat-file -e "$1^{commit}" 2>/dev/null
 }
 
-if [[ "$event_name" == 'pull_request' ]]; then
+if [[ "$event_name" == 'pull_request' || "$event_name" == 'merge_group' || "$event_name" == 'push' ]]; then
   if ! commit_exists "$base_sha" || ! commit_exists "$head_sha"; then
     reason='pull request refs are unavailable; running full CI fail-safe'
   else
-    if [[ "$action" == 'synchronize' ]]; then
+    if [[ "$event_name" != 'pull_request' ]]; then
+      if git merge-base --is-ancestor "$base_sha" "$head_sha"; then
+        diff_base=$base_sha
+      else
+        reason='base is not an ancestor; running full CI fail-safe'
+      fi
+    elif [[ "$action" == 'synchronize' ]]; then
       if ! commit_exists "$before_sha" || ! git merge-base --is-ancestor "$before_sha" "$head_sha"; then
         reason='push delta is unavailable or non-fast-forward; running full CI fail-safe'
       else
@@ -44,23 +53,48 @@ if [[ "$event_name" == 'pull_request' ]]; then
         reason='no changed files were detected; running full CI fail-safe'
       else
         full_ci=false
-        reason='the latest change contains documentation only'
+        dependency_review=false
+        reason='the latest change contains documentation or license metadata only'
 
         for path in "${changed_files[@]}"; do
           case "$path" in
-            AGENTS.md | CHANGELOG.md | CLAUDE.md | CONTRIBUTING.md | LICENSE | PRIVACY.md | README.md | SECURITY.md | SELF_HOSTING.md | TERMS.md | docs/*)
+            AGENTS.md | CHANGELOG.md | CLAUDE.md | CONTRIBUTING.md | LICENSE | PRIVACY.md | README.md | SECURITY.md | SELF_HOSTING.md | TERMS.md)
+              ;;
+            package.json | package-lock.json)
+              if ! node "$script_dir/ci-license-only.mjs" "$diff_base" "$head_sha" "$path"; then
+                full_ci=true
+                reason="${path} changes more than license metadata"
+                dependency_review=true
+              fi
+              ;;
+            */package.json | */package-lock.json | */npm-shrinkwrap.json | */yarn.lock | */pnpm-lock.yaml)
+              full_ci=true
+              dependency_review=true
+              reason="${path} may change dependencies"
+              ;;
+            docs/*.md | docs/*.mdx | docs/*.txt | docs/*.yaml | docs/*.yml | docs/*.json | docs/*.png | docs/*.jpg | docs/*.svg | docs/*.webp)
+              ;;
+            src/* | test/* | e2e/* | benchmarks/* | public/*)
+              full_ci=true
+              reason="${path} requires runtime checks"
               ;;
             *)
+              dependency_review=true
               full_ci=true
               reason="${path} requires full CI"
-              break
               ;;
           esac
         done
 
         if [[ "$action" == 'synchronize' && "$full_ci" == 'false' && "$previous_ci_passed" != 'true' ]]; then
-          full_ci=true
-          reason='previous full CI is missing or unsuccessful; running full CI fail-safe'
+          aggregate_base=$(git merge-base "$base_sha" "$head_sha")
+          if GITHUB_OUTPUT= "$script_dir/ci-scope.sh" pull_request opened "$base_sha" "$head_sha" '' false | grep -x 'full_ci=false' >/dev/null; then
+            diff_base=$aggregate_base
+          else
+            full_ci=true
+            dependency_review=true
+            reason='previous full CI is missing or unsuccessful; running full CI fail-safe'
+          fi
         fi
       fi
     fi
@@ -68,10 +102,12 @@ if [[ "$event_name" == 'pull_request' ]]; then
 fi
 
 echo "full_ci=${full_ci}"
+echo "dependency_review=${dependency_review}"
 echo "diff_base=${diff_base}"
 echo "CI scope: ${reason}"
 
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   echo "full_ci=${full_ci}" >> "$GITHUB_OUTPUT"
+  echo "dependency_review=${dependency_review}" >> "$GITHUB_OUTPUT"
   echo "diff_base=${diff_base}" >> "$GITHUB_OUTPUT"
 fi
