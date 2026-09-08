@@ -1,6 +1,7 @@
 {
   "name": "bugdrop",
   "version": "0.0.0-development",
+  "license": "MIT",
   "description": "In-app feedback → GitHub Issues. Screenshots, annotations, the works.",
   "type": "module",
   "main": "./public/widget.js",
