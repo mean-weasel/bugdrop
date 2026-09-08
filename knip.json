@@ -5,6 +5,7 @@
     "src/widget/index.ts",
     "src/widget/public-api.d.ts",
     "scripts/build-widget.js",
+    "scripts/ci-license-only.mjs",
     "scripts/github-issue-canary.mjs",
     "scripts/release/plan.mjs",
     "scripts/verify-legacy-compat.mjs"

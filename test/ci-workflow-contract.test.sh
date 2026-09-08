@@ -335,7 +335,7 @@ if grep -Eq '^    if:' <<< "$e2e_block"; then
   fail 'the required E2E matrix must not use a job-level condition'
 fi
 grep -Fq 'shard: [1, 2]' <<< "$e2e_block" || fail 'the two-shard E2E matrix changed'
-grep -Fq 'Skip expensive E2E for documentation-only changes' <<< "$e2e_block" ||
+grep -Fq 'Skip expensive E2E for documentation or metadata changes' <<< "$e2e_block" ||
   fail 'the documentation-only E2E context bridge is missing'
 require_literal "$ci_workflow" 'Verify previous full CI succeeded'
 require_literal "$ci_workflow" 'steps.previous-ci.outputs.result'
@@ -351,7 +351,7 @@ bridge=$(job_block "$ci_workflow" live-preview-tests)
 grep -Fq 'name: Deploy Preview' <<< "$critical" || fail 'critical job lost its required name'
 grep -Fq 'needs: [check, test, e2e, radix-e2e]' <<< "$critical" ||
   fail 'preview deployment is not gated by every local job'
-grep -Fq "if: github.event_name == 'merge_group'" <<< "$critical" ||
+grep -Fq "always() && github.event_name == 'merge_group'" <<< "$critical" ||
   fail 'critical job is not merge-group-only'
 grep -Fq 'group: bugdrop-shared-preview' <<< "$critical" || fail 'shared preview lock is missing'
 grep -Fq 'cancel-in-progress: false' <<< "$critical" || fail 'active preview runs may be cancelled'
