@@ -1,3 +1,4 @@
+import { isRepositoryAllowed } from '../lib/repository-policy';
 /* eslint-disable max-lines -- Keep the isolated structured contract out of the legacy route. */
 import type { Context } from 'hono';
 import { GitHubLabelError, createIssue, getInstallationAccess, isRepoPublic } from '../lib/github';
@@ -90,6 +91,9 @@ export async function handleStructuredFeedback(c: StructuredContext, input: unkn
   }
 
   const payload = validation.payload;
+  if (!isRepositoryAllowed(c.env.ALLOWED_REPOSITORIES, payload.repo)) {
+    return c.json({ error: 'Repository is not allowed' }, 403);
+  }
   const [owner, repo] = payload.repo.split('/');
 
   try {
