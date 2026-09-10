@@ -8,6 +8,7 @@ export interface Env {
   ENVIRONMENT: string;
   BUILD_SHA?: string; // Optional deployed source identity for health and feedback responses
   ALLOWED_ORIGINS: string; // Comma-separated list of allowed origins, or "*" for dev
+  ALLOWED_REPOSITORIES?: string; // Optional comma/newline-separated exact owner/repo allowlist
   GITHUB_APP_NAME: string; // Your GitHub App name for install URL
   MAX_SCREENSHOT_SIZE_MB: string; // Max screenshot size in MB (default: 5)
   CATEGORY_LABELS?: string; // Optional JSON category-label mapping keyed by repo or "*"
