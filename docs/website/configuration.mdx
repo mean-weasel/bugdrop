@@ -325,6 +325,69 @@ This attribute only adds the client-side header. Your self-hosted worker must al
 | Some categories take effect but others don't | Unknown category keys (anything other than `bug`/`feature`/`question`) are dropped with a warning. Check spelling. |
 | GitHub returns a 422 | A configured label doesn't exist in the repo. BugDrop retries with default labels automatically; the issue still gets created and the rejection is recorded in the body. |
 
+## Server Configuration
+
+### Allowed repositories
+
+Self-hosted Workers can set `ALLOWED_REPOSITORIES` to restrict the repositories accepted by
+installation checks and both legacy and structured feedback submissions. This is a deployment-wide
+server setting: it applies to every client in that Worker environment, including direct API calls.
+There is no widget attribute for it.
+
+| Setting | Behavior |
+| --- | --- |
+| Unset, empty, or whitespace-only | No repository restriction; existing GitHub App access requirements still apply |
+| Standalone `*`, with optional surrounding whitespace | No repository restriction |
+| Comma- or newline-separated `owner/repo` names | Trim entries, discard empty entries, and match exact full names case-insensitively; CRLF is supported |
+| Duplicate names | Harmless; same membership result |
+| `example-org/*` | Literal entry, with no glob expansion |
+| `*,example-org/app` | Only exact listed names match; `*` does not allow other repositories |
+| Nonblank separators only, such as `,` | Deny every repository |
+| Unknown or malformed entries | No expansion or fallback to unrestricted access; other exact entries can still match |
+
+The requested name is trimmed and compared case-insensitively for policy membership only. The
+setting does not rewrite submitted repository names, GitHub arguments, or signed token claims.
+For example, `example-org/app` does not match `example-org/app-extra` or `example-org/app/extra`.
+Existing request validation still applies.
+
+Configure each environment explicitly in `wrangler.toml`; Wrangler environment vars do not inherit
+from the root vars block. These examples are commented so they do not enable a restriction:
+
+```toml
+[vars]
+# ALLOWED_REPOSITORIES = "example-org/app,example-org/feedback"
+
+[env.preview.vars]
+# ALLOWED_REPOSITORIES = "example-org/app,example-org/feedback"
+
+[env.production.vars]
+# ALLOWED_REPOSITORIES = "example-org/app,example-org/feedback"
+```
+
+Add the setting to the existing vars block for each intended environment, then deploy through your
+normal release process. Removing it, setting it blank, or using standalone `*` disables the
+restriction. Listing a repository grants no GitHub permissions: the App must still be installed with
+the required access. The list replaces neither authentication nor CORS configuration.
+
+When a request reaches the policy check with a disallowed target, it returns HTTP `403`:
+
+```json
+{ "error": "Repository is not allowed" }
+```
+
+For feedback submissions, the IP limiter, authentication middleware, and repository limiter run
+before the policy. Missing or invalid tokens can return `401`, and exhausted quotas can return
+`429`, before repository denial. An authenticated denied submission can consume quota. Existing
+payload validation also runs before the policy. For `GET /api/check/:owner/:repo`, repository denial
+runs before optional check authentication, so a disallowed target returns `403` even when
+`AUTH_TOKEN_REQUIRED_FOR_CHECK` is enabled and no token is supplied. A valid token cannot override
+a repository denial. See [repository policy security boundaries](/docs/security#repository-policy).
+
+Before a repository transfer or rename, list both the old and new full names. Update clients and
+issue tokens for the actual new repository name; token claim comparison remains exact even though
+the allowlist comparison is case-insensitive. Verify GitHub App access and allowed/denied behavior
+after the transfer, then remove the old name.
+
 ## Automatic System Information
 
 Every feedback submission automatically captures the following system information, with no configuration required:

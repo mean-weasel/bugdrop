@@ -21,6 +21,8 @@ binding = "ASSETS"
 
 # Environment variables
 [vars]
+# Optional exact repository allowlist (unset allows all installed repositories).
+# ALLOWED_REPOSITORIES = "example-org/app,example-org/feedback"
 ENVIRONMENT = "development"
 ALLOWED_ORIGINS = "*"  # "*" for dev, comma-separated URLs for production
 GITHUB_APP_NAME = "neonwatty-bugdrop"  # Your GitHub App's URL slug
@@ -62,6 +64,8 @@ workers_dev = true
 routes = []
 
 [env.preview.vars]
+# Optional exact repository allowlist (unset allows all installed repositories).
+# ALLOWED_REPOSITORIES = "example-org/app,example-org/feedback"
 ENVIRONMENT = "preview"
 ALLOWED_ORIGINS = "*"
 GITHUB_APP_NAME = "neonwatty-bugdrop"
@@ -101,6 +105,8 @@ directory = "public"
 binding = "ASSETS"
 
 [env.production.vars]
+# Optional exact repository allowlist (unset allows all installed repositories).
+# ALLOWED_REPOSITORIES = "example-org/app,example-org/feedback"
 ENVIRONMENT = "production"
 ALLOWED_ORIGINS = "*"
 GITHUB_APP_NAME = "neonwatty-bugdrop"
