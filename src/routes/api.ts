@@ -1,3 +1,4 @@
+import { isRepositoryAllowed } from '../lib/repository-policy';
 import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import type {
@@ -205,6 +206,10 @@ api.get('/check/:owner/:repo', async c => {
   const { owner, repo } = c.req.param();
   const fullRepo = `${owner}/${repo}`;
 
+  if (!isRepositoryAllowed(c.env.ALLOWED_REPOSITORIES, fullRepo)) {
+    return c.json({ error: 'Repository is not allowed' }, 403);
+  }
+
   if (c.env.AUTH_TOKEN_REQUIRED_FOR_CHECK === 'true') {
     const authError = await requireBugDropAuthToken(c, fullRepo);
     if (authError) return authError;
@@ -275,6 +280,10 @@ api.post('/feedback', async c => {
       },
       400
     );
+  }
+
+  if (!isRepositoryAllowed(c.env.ALLOWED_REPOSITORIES, payload.repo)) {
+    return c.json({ error: 'Repository is not allowed' }, 403);
   }
 
   const authError = await requireBugDropAuthToken(c, payload.repo);

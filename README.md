@@ -281,6 +281,10 @@ the live page after testing to restore its original widget and `fetch` implement
 - [Self-Hosting](https://bugdrop.dev/docs/self-hosting)
 - [FAQ](https://bugdrop.dev/docs/faq)
 
+Self-hosters can optionally restrict installation checks and feedback destinations with the
+server-side [`ALLOWED_REPOSITORIES` setting](https://bugdrop.dev/docs/configuration#allowed-repositories).
+It covers legacy and structured submissions; leaving it unset preserves existing behavior.
+
 ## How It Works
 
 ```

@@ -234,6 +234,27 @@ This protects the feedback endpoint from direct API calls that bypass browser CO
 
 If installation status is also sensitive, set `AUTH_TOKEN_REQUIRED_FOR_CHECK = "true"` so the widget's `/check/:owner/:repo` request requires the same token.
 
+### Repository policy
+
+Self-hosted Workers can restrict request targets with
+[`ALLOWED_REPOSITORIES`](/docs/configuration#allowed-repositories). The server enforces it on
+`GET /api/check/:owner/:repo`, legacy `POST /api/feedback`, and structured `POST /api/feedback`.
+A reached denial returns `403` with `{ "error": "Repository is not allowed" }` before installation
+lookup, token minting, uploads, repository visibility checks, or issue and label writes. It does not
+record successful feedback.
+
+Both feedback formats still pass through the IP limiter, authentication middleware, and repository
+limiter before payload validation and repository policy. These earlier checks can return `401` or
+`429`; an authenticated denied submission can consume quota. Installation checks enforce repository
+policy before optional token authentication, so a denied target returns `403` even without a token
+when check authentication is required. Successful authentication never overrides repository denial.
+
+The setting applies across clients in the configured Worker environment. Unset, blank, or standalone
+`*` keeps the environment unrestricted by this policy. It grants no GitHub App permissions and
+replaces neither host-app authentication nor CORS. Limit the App's installed repositories separately.
+Health, static assets, public stats, webhook verification, and scheduled installation inventory are
+unaffected; this setting does not prohibit every GitHub API operation for unlisted repositories.
+
 ## Reporting Security Issues
 
 If you discover a security vulnerability in BugDrop, report it privately:
